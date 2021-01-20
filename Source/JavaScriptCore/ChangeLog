@@ -1,3 +1,206 @@
+2022-03-17  Xan López  <xan@igalia.com>
+
+        [JSC] Enable WasmLLInt on ARMv7
+        https://bugs.webkit.org/show_bug.cgi?id=221260
+
+        Reviewed by NOBODY (OOPS!).
+
+        Patch by Geza Lore and Xan López.
+
+        Implement the LLInt tier of WebAssembly for ARMv7. A lot of the
+        work will be shared by any 32bit port, but the offlineassembler
+        has only been updated for ARMv7 so far.
+
+        Main highlights:
+
+        We have split the WebAssembly.asm file into three chunks,
+        following what LowLevelInterpreter.asm does. The common code
+        remains in WebAssembly.asm, and 32 and 64bit specific code (mostly
+        opcode implementations) goes into WebAssembly32_64.asm and
+        WebAssembly64.asm.
+
+        We have decided to use a pair of GPRs for every type of wasm
+        values, even if they are 32bit (i32/f32), with the odd numbered
+        GPR holding the most significant (or only) value. This makes the
+        code much simpler and allows us to share more code with the 64bit
+        variant. This is mostly relevant for argument passing, and given
+        that every value ends up in a stack anyway we do not think it is
+        significant from a performance POV.
+
+        We are reusing JSValueRegs to hold Wasm values too. Obviously they
+        are not really JSValues, so it might make sense to create a base
+        class that can be used for both JS and Wasm values.
+
+        We do not have enough registers to keep things like the memory
+        base pointer and size in pinned registers, so we are forced to
+        load them on each use.
+
+        We disable the 'Signaling' memory mode, since the current
+        implementation relies on being able to mprotect a 2^32 + redzone
+        region of memory. This can be changed in the future but it's not a
+        priority at the moment.
+
+        * CMakeLists.txt:
+        * assembler/ARMv7Assembler.h:
+        (JSC::ARMv7Assembler::vcvt_signedToFloatingPoint):
+        * assembler/MacroAssemblerARMv7.h:
+        (JSC::MacroAssemblerARMv7::convertInt32ToFloat):
+        (JSC::MacroAssemblerARMv7::threadSafePatchableNearCall):
+        (JSC::MacroAssemblerARMv7::callOperation):
+        * b3/B3ValueRep.h:
+        (JSC::B3::ValueRep::ValueRep):
+        * bytecode/BytecodeDumper.cpp:
+        (JSC::Wasm::BytecodeDumper::formatConstant const):
+        * interpreter/CallFrame.h: adapt to new callee tagging format.
+        (JSC::CallFrame::callee const):
+        (JSC::CallFrame::unsafeCallee const):
+        * interpreter/CalleeBits.h: add wasm tagging of callee values for
+        32bit.
+        (JSC::CalleeBits::CalleeBits):
+        (JSC::CalleeBits::operator=):
+        (JSC::CalleeBits::boxWasm):
+        (JSC::CalleeBits::isWasm const):
+        (JSC::CalleeBits::asWasmCallee const):
+        * interpreter/Register.h:
+        (JSC::Register::unboxedFloat const):
+        (JSC::Register::asanUnsafeUnboxedFloat const):
+        * jit/AssemblyHelpers.h:
+        (JSC::AssemblyHelpers::unboxDouble):
+        * jit/RegisterAtOffsetList.cpp:
+        (JSC::RegisterAtOffsetList::RegisterAtOffsetList):
+        * jit/RegisterAtOffsetList.h:
+        (JSC::RegisterAtOffsetList::sizeOfAreaInBytes const):
+        * jit/RegisterSet.cpp:
+        (JSC::RegisterSet::macroScratchRegisters):
+        * llint/LLIntOfflineAsmConfig.h:
+        * llint/LowLevelInterpreter32_64.asm:
+        * llint/WebAssembly.asm:
+        * llint/WebAssembly32_64.asm: Added.
+        * llint/WebAssembly64.asm: Added.
+        * offlineasm/arm.rb:
+        * offlineasm/instructions.rb:
+        * offlineasm/registers.rb:
+        * offlineasm/risc.rb:
+        * runtime/JSCJSValue.h:
+        (JSC::jsUnboxedFloat):
+        * runtime/JSCJSValueInlines.h:
+        (JSC::JSValue::JSValue):
+        * wasm/WasmAirIRGenerator.cpp:
+        (JSC::Wasm::AirIRGenerator::useSignalingMemory const):
+        (JSC::Wasm::AirIRGenerator::AirIRGenerator):
+        (JSC::Wasm::AirIRGenerator::emitCheckAndPreparePointer):
+        (JSC::Wasm::AirIRGenerator::addCall):
+        * wasm/WasmB3IRGenerator.cpp:
+        (JSC::Wasm::B3IRGenerator::useSignalingMemory const):
+        (JSC::Wasm::B3IRGenerator::B3IRGenerator):
+        (JSC::Wasm::B3IRGenerator::addArguments):
+        (JSC::Wasm::B3IRGenerator::emitCheckAndPreparePointer):
+        (JSC::Wasm::B3IRGenerator::memoryKind):
+        (JSC::Wasm::B3IRGenerator::addCall):
+        * wasm/WasmBinding.cpp:
+        (JSC::Wasm::wasmToWasm):
+        * wasm/WasmCallee.cpp:
+        (JSC::Wasm::LLIntCallee::calleeSaveRegisters):
+        * wasm/WasmCalleeGroup.cpp:
+        (JSC::Wasm::CalleeGroup::isSafeToRun):
+        * wasm/WasmCallingConvention.cpp:
+        (JSC::Wasm::jsCallingConvention):
+        (JSC::Wasm::wasmCallingConvention):
+        * wasm/WasmCallingConvention.h:
+        (JSC::Wasm::CallInformation::computeResultsOffsetList):
+        (JSC::Wasm::WasmCallingConvention::WasmCallingConvention):
+        (JSC::Wasm::WasmCallingConvention::marshallLocationImpl const):
+        (JSC::Wasm::WasmCallingConvention::marshallLocation const):
+        (JSC::Wasm::JSCallingConvention::JSCallingConvention):
+        (JSC::Wasm::JSCallingConvention::marshallLocationImpl const):
+        (JSC::Wasm::JSCallingConvention::marshallLocation const):
+        (JSC::Wasm::JSCallingConvention::callInformationFor const):
+        * wasm/WasmFormat.h:
+        * wasm/WasmIndexOrName.cpp:
+        (JSC::Wasm::IndexOrName::IndexOrName):
+        (JSC::Wasm::makeString):
+        * wasm/WasmIndexOrName.h:
+        (JSC::Wasm::IndexOrName::IndexOrName):
+        (JSC::Wasm::IndexOrName::isEmpty const):
+        (JSC::Wasm::IndexOrName::isIndex const):
+        (JSC::Wasm::IndexOrName::isName const):
+        (JSC::Wasm::IndexOrName::index const):
+        (JSC::Wasm::IndexOrName::name const):
+        (JSC::Wasm::IndexOrName::nameSection const):
+        * wasm/WasmInstance.h:
+        (JSC::Wasm::Instance::updateCachedMemory):
+        * wasm/WasmLLIntGenerator.cpp:
+        (JSC::Wasm::LLIntGenerator::virtualRegisterForWasmLocal):
+        (JSC::Wasm::LLIntGenerator::callInformationForCaller):
+        (JSC::Wasm::LLIntGenerator::callInformationForCallee):
+        (JSC::Wasm::LLIntGenerator::addArguments):
+        (JSC::Wasm::LLIntGenerator::addLoop):
+        * wasm/WasmLLIntPlan.cpp:
+        (JSC::Wasm::LLIntPlan::didCompleteCompilation):
+        * wasm/WasmMemory.cpp:
+        (JSC::Wasm::MemoryHandle::~MemoryHandle):
+        (JSC::Wasm::Memory::tryCreate):
+        (JSC::Wasm::Memory::growShared):
+        (JSC::Wasm::Memory::grow):
+        (JSC::Wasm::Memory::copy):
+        * wasm/WasmMemory.h:
+        * wasm/WasmMemoryInformation.cpp:
+        (JSC::Wasm::PinnedRegisterInfo::get):
+        * wasm/WasmMemoryInformation.h:
+        (JSC::Wasm::PinnedRegisterInfo::toSave const):
+        * wasm/WasmMemoryMode.cpp:
+        (JSC::Wasm::makeString):
+        * wasm/WasmMemoryMode.h:
+        * wasm/WasmOpcodeOrigin.cpp:
+        * wasm/WasmOpcodeOrigin.h:
+        * wasm/WasmOperations.cpp:
+        (JSC::Wasm::JSC_DEFINE_JIT_OPERATION):
+        * wasm/WasmOperations.h:
+        * wasm/WasmPageCount.h:
+        * wasm/WasmParser.h:
+        (JSC::Wasm::Parser<SuccessType>::parseUInt32):
+        (JSC::Wasm::Parser<SuccessType>::parseUInt64):
+        * wasm/WasmSlowPaths.cpp:
+        (JSC::LLInt::WASM_SLOW_PATH_DECL):
+        (JSC::LLInt::slow_path_wasm_popcount):
+        (JSC::LLInt::slow_path_wasm_popcountll):
+        (JSC::LLInt::slow_path_wasm_i32_div_s):
+        (JSC::LLInt::slow_path_wasm_i32_div_u):
+        (JSC::LLInt::slow_path_wasm_i32_rem_s):
+        (JSC::LLInt::slow_path_wasm_i32_rem_u):
+        (JSC::LLInt::slow_path_wasm_i64_div_s):
+        (JSC::LLInt::slow_path_wasm_i64_div_u):
+        (JSC::LLInt::slow_path_wasm_i64_rem_s):
+        (JSC::LLInt::slow_path_wasm_i64_rem_u):
+        * wasm/WasmSlowPaths.h:
+        * wasm/WasmValueLocation.cpp:
+        (JSC::Wasm::ValueLocation::dump const):
+        (WTF::printInternal):
+        * wasm/WasmValueLocation.h:
+        (JSC::Wasm::ValueLocation::ValueLocation):
+        (JSC::Wasm::ValueLocation::isGPR const):
+        (JSC::Wasm::ValueLocation::isFPR const):
+        (JSC::Wasm::ValueLocation::isStack const):
+        (JSC::Wasm::ValueLocation::isStackArgument const):
+        (JSC::Wasm::ValueLocation::jsr const):
+        (JSC::Wasm::ValueLocation::fpr const):
+        (JSC::Wasm::ValueLocation::reg): Deleted.
+        (JSC::Wasm::ValueLocation::isReg const): Deleted.
+        (JSC::Wasm::ValueLocation::reg const): Deleted.
+        (JSC::Wasm::ValueLocation::gpr const): Deleted.
+        * wasm/js/JSToWasm.cpp:
+        (JSC::Wasm::marshallJSResult):
+        (JSC::Wasm::createJSToWasmWrapper):
+        * wasm/js/WasmToJS.cpp:
+        (JSC::Wasm::wasmToJS):
+        * wasm/js/WebAssemblyFunction.cpp:
+        (JSC::WebAssemblyFunction::previousInstanceOffset const):
+        (JSC::WebAssemblyFunction::jsCallEntrypointSlow):
+        * wasm/js/WebAssemblyGlobalConstructor.cpp:
+        (JSC::JSC_DEFINE_HOST_FUNCTION):
+        * wasm/js/WebAssemblyModuleRecord.cpp:
+        (JSC::WebAssemblyModuleRecord::initializeExports):
+
 2022-03-22  Yusuke Suzuki  <ysuzuki@apple.com>
 
         [JSC] Test DFG / FTL DataIC

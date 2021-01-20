@@ -1,3 +1,14 @@
+2022-03-17  Xan López  <xan@igalia.com>
+
+        [JSC] Enable WasmLLInt on ARMv7
+        https://bugs.webkit.org/show_bug.cgi?id=221260
+
+        Reviewed by NOBODY (OOPS!).
+
+        * stress/sampling-profiler-wasm-name-section.js:
+        * stress/sampling-profiler-wasm.js:
+        * wasm/regress/llint-callee-saves-with-fast-memory.js:
+
 2022-03-22  Yusuke Suzuki  <ysuzuki@apple.com>
 
         [JSC] Test DFG / FTL DataIC

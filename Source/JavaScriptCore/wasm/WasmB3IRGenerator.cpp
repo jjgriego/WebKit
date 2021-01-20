@@ -523,6 +523,15 @@ private:
         return set(dst, get(src));
     }
 
+    bool useSignalingMemory() const
+    {
+#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
+        return m_mode == MemoryMode::Signaling;
+#else
+        return false;
+#endif
+    }
+
     FunctionParser<B3IRGenerator>* m_parser { nullptr };
     const ModuleInformation& m_info;
     const MemoryMode m_mode { MemoryMode::BoundsChecking };
@@ -636,7 +645,7 @@ B3IRGenerator::B3IRGenerator(const ModuleInformation& info, Procedure& procedure
     if (!Context::useFastTLS())
         m_proc.pinRegister(m_wasmContextInstanceGPR);
 
-    if (mode != MemoryMode::Signaling) {
+    if (mode == MemoryMode::BoundsChecking) {
         m_boundsCheckingSizeGPR = pinnedRegs.boundsCheckingSizeRegister;
         m_proc.pinRegister(m_boundsCheckingSizeGPR);
     }
@@ -648,9 +657,11 @@ B3IRGenerator::B3IRGenerator(const ModuleInformation& info, Procedure& procedure
             case MemoryMode::BoundsChecking:
                 ASSERT_UNUSED(pinnedGPR, m_boundsCheckingSizeGPR == pinnedGPR);
                 break;
+#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
             case MemoryMode::Signaling:
                 ASSERT_UNUSED(pinnedGPR, InvalidGPRReg == pinnedGPR);
                 break;
+#endif
             }
             this->emitExceptionCheck(jit, ExceptionType::OutOfBoundsMemoryAccess);
         });
@@ -912,8 +923,12 @@ auto B3IRGenerator::addArguments(const Signature& signature) -> PartialResult
         B3::Type type = toB3Type(signature.argument(i));
         B3::Value* argument;
         auto rep = wasmCallInfo.params[i];
-        if (rep.isReg()) {
-            argument = m_currentBlock->appendNew<B3::ArgumentRegValue>(m_proc, Origin(), rep.reg());
+        if (rep.isGPR()) {
+            argument = m_currentBlock->appendNew<B3::ArgumentRegValue>(m_proc, Origin(), rep.jsr().payloadGPR());
+            if (type == B3::Int32 || type == B3::Float)
+                argument = m_currentBlock->appendNew<B3::Value>(m_proc, B3::Trunc, Origin(), argument);
+        } else if (rep.isFPR()) {
+            argument = m_currentBlock->appendNew<B3::ArgumentRegValue>(m_proc, Origin(), rep.fpr());
             if (type == B3::Int32 || type == B3::Float)
                 argument = m_currentBlock->appendNew<B3::Value>(m_proc, B3::Trunc, Origin(), argument);
         } else {
@@ -1443,6 +1458,7 @@ inline Value* B3IRGenerator::emitCheckAndPreparePointer(Value* pointer, uint32_t
         break;
     }
 
+#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
     case MemoryMode::Signaling: {
         // We've virtually mapped 4GiB+redzone for this memory. Only the user-allocated pages are addressable, contiguously in range [0, current],
         // and everything above is mapped PROT_NONE. We don't need to perform any explicit bounds check in the 4GiB range because WebAssembly register
@@ -1460,6 +1476,7 @@ inline Value* B3IRGenerator::emitCheckAndPreparePointer(Value* pointer, uint32_t
         }
         break;
     }
+#endif
     }
 
     pointer = m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), pointer);
@@ -1493,7 +1510,7 @@ inline uint32_t sizeOfLoadOp(LoadOpType op)
 
 inline B3::Kind B3IRGenerator::memoryKind(B3::Opcode memoryOp)
 {
-    if (m_mode == MemoryMode::Signaling || m_info.memory.isShared())
+    if (useSignalingMemory() || m_info.memory.isShared())
         return trapping(memoryOp);
     return memoryOp;
 }
@@ -2977,7 +2994,7 @@ auto B3IRGenerator::addCall(uint32_t functionIndex, const Signature& signature, 
                 patchpoint->effects.readsPinned = true;
 
                 // We need to clobber the size register since the LLInt always bounds checks
-                if (m_mode == MemoryMode::Signaling || m_info.memory.isShared())
+                if (useSignalingMemory() || m_info.memory.isShared())
                     patchpoint->clobberLate(RegisterSet { PinnedRegisterInfo::get().boundsCheckingSizeRegister });
                 patchpoint->setGenerator([this, handle, unlinkedWasmToWasmCalls, functionIndex] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
                     AllowMacroScratchRegisterUsage allowScratch(jit);

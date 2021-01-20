@@ -94,6 +94,8 @@ RegisterSet RegisterSet::macroScratchRegisters()
     return RegisterSet(MacroAssembler::s_scratchRegister);
 #elif CPU(ARM64) || CPU(RISCV64)
     return RegisterSet(MacroAssembler::dataTempRegister, MacroAssembler::memoryTempRegister);
+#elif CPU(ARM)
+    return RegisterSet(MacroAssembler::dataTempRegister, MacroAssembler::addressTempRegister);
 #elif CPU(MIPS)
     RegisterSet result;
     result.set(MacroAssembler::immTempRegister);

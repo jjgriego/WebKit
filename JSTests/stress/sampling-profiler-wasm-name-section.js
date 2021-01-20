@@ -1,3 +1,9 @@
+// This test is statistical, and without optimizing Wasm tiers the likelihood
+// of hitting the deepest expected stack trace is very low. To give us a better
+// chance, disable JS JITs and increase sampling rate.
+// FIXME: remove when 32-bit platforms support optimizing Wasm tiers
+//@ requireOptions("--sampleInterval=10", "--useBaselineJIT=false", "--useDFGJIT=false") if ["arm", "mips"].include?($architecture)
+//
 //@ runDefault
 
 /*

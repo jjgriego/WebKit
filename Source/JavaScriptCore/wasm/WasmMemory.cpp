@@ -98,11 +98,9 @@ class MemoryManager {
     WTF_MAKE_FAST_ALLOCATED;
     WTF_MAKE_NONCOPYABLE(MemoryManager);
 public:
-    MemoryManager()
-        : m_maxFastMemoryCount(Options::maxNumWebAssemblyFastMemories())
-    {
-    }
-    
+    MemoryManager() = default;
+
+#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
     MemoryResult tryAllocateFastMemory()
     {
         MemoryResult result = [&] {
@@ -125,7 +123,7 @@ public:
         
         return result;
     }
-    
+
     void freeFastMemory(void* basePtr)
     {
         {
@@ -136,6 +134,7 @@ public:
         
         dataLogLnIf(Options::logWebAssemblyMemory(), "Freed virtual; state: ", *this);
     }
+#endif
 
     MemoryResult tryAllocateGrowableBoundsCheckingMemory(size_t mappedCapacity)
     {
@@ -170,11 +169,13 @@ public:
     {
         // NOTE: This can be called from a signal handler, but only after we proved that we're in JIT code or WasmLLInt code.
         Locker locker { m_lock };
+#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
         for (void* memory : m_fastMemories) {
             char* start = static_cast<char*>(memory);
             if (start <= address && address <= start + Memory::fastMappedBytes())
                 return true;
         }
+#endif
         uintptr_t addressValue = bitwise_cast<uintptr_t>(address);
         auto iterator = std::upper_bound(m_growableBoundsCheckingMemories.begin(), m_growableBoundsCheckingMemories.end(), std::make_pair(addressValue, 0),
             [](std::pair<uintptr_t, size_t> a, std::pair<uintptr_t, size_t> b) {
@@ -227,13 +228,19 @@ public:
     
     void dump(PrintStream& out) const
     {
+#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
         out.print("fast memories =  ", m_fastMemories.size(), "/", m_maxFastMemoryCount, ", bytes = ", m_physicalBytes, "/", memoryLimit());
+#else
+        out.print("fast memories = N.A., bytes = ", m_physicalBytes, "/", memoryLimit());
+#endif
     }
     
 private:
     Lock m_lock;
-    unsigned m_maxFastMemoryCount { 0 };
+#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
+    unsigned m_maxFastMemoryCount { Options::maxNumWebAssemblyFastMemories() };
     Vector<void*> m_fastMemories;
+#endif
     StdSet<std::pair<uintptr_t, size_t>> m_growableBoundsCheckingMemories;
     size_t m_physicalBytes { 0 };
 };
@@ -300,6 +307,7 @@ MemoryHandle::~MemoryHandle()
         void* memory = this->memory();
         memoryManager().freePhysicalBytes(m_size);
         switch (m_mode) {
+#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
         case MemoryMode::Signaling:
             if (mprotect(memory, Memory::fastMappedBytes(), PROT_READ | PROT_WRITE)) {
                 dataLog("mprotect failed: ", safeStrerror(errno).data(), "\n");
@@ -307,6 +315,7 @@ MemoryHandle::~MemoryHandle()
             }
             memoryManager().freeFastMemory(memory);
             break;
+#endif
         case MemoryMode::BoundsChecking: {
             switch (m_sharingMode) {
             case MemorySharingMode::Default:
@@ -395,6 +404,7 @@ RefPtr<Memory> Memory::tryCreate(PageCount initial, PageCount maximum, MemorySha
     if (!done)
         return nullptr;
         
+#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
     char* fastMemory = nullptr;
     if (Options::useWebAssemblyFastMemory()) {
         tryAllocate(
@@ -413,7 +423,8 @@ RefPtr<Memory> Memory::tryCreate(PageCount initial, PageCount maximum, MemorySha
 
         return Memory::create(adoptRef(*new MemoryHandle(fastMemory, initialBytes, Memory::fastMappedBytes(), initial, maximum, sharingMode, MemoryMode::Signaling)), WTFMove(notifyMemoryPressure), WTFMove(syncTryToReclaimMemory), WTFMove(growSuccessCallback));
     }
-    
+#endif
+
     if (UNLIKELY(Options::crashIfWebAssemblyCantFastMemory()))
         webAssemblyCouldntGetFastMemory();
 
@@ -456,6 +467,7 @@ RefPtr<Memory> Memory::tryCreate(PageCount initial, PageCount maximum, MemorySha
 
 Memory::~Memory() = default;
 
+#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
 size_t Memory::fastMappedRedzoneBytes()
 {
     return static_cast<size_t>(PageCount::pageSize) * Options::webAssemblyFastMemoryRedzonePages();
@@ -466,6 +478,7 @@ size_t Memory::fastMappedBytes()
     static_assert(sizeof(uint64_t) == sizeof(size_t), "We rely on allowing the maximum size of Memory we map to be 2^32 + redzone which is larger than fits in a 32-bit integer that we'd pass to mprotect if this didn't hold.");
     return (static_cast<size_t>(1) << 32) + fastMappedRedzoneBytes();
 }
+#endif
 
 bool Memory::addressIsInGrowableOrFastMemory(void* address)
 {
@@ -524,8 +537,14 @@ Expected<PageCount, Memory::GrowFailReason> Memory::growShared(PageCount delta)
         m_handle->growToSize(desiredSize);
         return oldPageCount;
     }());
-    if (result)
+    if (result) {
         m_growSuccessCallback(GrowSuccessTag, oldPageCount, newPageCount);
+        // Update cache for instance
+        for (auto& instance : m_instances) {
+            if (instance.get() != nullptr)
+                instance.get()->updateCachedMemory();
+        }
+    }
     return result;
 }
 
@@ -588,6 +607,7 @@ Expected<PageCount, Memory::GrowFailReason> Memory::grow(PageCount delta)
         ASSERT(memory() == newMemory);
         return success();
     }
+#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
     case MemoryMode::Signaling: {
         size_t extraBytes = desiredSize - size();
         RELEASE_ASSERT(extraBytes);
@@ -613,6 +633,7 @@ Expected<PageCount, Memory::GrowFailReason> Memory::grow(PageCount delta)
         m_handle->growToSize(desiredSize);
         return success();
     }
+#endif
     }
 
     RELEASE_ASSERT_NOT_REACHED();
@@ -646,7 +667,8 @@ bool Memory::copy(uint32_t dstAddress, uint32_t srcAddress, uint32_t count)
         return true;
 
     uint8_t* base = reinterpret_cast<uint8_t*>(memory());
-    memcpy(base + dstAddress, base + srcAddress, count);
+    // Source and destination areas might overlap, so using memmove.
+    memmove(base + dstAddress, base + srcAddress, count);
     return true;
 }
 

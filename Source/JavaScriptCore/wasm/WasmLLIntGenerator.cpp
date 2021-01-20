@@ -338,7 +338,7 @@ private:
             return m_normalizedArguments[index];
 
         const auto& callingConvention = wasmCallingConvention();
-        const uint32_t gprCount = callingConvention.gprArgs.size();
+        const uint32_t gprCount = callingConvention.jsrArgs.size();
         const uint32_t fprCount = callingConvention.fprArgs.size();
         return virtualRegisterForLocal(index - m_codeBlock->m_numArguments + gprCount + fprCount + numberOfLLIntCalleeSaveRegisters);
     }
@@ -592,7 +592,7 @@ auto LLIntGenerator::callInformationForCaller(const Signature& signature) -> LLI
     const auto initialStackSize = m_stackSize;
 
     const auto& callingConvention = wasmCallingConvention();
-    const uint32_t gprCount = callingConvention.gprArgs.size();
+    const uint32_t gprCount = callingConvention.jsrArgs.size();
     const uint32_t fprCount = callingConvention.fprArgs.size();
 
     uint32_t stackCount = 0;
@@ -734,7 +734,7 @@ auto LLIntGenerator::callInformationForCallee(const Signature& signature) -> Vec
     m_results.reserveInitialCapacity(signature.returnCount());
 
     const auto& callingConvention = wasmCallingConvention();
-    const uint32_t gprCount = callingConvention.gprArgs.size();
+    const uint32_t gprCount = callingConvention.jsrArgs.size();
     const uint32_t fprCount = callingConvention.fprArgs.size();
 
     uint32_t gprIndex = 0;
@@ -780,7 +780,7 @@ auto LLIntGenerator::addArguments(const Signature& signature) -> PartialResult
     m_normalizedArguments.resize(m_codeBlock->m_numArguments);
 
     const auto& callingConvention = wasmCallingConvention();
-    const uint32_t gprCount = callingConvention.gprArgs.size();
+    const uint32_t gprCount = callingConvention.jsrArgs.size();
     const uint32_t fprCount = callingConvention.fprArgs.size();
     const uint32_t maxGPRIndex = gprCount;
     const uint32_t maxFPRIndex = gprCount + fprCount;
@@ -961,7 +961,7 @@ auto LLIntGenerator::addLoop(BlockSignature signature, Stack& enclosingStack, Co
         osrEntryData.append(m_normalizedArguments[i]);
 
     const auto& callingConvention = wasmCallingConvention();
-    const uint32_t gprCount = callingConvention.gprArgs.size();
+    const uint32_t gprCount = callingConvention.jsrArgs.size();
     const uint32_t fprCount = callingConvention.fprArgs.size();
     for (uint32_t i = gprCount + fprCount + numberOfLLIntCalleeSaveRegisters; i < m_codeBlock->m_numVars; i++)
         osrEntryData.append(virtualRegisterForLocal(i));

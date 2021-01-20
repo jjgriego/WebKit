@@ -582,18 +582,20 @@ def determineOS
     end
 end
 
+def isFTLEnabled
+    $jitTests && $isFTLPlatform
+end
+
 $hostOS = determineOS unless $hostOS
 $architecture = determineArchitecture unless $architecture
 $isFTLPlatform = !($architecture == "x86" || $architecture == "arm" || $architecture == "mips" || $architecture == "riscv64" || $hostOS == "windows" || $hostOS == "playstation")
+# Special case armv7, we want to run the wasm tests temporarily without B3/Air support
+$isWasmPlatform = isFTLEnabled || $architecture == "arm"
 
 if $architecture == "x86"
     # The JIT is temporarily disabled on this platform since
     # https://trac.webkit.org/changeset/237547
     $jitTests = false
-end
-
-def isFTLEnabled
-    $jitTests && $isFTLPlatform
 end
 
 if !$testRunnerType
@@ -1727,8 +1729,7 @@ def noNoLLIntRunModules
 end
 
 def runWebAssembly
-    return if !$jitTests
-    return if !$isFTLPlatform
+    return if !$isWasmPlatform
     run("default-wasm", "-m", *FTL_OPTIONS)
     if $mode != "quick"
         run("wasm-no-cjit-yes-tls-context", "-m", "--useFastTLSForWasmContext=true", *(FTL_OPTIONS + NO_CJIT_OPTIONS))
@@ -1736,15 +1737,16 @@ def runWebAssembly
         run("wasm-eager-jettison", "-m", "--forceCodeBlockToJettisonDueToOldAge=true", "--useRandomizingExecutableIslandAllocation=true", "--verifyGC=true", *FTL_OPTIONS)
         run("wasm-no-tls-context", "-m", "--useFastTLSForWasmContext=false", *FTL_OPTIONS)
         run("wasm-slow-memory", "-m", "--useWebAssemblyFastMemory=false", *FTL_OPTIONS)
+        run("wasm-collect-continuously", "-m", "--collectContinuously=true", "--verifyGC=true", *FTL_OPTIONS) if shouldCollectContinuously?
+    end
+    if $isFTLPlatform
         run("wasm-b3", "-m", "--useWasmLLInt=false", "--wasmBBQUsesAir=false", *FTL_OPTIONS)
         run("wasm-air", "-m", "--useWasmLLInt=false", "--useRandomizingExecutableIslandAllocation=true", *FTL_OPTIONS)
-        run("wasm-collect-continuously", "-m", "--collectContinuously=true", "--verifyGC=true", *FTL_OPTIONS) if shouldCollectContinuously?
     end
 end
 
 def runWebAssemblyJetStream2
-    return if !$jitTests
-    return if !$isFTLPlatform
+    return if !$isWasmPlatform
 
     if $memoryLimited
         skip
@@ -1763,15 +1765,16 @@ def runWebAssemblyJetStream2
         run("wasm-eager-jettison", "--forceCodeBlockToJettisonDueToOldAge=true", "--verifyGC=true", *FTL_OPTIONS)
         run("wasm-no-tls-context", "--useFastTLSForWasmContext=false", *FTL_OPTIONS)
         run("wasm-slow-memory", "--useWebAssemblyFastMemory=false", *FTL_OPTIONS)
+        run("wasm-collect-continuously", "--collectContinuously=true", "--verifyGC=true", *FTL_OPTIONS) if shouldCollectContinuously?
+    end
+    if $FTLPlatform
         run("wasm-b3", "--useWasmLLInt=false", "--wasmBBQUsesAir=false", *FTL_OPTIONS)
         run("wasm-air", "--useWasmLLInt=false", "--useRandomizingExecutableIslandAllocation=true", *FTL_OPTIONS)
-        run("wasm-collect-continuously", "--collectContinuously=true", "--verifyGC=true", *FTL_OPTIONS) if shouldCollectContinuously?
     end
 end
 
 def runWebAssemblySuite(*optionalTestSpecificOptions)
-    return if !$jitTests
-    return if !$isFTLPlatform
+    return if !$isWasmPlatform
     modules = Dir[WASMTESTS_PATH + "*.js"].map { |f| File.basename(f) }
     prepareExtraAbsoluteFiles(WASMTESTS_PATH, ["wasm.json"])
     prepareExtraRelativeFiles(modules.map { |f| "../" + f }, $collection)
@@ -1787,9 +1790,11 @@ def runWebAssemblySuite(*optionalTestSpecificOptions)
         run("wasm-eager-jettison", "--forceCodeBlockToJettisonDueToOldAge=true", "--useRandomizingExecutableIslandAllocation=true", "--verifyGC=true", *(FTL_OPTIONS + optionalTestSpecificOptions))
         run("wasm-no-tls-context", "--useFastTLSForWasmContext=false", *(FTL_OPTIONS + optionalTestSpecificOptions))
         run("wasm-slow-memory", "--useWebAssemblyFastMemory=false", *(FTL_OPTIONS + optionalTestSpecificOptions))
+        run("wasm-collect-continuously", "--collectContinuously=true", "--verifyGC=true", *(FTL_OPTIONS + optionalTestSpecificOptions)) if shouldCollectContinuously?
+    end
+    if $isFTLPlatform
         run("wasm-b3", "--useWasmLLInt=false", "--wasmBBQUsesAir=false", *(FTL_OPTIONS + optionalTestSpecificOptions))
         run("wasm-air", "--useWasmLLInt=false", "--useRandomizingExecutableIslandAllocation=true", *(FTL_OPTIONS + optionalTestSpecificOptions))
-        run("wasm-collect-continuously", "--collectContinuously=true", "--verifyGC=true", *(FTL_OPTIONS + optionalTestSpecificOptions)) if shouldCollectContinuously?
     end
 end
 
@@ -1804,8 +1809,9 @@ end
 
 def runWebAssemblyWithHarness(*optionalTestSpecificOptions)
     raise unless $benchmark.to_s =~ /harness\.m?js/
-    return if !$jitTests
-    return if !$isFTLPlatform
+    return if !$isWasmPlatform
+    # Skip this completely on armv7 for now, since most of the tests are related to OSR and it's a bit hairy to skip them manually
+    return if $architecture == "arm"
 
     wasmFiles = allWasmFiles($collection)
     prepareExtraRelativeFiles(wasmFiles.map { |f| f.basename }, $collection)
@@ -1817,9 +1823,11 @@ def runWebAssemblyWithHarness(*optionalTestSpecificOptions)
         runHarnessTest("wasm-eager-jettison", "--forceCodeBlockToJettisonDueToOldAge=true", "--useRandomizingExecutableIslandAllocation=true", "--verifyGC=true", *(FTL_OPTIONS + optionalTestSpecificOptions))
         runHarnessTest("wasm-no-tls-context", "--useFastTLSForWasmContext=false", *(FTL_OPTIONS + optionalTestSpecificOptions))
         runHarnessTest("wasm-slow-memory", "--useWebAssemblyFastMemory=false", *(FTL_OPTIONS + optionalTestSpecificOptions))
+        runHarnessTest("wasm-collect-continuously", "--collectContinuously=true", "--verifyGC=true", *(FTL_OPTIONS + optionalTestSpecificOptions)) if shouldCollectContinuously?
+    end
+    if $isFTLPlatform
         runHarnessTest("wasm-b3", "--useWasmLLInt=false", "--wasmBBQUsesAir=false", *(FTL_OPTIONS + optionalTestSpecificOptions))
         runHarnessTest("wasm-no-air", "--useWasmLLInt=false", "--useRandomizingExecutableIslandAllocation=true", *(FTL_OPTIONS + optionalTestSpecificOptions))
-        runHarnessTest("wasm-collect-continuously", "--collectContinuously=true", "--verifyGC=true", *(FTL_OPTIONS + optionalTestSpecificOptions)) if shouldCollectContinuously?
     end
 end
 
@@ -1828,8 +1836,7 @@ def runWebAssemblyEmscripten(mode)
     when :skip
         return
     end
-    return if !$jitTests
-    return if !$isFTLPlatform
+    return if !$isWasmPlatform
     wasm = $benchmark.to_s.sub! '.js', '.wasm'
     prepareExtraRelativeFiles([Pathname('..') + wasm], $collection)
     run("default-wasm", *FTL_OPTIONS)
@@ -1837,9 +1844,11 @@ def runWebAssemblyEmscripten(mode)
         run("wasm-no-cjit-yes-tls-context", "--useFastTLSForWasmContext=true", *(FTL_OPTIONS + NO_CJIT_OPTIONS))
         run("wasm-eager-jettison", "--forceCodeBlockToJettisonDueToOldAge=true", "--useRandomizingExecutableIslandAllocation=true", "--verifyGC=true", *FTL_OPTIONS)
         run("wasm-no-tls-context", "--useFastTLSForWasmContext=false", *FTL_OPTIONS)
+        run("wasm-collect-continuously", "--collectContinuously=true", "--verifyGC=true", *FTL_OPTIONS) if shouldCollectContinuously?
+    end
+    if $isFTLPlatform
         run("wasm-b3", "--useWasmLLInt=false", "--wasmBBQUsesAir=false", *FTL_OPTIONS)
         run("wasm-air", "--useWasmLLInt=false", "--useRandomizingExecutableIslandAllocation=true", *FTL_OPTIONS)
-        run("wasm-collect-continuously", "--collectContinuously=true", "--verifyGC=true", *FTL_OPTIONS) if shouldCollectContinuously?
     end
 end
 
@@ -1848,8 +1857,7 @@ def runWebAssemblySpecTestBase(mode, specHarnessPath, *optionalTestSpecificOptio
     when :skip
         return
     end
-    return if !$jitTests
-    return if !$isFTLPlatform
+    return if !$isWasmPlatform
     prepareExtraAbsoluteFiles(WASMTESTS_PATH, ["wasm.json"])
 
     modules = Dir[WASMTESTS_PATH + "*.js"].map { |f| File.basename(f) }
@@ -1864,9 +1872,11 @@ def runWebAssemblySpecTestBase(mode, specHarnessPath, *optionalTestSpecificOptio
       runWithOutputHandler("wasm-no-cjit-yes-tls-context", noisyOutputHandler, specHarnessJsPath,  "--useFastTLSForWasmContext=true", *(FTL_OPTIONS + NO_CJIT_OPTIONS + optionalTestSpecificOptions))
       runWithOutputHandler("wasm-eager-jettison", noisyOutputHandler, specHarnessJsPath, "--forceCodeBlockToJettisonDueToOldAge=true", "--useRandomizingExecutableIslandAllocation=true", "--verifyGC=true", *(FTL_OPTIONS + optionalTestSpecificOptions))
       runWithOutputHandler("wasm-no-tls-context", noisyOutputHandler, specHarnessJsPath, "--useFastTLSForWasmContext=false", *(FTL_OPTIONS + optionalTestSpecificOptions))
-      runWithOutputHandler("wasm-b3", noisyOutputHandler, specHarnessJsPath, "--useWasmLLInt=false", "--wasmBBQUsesAir=false", *(FTL_OPTIONS + optionalTestSpecificOptions))
-      runWithOutputHandler("wasm-air", noisyOutputHandler, specHarnessJsPath, "--useWasmLLInt=false", "--useRandomizingExecutableIslandAllocation=true", *(FTL_OPTIONS + optionalTestSpecificOptions))
       runWithOutputHandler("wasm-collect-continuously", noisyOutputHandler, specHarnessJsPath, "--collectContinuously=true", "--verifyGC=true", *(FTL_OPTIONS + optionalTestSpecificOptions)) if shouldCollectContinuously?
+    end
+    if $isFTLPlatform
+        runWithOutputHandler("wasm-b3", noisyOutputHandler, specHarnessJsPath, "--useWasmLLInt=false", "--wasmBBQUsesAir=false", *(FTL_OPTIONS + optionalTestSpecificOptions))
+        runWithOutputHandler("wasm-air", noisyOutputHandler, specHarnessJsPath, "--useWasmLLInt=false", "--useRandomizingExecutableIslandAllocation=true", *(FTL_OPTIONS + optionalTestSpecificOptions))
     end
 end
 
@@ -1883,8 +1893,7 @@ def runWebAssemblyFunctionReferenceSpecTest(mode)
 end
 
 def runWebAssemblyLowExecutableMemory(*optionalTestSpecificOptions)
-    return if !$jitTests
-    return if !$isFTLPlatform
+    return if !$isWasmPlatform
     modules = Dir[WASMTESTS_PATH + "*.js"].map { |f| File.basename(f) }
     prepareExtraAbsoluteFiles(WASMTESTS_PATH, ["wasm.json"])
     prepareExtraRelativeFiles(modules.map { |f| "../" + f }, $collection)

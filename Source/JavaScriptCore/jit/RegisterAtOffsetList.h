@@ -65,11 +65,14 @@ public:
     FixedVector<RegisterAtOffset>::const_iterator begin() const { return m_registers.begin(); }
     FixedVector<RegisterAtOffset>::const_iterator end() const { return m_registers.end(); }
 
+    size_t sizeOfAreaInBytes() const { return m_sizeOfAreaInBytes; }
+
     static const RegisterAtOffsetList& llintBaselineCalleeSaveRegisters(); // Registers and Offsets saved and used by the LLInt.
     static const RegisterAtOffsetList& dfgCalleeSaveRegisters(); // Registers and Offsets saved and used by DFG.
 
 private:
     FixedVector<RegisterAtOffset> m_registers;
+    size_t m_sizeOfAreaInBytes;
 };
 
 } // namespace JSC
