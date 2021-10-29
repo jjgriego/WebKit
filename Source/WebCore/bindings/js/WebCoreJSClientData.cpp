@@ -41,6 +41,7 @@
 #include "JSSharedWorkerGlobalScope.h"
 #include "JSWindowProxy.h"
 #include "JSWorkerGlobalScope.h"
+#include "JSShadowRealmGlobalScope.h"
 #include "JSWorkletGlobalScope.h"
 #include <JavaScriptCore/FastMallocAlignedMemoryAllocator.h>
 #include <JavaScriptCore/HeapInlines.h>
@@ -68,6 +69,7 @@ JSVMClientData::JSVMClientData(VM& vm)
     , m_heapCellTypeForJSRemoteDOMWindow(JSC::IsoHeapCellType::Args<JSRemoteDOMWindow>())
     , m_heapCellTypeForJSWorkerGlobalScope(JSC::IsoHeapCellType::Args<JSWorkerGlobalScope>())
     , m_heapCellTypeForJSSharedWorkerGlobalScope(JSC::IsoHeapCellType::Args<JSSharedWorkerGlobalScope>())
+    , m_heapCellTypeForJSShadowRealmGlobalScope(JSC::IsoHeapCellType::Args<JSShadowRealmGlobalScope>())
 #if ENABLE(SERVICE_WORKER)
     , m_heapCellTypeForJSServiceWorkerGlobalScope(JSC::IsoHeapCellType::Args<JSServiceWorkerGlobalScope>())
 #endif

@@ -25,39 +25,47 @@
 
 #pragma once
 
-#include "JSCJSValueInlines.h"
-#include "JSObject.h"
+#include <JavaScriptCore/RuntimeFlags.h>
+#include <JavaScriptCore/Strong.h>
+#include <JavaScriptCore/Weak.h>
+#include <wtf/IsoMalloc.h>
+#include <wtf/RefCounted.h>
+#include <wtf/RefPtr.h>
+#include <memory>
 
-namespace JSC {
+namespace JSC { class VM; }
 
-class ShadowRealmObject final : public JSNonFinalObject {
+namespace WebCore {
+
+class JSShadowRealmGlobalScopeBase;
+class JSDOMGlobalObject;
+class ScriptModuleLoader;
+class ScriptExecutionContext;
+
+class ShadowRealmGlobalScope : public RefCounted<ShadowRealmGlobalScope>
+{
+    friend class JSShadowRealmGlobalScopeBase;
+    WTF_MAKE_ISO_ALLOCATED(ShadowRealmGlobalScope);
+
 public:
-    using Base = JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static RefPtr<ShadowRealmGlobalScope> tryCreate(JSC::VM& vm, JSDOMGlobalObject*);
+    ~ShadowRealmGlobalScope();
 
-    template<typename CellType, SubspaceAccess mode>
-    static IsoSubspace* subspaceFor(VM& vm)
-    {
-        return vm.shadowRealmSpace<mode>();
-    }
+    JSC::RuntimeFlags javaScriptRuntimeFlags() const;
+    ScriptExecutionContext* enclosingContext() const;
 
-    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-    {
-        return Structure::create(vm, globalObject, prototype, TypeInfo(ShadowRealmType, StructureFlags), info());
-    }
+    ShadowRealmGlobalScope& self() { return *this; }
+    ScriptModuleLoader& moduleLoader() { return *m_moduleLoader; }
+    JSShadowRealmGlobalScopeBase* wrapper();
 
-    DECLARE_INFO;
-
-    static ShadowRealmObject* create(VM&, Structure*, JSGlobalObject*);
-
-    JSGlobalObject* globalObject() { return m_globalObject.get(); }
+protected:
+    ShadowRealmGlobalScope(JSC::VM& vm, JSDOMGlobalObject*);
 
 private:
-    ShadowRealmObject(VM&, Structure*);
-    void finishCreation(VM&);
-    DECLARE_VISIT_CHILDREN;
-
-    WriteBarrier<JSGlobalObject> m_globalObject;
+    RefPtr<JSC::VM> m_vm;
+    JSC::Strong<JSDOMGlobalObject> m_incubatingWrapper;
+    JSC::Weak<JSShadowRealmGlobalScopeBase> m_wrapper{};
+    std::unique_ptr<ScriptModuleLoader> m_moduleLoader{};
 };
 
-} // namespace JSC
+} // namespace WebCore

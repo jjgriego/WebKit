@@ -23,41 +23,40 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
+#include "ShadowRealmGlobalScope.h"
 
-#include "JSCJSValueInlines.h"
-#include "JSObject.h"
+#include "JSShadowRealmGlobalScope.h"
+#include "JSDOMGlobalObject.h"
+#include "ScriptModuleLoader.h"
+#include <wtf/IsoMallocInlines.h>
 
-namespace JSC {
+namespace WebCore {
 
-class ShadowRealmObject final : public JSNonFinalObject {
-public:
-    using Base = JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
+WTF_MAKE_ISO_ALLOCATED_IMPL(ShadowRealmGlobalScope);
 
-    template<typename CellType, SubspaceAccess mode>
-    static IsoSubspace* subspaceFor(VM& vm)
-    {
-        return vm.shadowRealmSpace<mode>();
-    }
+RefPtr<ShadowRealmGlobalScope> ShadowRealmGlobalScope::tryCreate(JSC::VM& vm, JSDOMGlobalObject* wrapper) {
+    return adoptRef(new ShadowRealmGlobalScope(vm, wrapper));
+}
 
-    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-    {
-        return Structure::create(vm, globalObject, prototype, TypeInfo(ShadowRealmType, StructureFlags), info());
-    }
+ShadowRealmGlobalScope::ShadowRealmGlobalScope(JSC::VM& vm, JSDOMGlobalObject* wrapper)
+    : m_vm(&vm)
+    , m_incubatingWrapper(vm, wrapper) {}
 
-    DECLARE_INFO;
+ScriptExecutionContext* ShadowRealmGlobalScope::enclosingContext() const
+{
+    return m_incubatingWrapper->scriptExecutionContext();
+}
 
-    static ShadowRealmObject* create(VM&, Structure*, JSGlobalObject*);
+JSC::RuntimeFlags ShadowRealmGlobalScope::javaScriptRuntimeFlags() const
+{
+    auto const incubatingGlobalObj = m_incubatingWrapper;
+    return incubatingGlobalObj->globalObjectMethodTable()->javaScriptRuntimeFlags(incubatingGlobalObj.get());
+}
 
-    JSGlobalObject* globalObject() { return m_globalObject.get(); }
+JSShadowRealmGlobalScopeBase* ShadowRealmGlobalScope::wrapper() {
+    return m_wrapper.get();
+}
 
-private:
-    ShadowRealmObject(VM&, Structure*);
-    void finishCreation(VM&);
-    DECLARE_VISIT_CHILDREN;
+ShadowRealmGlobalScope::~ShadowRealmGlobalScope() {}
 
-    WriteBarrier<JSGlobalObject> m_globalObject;
-};
-
-} // namespace JSC
+} // namespace WebCore
