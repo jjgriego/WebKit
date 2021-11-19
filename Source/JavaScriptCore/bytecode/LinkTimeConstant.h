@@ -81,6 +81,7 @@ class JSGlobalObject;
     v(importInRealm, nullptr) \
     v(evalInRealm, nullptr) \
     v(moveFunctionToRealm, nullptr) \
+    v(moveSharedArrayBufferToRealm, nullptr) \
     v(isConstructor, nullptr) \
     v(sameValue, nullptr) \
     v(regExpProtoFlagsGetter, nullptr) \

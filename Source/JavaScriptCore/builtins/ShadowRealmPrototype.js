@@ -54,6 +54,11 @@ function wrap(fromShadowRealm, shadowRealm, target)
         if (!fromShadowRealm)
             @moveFunctionToRealm(wrapped, shadowRealm);
         return wrapped;
+    } else if (@isArrayBuffer(target)) {
+        var callerRealm = null;
+        if (!fromShadowRealm)
+            callerRealm = shadowRealm;
+        return @moveSharedArrayBufferToRealm(target, callerRealm);
     } else if (@isObject(target)) {
         @throwTypeError("value passing between realms must be callable or primitive");
     }

@@ -543,6 +543,7 @@ bool canUseWebAssemblyFastMemory();
     v(Bool, useSharedArrayBuffer, false, Normal, nullptr) \
     /* FIXME: ShadownRealm can be enabled once WebCore's JSGlobalObject == JSDOMGlobalObject assumption is removed,  https://bugs.webkit.org/show_bug.cgi?id=231506 */\
     v(Bool, useShadowRealm, false, Normal, "Expose the ShadowRealm object.") \
+    v(Bool, allowSharedArrayBuffersCrossRealm, false, Normal, "Allow SharedArrayBuffer into/out of Shadow Realms") \
     v(Bool, useTemporal, false, Normal, "Expose the Temporal object.") \
     v(Bool, useWebAssemblyThreading, true, Normal, "Allow instructions from the wasm threading spec.") \
     v(Bool, useWebAssemblyTypedFunctionReferences, false, Normal, "Allow function types from the wasm typed function references spec.") \

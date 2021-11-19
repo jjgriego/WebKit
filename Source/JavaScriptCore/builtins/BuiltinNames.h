@@ -119,6 +119,7 @@ namespace JSC {
     macro(importInRealm) \
     macro(evalInRealm) \
     macro(moveFunctionToRealm) \
+    macro(moveSharedArrayBufferToRealm) \
     macro(thisTimeValue) \
     macro(newTargetLocal) \
     macro(derivedConstructor) \

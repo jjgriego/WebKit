@@ -174,3 +174,32 @@ function shouldThrow(func, errorType, assertionFn) {
     shouldBe(retrievedFoo, false);
     shouldBe(anotherFoo, 42);
 }
+
+{
+    let realm = new ShadowRealm();
+
+    let f = realm.evaluate("(x) => new SharedArrayBuffer(1024)");
+
+    shouldThrow(
+        () => {
+            let sab = new SharedArrayBuffer(1024);
+            f(sab);
+        },
+        TypeError,
+        (err) => {
+            shouldBe($.globalObjectFor(err), globalThis);
+            shouldBe(String(err), "TypeError: value passing between realms must be callable or primitive");
+        }
+    );
+
+    shouldThrow(
+        () => {
+            let sab = f(42);
+        },
+        TypeError,
+        (err) => {
+            shouldBe($.globalObjectFor(err), globalThis);
+            shouldBe(String(err), "TypeError: value passing between realms must be callable or primitive");
+        }
+    );
+}

@@ -29,6 +29,7 @@
 #include "AuxiliaryBarrierInlines.h"
 #include "IndirectEvalExecutable.h"
 #include "Interpreter.h"
+#include "JSArrayBuffer.h"
 #include "JSGlobalObject.h"
 #include "JSInternalPromise.h"
 #include "JSModuleLoader.h"
@@ -140,6 +141,49 @@ JSC_DEFINE_HOST_FUNCTION(moveFunctionToRealm, (JSGlobalObject* globalObject, Cal
     JSGlobalObject* targetGlobalObj = targetRealm->globalObject();
     wrappedFn->setPrototype(vm, targetGlobalObj, targetGlobalObj->strictFunctionStructure(isBuiltin)->storedPrototype());
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(moveSharedArrayBufferToRealm, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!Options::allowSharedArrayBuffersCrossRealm()) {
+        throwVMError(globalObject, scope, createTypeError(globalObject, "value passing between realms must be callable or primitive"_s));
+    }
+    RETURN_IF_EXCEPTION(scope, { });
+
+    ArrayBuffer* buffer = toPossiblySharedArrayBuffer(vm, callFrame->argument(0));
+    if (!buffer->isShared()) {
+        throwVMError(globalObject, scope, createTypeError(globalObject, "Only shared ArrayBuffers can pass between realms, not regular ArrayBuffers"_s));
+    }
+    RETURN_IF_EXCEPTION(scope, { });
+
+    ASSERT(buffer && buffer->isShared());
+
+    // We cannot reuse the same ArrayBuffer, since the rest of the runtime
+    // expects ArrayBuffers to be in a one-to-one correspondence with their
+    // wrapping JSArrayBuffer objects. However, we can create a new ArrayBuffer
+    // from scratch and ensure that the backing memory is shared.
+
+    ArrayBufferContents contents{};
+    auto success = buffer->shareWith(contents);
+    ASSERT(success);
+    auto realmBuffer = ArrayBuffer::create(WTFMove(contents));
+
+    JSValue targetRealmArg = callFrame->argument(1);
+    JSGlobalObject* targetGlobalObj =
+        [&] {
+            ShadowRealmObject* targetRealm = jsDynamicCast<ShadowRealmObject*>(vm, targetRealmArg);
+            if (!targetRealm) {
+                return globalObject;
+            }
+            return targetRealm->globalObject();
+        }();
+    RETURN_IF_EXCEPTION(scope, { });
+
+    JSArrayBuffer* result = JSArrayBuffer::create(vm, targetGlobalObj->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTFMove(realmBuffer));
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
 }
 
 } // namespace JSC
