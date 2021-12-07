@@ -44,10 +44,10 @@
 #include "JSRTCSessionDescription.h"
 #include "JSReadableStream.h"
 #include "JSRemoteDOMWindow.h"
+#include "JSShadowRealmGlobalScope.h"
+#include "JSShadowRealmGlobalScopeBase.h"
 #include "JSWorkerGlobalScope.h"
 #include "JSWorkletGlobalScope.h"
-#include "JSShadowRealmGlobalScopeBase.h"
-#include "JSShadowRealmGlobalScope.h"
 #include "JSWritableStream.h"
 #include "RejectedPromiseTracker.h"
 #include "RuntimeEnabledFeatures.h"
@@ -334,23 +334,6 @@ void JSDOMGlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* jsGlo
     reportException(jsGlobalObject, exception);
 }
 
-JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    auto domGlobalObject = jsCast<JSDOMGlobalObject*>(globalObject);
-    ASSERT(domGlobalObject);
-    auto scope = ShadowRealmGlobalScope::tryCreate(vm, domGlobalObject).releaseNonNull();
-
-    Structure* structure = JSShadowRealmGlobalScope::createStructure(vm, nullptr, JSC::jsNull());
-    auto proxyStructure = JSProxy::createStructure(vm, nullptr, JSC::jsNull());
-    auto proxy = JSProxy::create(vm, proxyStructure);
-    auto wrapper = JSShadowRealmGlobalScope::create(vm, structure, WTFMove(scope), proxy);
-
-    wrapper->setPrototypeDirect(vm, wrapper->objectPrototype());
-    proxy->setTarget(vm, wrapper);
-
-    return wrapper;
-}
-
 void JSDOMGlobalObject::clearDOMGuardedObjects() const
 {
     // No locking is necessary here since we are not directly modifying the returned container.
@@ -518,26 +501,24 @@ JSC::JSPromise* JSDOMGlobalObject::instantiateStreaming(JSC::JSGlobalObject* glo
 }
 #endif
 
-ScriptModuleLoader* JSDOMGlobalObject::scriptModuleLoader() const
+static ScriptModuleLoader* scriptModuleLoader(JSDOMGlobalObject* globalObject)
 {
-    VM& vm = this->vm();
-    if (inherits<JSDOMWindowBase>(vm)) {
-        if (auto document = jsCast<const JSDOMWindowBase*>(this)->wrapped().document())
+    VM& vm = globalObject->vm();
+    if (globalObject->inherits<JSDOMWindowBase>(vm)) {
+        if (auto document = jsCast<const JSDOMWindowBase*>(globalObject)->wrapped().document())
             return &document->moduleLoader();
         return nullptr;
     }
-    if (inherits<JSRemoteDOMWindowBase>(vm))
+    if (globalObject->inherits<JSRemoteDOMWindowBase>(vm))
         return nullptr;
-    if (inherits<JSShadowRealmGlobalScopeBase>(vm))
-        return &jsCast<const JSShadowRealmGlobalScopeBase*>(this)->wrapped().moduleLoader();
-    if (inherits<JSWorkerGlobalScopeBase>(vm))
-        return &jsCast<const JSWorkerGlobalScopeBase*>(this)->wrapped().moduleLoader();
-    if (inherits<JSWorkletGlobalScopeBase>(vm))
-        return &jsCast<const JSWorkletGlobalScopeBase*>(this)->wrapped().moduleLoader();
-    if (inherits<JSIDBSerializationGlobalObject>(vm))
+    if (globalObject->inherits<JSWorkerGlobalScopeBase>(vm))
+        return &jsCast<const JSWorkerGlobalScopeBase*>(globalObject)->wrapped().moduleLoader();
+    if (globalObject->inherits<JSWorkletGlobalScopeBase>(vm))
+        return &jsCast<const JSWorkletGlobalScopeBase*>(globalObject)->wrapped().moduleLoader();
+    if (globalObject->inherits<JSIDBSerializationGlobalObject>(vm))
         return nullptr;
 
-    dataLog("Unexpected global object: ", JSValue(this), "\n");
+    dataLog("Unexpected global object: ", JSValue(globalObject), "\n");
     RELEASE_ASSERT_NOT_REACHED();
     return nullptr;
 }
@@ -545,7 +526,7 @@ ScriptModuleLoader* JSDOMGlobalObject::scriptModuleLoader() const
 JSC::Identifier JSDOMGlobalObject::moduleLoaderResolve(JSC::JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSValue moduleName, JSC::JSValue importerModuleKey, JSC::JSValue scriptFetcher)
 {
     JSDOMGlobalObject* thisObject = JSC::jsCast<JSDOMGlobalObject*>(globalObject);
-    if (auto* loader = thisObject->scriptModuleLoader())
+    if (auto* loader = scriptModuleLoader(thisObject))
         return loader->resolve(globalObject, moduleLoader, moduleName, importerModuleKey, scriptFetcher);
     return { };
 }
@@ -555,7 +536,7 @@ JSC::JSInternalPromise* JSDOMGlobalObject::moduleLoaderFetch(JSC::JSGlobalObject
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSDOMGlobalObject* thisObject = JSC::jsCast<JSDOMGlobalObject*>(globalObject);
-    if (auto* loader = thisObject->scriptModuleLoader())
+    if (auto* loader = scriptModuleLoader(thisObject))
         RELEASE_AND_RETURN(scope, loader->fetch(globalObject, moduleLoader, moduleKey, parameters, scriptFetcher));
     JSC::JSInternalPromise* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
     scope.release();
@@ -566,7 +547,7 @@ JSC::JSInternalPromise* JSDOMGlobalObject::moduleLoaderFetch(JSC::JSGlobalObject
 JSC::JSValue JSDOMGlobalObject::moduleLoaderEvaluate(JSC::JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSValue moduleKey, JSC::JSValue moduleRecord, JSC::JSValue scriptFetcher, JSC::JSValue awaitedValue, JSC::JSValue resumeMode)
 {
     JSDOMGlobalObject* thisObject = JSC::jsCast<JSDOMGlobalObject*>(globalObject);
-    if (auto* loader = thisObject->scriptModuleLoader())
+    if (auto* loader = scriptModuleLoader(thisObject))
         return loader->evaluate(globalObject, moduleLoader, moduleKey, moduleRecord, scriptFetcher, awaitedValue, resumeMode);
     return JSC::jsUndefined();
 }
@@ -576,7 +557,7 @@ JSC::JSInternalPromise* JSDOMGlobalObject::moduleLoaderImportModule(JSC::JSGloba
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSDOMGlobalObject* thisObject = JSC::jsCast<JSDOMGlobalObject*>(globalObject);
-    if (auto* loader = thisObject->scriptModuleLoader())
+    if (auto* loader = scriptModuleLoader(thisObject))
         RELEASE_AND_RETURN(scope, loader->importModule(globalObject, moduleLoader, moduleName, parameters, sourceOrigin));
     JSC::JSInternalPromise* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
     scope.release();
@@ -587,10 +568,33 @@ JSC::JSInternalPromise* JSDOMGlobalObject::moduleLoaderImportModule(JSC::JSGloba
 JSC::JSObject* JSDOMGlobalObject::moduleLoaderCreateImportMetaProperties(JSC::JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSValue moduleKey, JSC::JSModuleRecord* moduleRecord, JSC::JSValue scriptFetcher)
 {
     JSDOMGlobalObject* thisObject = JSC::jsCast<JSDOMGlobalObject*>(globalObject);
-    if (auto* loader = thisObject->scriptModuleLoader())
+    if (auto* loader = scriptModuleLoader(thisObject))
         return loader->createImportMetaProperties(globalObject, moduleLoader, moduleKey, moduleRecord, scriptFetcher);
     return constructEmptyObject(globalObject->vm(), globalObject->nullPrototypeObjectStructure());
 }
+
+JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    auto domGlobalObject = jsCast<JSDOMGlobalObject*>(globalObject);
+
+    ASSERT(domGlobalObject);
+    auto scope = ShadowRealmGlobalScope::tryCreate(
+        vm,
+        domGlobalObject,
+        scriptModuleLoader(domGlobalObject)
+    ).releaseNonNull();
+
+    Structure* structure = JSShadowRealmGlobalScope::createStructure(vm, nullptr, JSC::jsNull());
+    auto proxyStructure = JSProxy::createStructure(vm, nullptr, JSC::jsNull());
+    auto proxy = JSProxy::create(vm, proxyStructure);
+    auto wrapper = JSShadowRealmGlobalScope::create(vm, structure, WTFMove(scope), proxy);
+
+    wrapper->setPrototypeDirect(vm, wrapper->objectPrototype());
+    proxy->setTarget(vm, wrapper);
+
+    return wrapper;
+}
+
 
 JSDOMGlobalObject* toJSDOMGlobalObject(ScriptExecutionContext& context, DOMWrapperWorld& world)
 {

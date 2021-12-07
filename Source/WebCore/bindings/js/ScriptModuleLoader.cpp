@@ -77,7 +77,7 @@ ScriptModuleLoader::~ScriptModuleLoader()
 
 std::unique_ptr<ScriptModuleLoader> ScriptModuleLoader::shadowRealmLoader(JSC::JSGlobalObject* realmGlobal) const
 {
-    auto loader = std::make_unique<ScriptModuleLoader>(m_context, m_ownerType);
+    auto loader = WTF::makeUnique<ScriptModuleLoader>(m_context, m_ownerType);
     loader->m_shadowRealmGlobal = realmGlobal;
     return loader;
 }

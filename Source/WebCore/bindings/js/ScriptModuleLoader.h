@@ -75,7 +75,7 @@ private:
     HashMap<String, URL> m_requestURLToResponseURLMap;
     HashSet<Ref<ModuleScriptLoader>> m_loaders;
     OwnerType m_ownerType;
-    JSC::JSGlobalObject* m_shadowRealmGlobal{nullptr};
+    JSC::JSGlobalObject* m_shadowRealmGlobal { nullptr };
 };
 
 } // namespace WebCore

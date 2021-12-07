@@ -28,10 +28,10 @@
 #include <JavaScriptCore/RuntimeFlags.h>
 #include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/Weak.h>
+#include <memory>
 #include <wtf/IsoMalloc.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
-#include <memory>
 
 namespace JSC { class VM; }
 
@@ -42,30 +42,30 @@ class JSDOMGlobalObject;
 class ScriptModuleLoader;
 class ScriptExecutionContext;
 
-class ShadowRealmGlobalScope : public RefCounted<ShadowRealmGlobalScope>
-{
+class ShadowRealmGlobalScope : public RefCounted<ShadowRealmGlobalScope> {
     friend class JSShadowRealmGlobalScopeBase;
     WTF_MAKE_ISO_ALLOCATED(ShadowRealmGlobalScope);
 
 public:
-    static RefPtr<ShadowRealmGlobalScope> tryCreate(JSC::VM& vm, JSDOMGlobalObject*);
+    static RefPtr<ShadowRealmGlobalScope> tryCreate(JSC::VM&, JSDOMGlobalObject*, ScriptModuleLoader*);
     ~ShadowRealmGlobalScope();
 
     JSC::RuntimeFlags javaScriptRuntimeFlags() const;
     ScriptExecutionContext* enclosingContext() const;
 
     ShadowRealmGlobalScope& self() { return *this; }
-    ScriptModuleLoader& moduleLoader() { return *m_moduleLoader; }
+    ScriptModuleLoader& moduleLoader();
     JSShadowRealmGlobalScopeBase* wrapper();
 
 protected:
-    ShadowRealmGlobalScope(JSC::VM& vm, JSDOMGlobalObject*);
+    ShadowRealmGlobalScope(JSC::VM&, JSDOMGlobalObject*, ScriptModuleLoader*);
 
 private:
     RefPtr<JSC::VM> m_vm;
     JSC::Strong<JSDOMGlobalObject> m_incubatingWrapper;
-    JSC::Weak<JSShadowRealmGlobalScopeBase> m_wrapper{};
-    std::unique_ptr<ScriptModuleLoader> m_moduleLoader{};
+    ScriptModuleLoader* m_parentLoader;
+    JSC::Weak<JSShadowRealmGlobalScopeBase> m_wrapper { };
+    std::unique_ptr<ScriptModuleLoader> m_moduleLoader { };
 };
 
 } // namespace WebCore

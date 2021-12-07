@@ -73,7 +73,6 @@ public:
     JSDOMStructureMap& structures(NoLockingNecessaryTag) WTF_IGNORES_THREAD_SAFETY_ANALYSIS { ASSERT(!vm().heap.mutatorShouldBeFenced()); return m_structures; }
     DOMGuardedObjectSet& guardedObjects(NoLockingNecessaryTag) WTF_IGNORES_THREAD_SAFETY_ANALYSIS { ASSERT(!vm().heap.mutatorShouldBeFenced()); return m_guardedObjects; }
 
-    ScriptModuleLoader* scriptModuleLoader() const;
     ScriptExecutionContext* scriptExecutionContext() const;
 
     // Make binding code generation easier.
@@ -88,7 +87,7 @@ public:
     JSBuiltinInternalFunctions& builtinInternalFunctions() { return m_builtinInternalFunctions; }
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
-    static JSC::JSGlobalObject* deriveShadowRealmGlobalObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+    static JSC::JSGlobalObject* deriveShadowRealmGlobalObject(JSC::VM&, JSC::JSGlobalObject*);
 
     void clearDOMGuardedObjects() const;
 

@@ -23,10 +23,11 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "config.h"
 #include "ShadowRealmGlobalScope.h"
 
-#include "JSShadowRealmGlobalScope.h"
 #include "JSDOMGlobalObject.h"
+#include "JSShadowRealmGlobalScope.h"
 #include "ScriptModuleLoader.h"
 #include <wtf/IsoMallocInlines.h>
 
@@ -34,17 +35,32 @@ namespace WebCore {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(ShadowRealmGlobalScope);
 
-RefPtr<ShadowRealmGlobalScope> ShadowRealmGlobalScope::tryCreate(JSC::VM& vm, JSDOMGlobalObject* wrapper) {
-    return adoptRef(new ShadowRealmGlobalScope(vm, wrapper));
+RefPtr<ShadowRealmGlobalScope> ShadowRealmGlobalScope::tryCreate(JSC::VM& vm, JSDOMGlobalObject* wrapper, ScriptModuleLoader* loader)
+{
+    return adoptRef(new ShadowRealmGlobalScope(vm, wrapper, loader));
 }
 
-ShadowRealmGlobalScope::ShadowRealmGlobalScope(JSC::VM& vm, JSDOMGlobalObject* wrapper)
+ShadowRealmGlobalScope::ShadowRealmGlobalScope(JSC::VM& vm, JSDOMGlobalObject* wrapper, ScriptModuleLoader* loader)
     : m_vm(&vm)
-    , m_incubatingWrapper(vm, wrapper) {}
+    , m_incubatingWrapper(vm, wrapper)
+    , m_parentLoader(loader)
+{ }
 
 ScriptExecutionContext* ShadowRealmGlobalScope::enclosingContext() const
 {
     return m_incubatingWrapper->scriptExecutionContext();
+}
+
+ScriptModuleLoader& ShadowRealmGlobalScope::moduleLoader()
+{
+    if (m_moduleLoader)
+        return *m_moduleLoader;
+
+    auto wrapper = m_wrapper.get();
+    ASSERT(wrapper);
+
+    m_moduleLoader = m_parentLoader->shadowRealmLoader(wrapper);
+    return *m_moduleLoader;
 }
 
 JSC::RuntimeFlags ShadowRealmGlobalScope::javaScriptRuntimeFlags() const
@@ -53,10 +69,11 @@ JSC::RuntimeFlags ShadowRealmGlobalScope::javaScriptRuntimeFlags() const
     return incubatingGlobalObj->globalObjectMethodTable()->javaScriptRuntimeFlags(incubatingGlobalObj.get());
 }
 
-JSShadowRealmGlobalScopeBase* ShadowRealmGlobalScope::wrapper() {
+JSShadowRealmGlobalScopeBase* ShadowRealmGlobalScope::wrapper()
+{
     return m_wrapper.get();
 }
 
-ShadowRealmGlobalScope::~ShadowRealmGlobalScope() {}
+ShadowRealmGlobalScope::~ShadowRealmGlobalScope() { }
 
 } // namespace WebCore

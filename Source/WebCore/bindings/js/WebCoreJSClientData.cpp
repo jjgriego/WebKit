@@ -38,10 +38,10 @@
 #include "JSPaintWorkletGlobalScope.h"
 #include "JSRemoteDOMWindow.h"
 #include "JSServiceWorkerGlobalScope.h"
+#include "JSShadowRealmGlobalScope.h"
 #include "JSSharedWorkerGlobalScope.h"
 #include "JSWindowProxy.h"
 #include "JSWorkerGlobalScope.h"
-#include "JSShadowRealmGlobalScope.h"
 #include "JSWorkletGlobalScope.h"
 #include <JavaScriptCore/FastMallocAlignedMemoryAllocator.h>
 #include <JavaScriptCore/HeapInlines.h>

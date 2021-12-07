@@ -27,10 +27,10 @@
 #include "JSShadowRealmGlobalScopeBase.h"
 
 #include "EventLoop.h"
-#include "JSShadowRealmGlobalScope.h"
 #include "JSMicrotaskCallback.h"
-#include "ShadowRealmGlobalScope.h"
+#include "JSShadowRealmGlobalScope.h"
 #include "ScriptModuleLoader.h"
+#include "ShadowRealmGlobalScope.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSProxy.h>
@@ -38,6 +38,7 @@
 #include <wtf/Language.h>
 
 namespace WebCore {
+
 using namespace JSC;
 
 const ClassInfo JSShadowRealmGlobalScopeBase::s_info = { "ShadowRealmGlobalScope", &JSDOMGlobalObject::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSShadowRealmGlobalScopeBase) };
@@ -79,8 +80,6 @@ void JSShadowRealmGlobalScopeBase::finishCreation(VM& vm, JSProxy* proxy)
 {
     m_proxy.set(vm, this, proxy);
     m_wrapped->m_wrapper = JSC::Weak(this);
-    m_wrapped->m_moduleLoader = m_wrapped->m_incubatingWrapper->scriptModuleLoader()->shadowRealmLoader(this);
-
     Base::finishCreation(vm, m_proxy.get());
     ASSERT(inherits(vm, info()));
 }
@@ -123,7 +122,7 @@ bool JSShadowRealmGlobalScopeBase::shouldInterruptScriptBeforeTimeout(const JSGl
 
 RuntimeFlags JSShadowRealmGlobalScopeBase::javaScriptRuntimeFlags(const JSGlobalObject* object)
 {
-    const JSShadowRealmGlobalScopeBase *thisObject = jsCast<const JSShadowRealmGlobalScopeBase*>(object);
+    const JSShadowRealmGlobalScopeBase* thisObject = jsCast<const JSShadowRealmGlobalScopeBase*>(object);
     return thisObject->m_wrapped->javaScriptRuntimeFlags();
 }
 
