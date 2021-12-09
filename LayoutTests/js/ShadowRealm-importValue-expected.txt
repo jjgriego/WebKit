@@ -1,79 +1,11 @@
-CONSOLE MESSAGE: shadowRealm: [object Object]
-CONSOLE MESSAGE: shadowRealm: true
-CONSOLE MESSAGE: shadowRealm: Infinity
-CONSOLE MESSAGE: shadowRealm: NaN
-CONSOLE MESSAGE: shadowRealm: undefined
-CONSOLE MESSAGE: shadowRealm: self
-CONSOLE MESSAGE: shadowRealm: PromiseRejectionEvent
-CONSOLE MESSAGE: shadowRealm: isNaN
-CONSOLE MESSAGE: shadowRealm: isFinite
-CONSOLE MESSAGE: shadowRealm: escape
-CONSOLE MESSAGE: shadowRealm: unescape
-CONSOLE MESSAGE: shadowRealm: decodeURI
-CONSOLE MESSAGE: shadowRealm: decodeURIComponent
-CONSOLE MESSAGE: shadowRealm: encodeURI
-CONSOLE MESSAGE: shadowRealm: encodeURIComponent
-CONSOLE MESSAGE: shadowRealm: eval
-CONSOLE MESSAGE: shadowRealm: globalThis
-CONSOLE MESSAGE: shadowRealm: parseInt
-CONSOLE MESSAGE: shadowRealm: parseFloat
-CONSOLE MESSAGE: shadowRealm: ArrayBuffer
-CONSOLE MESSAGE: shadowRealm: EvalError
-CONSOLE MESSAGE: shadowRealm: RangeError
-CONSOLE MESSAGE: shadowRealm: ReferenceError
-CONSOLE MESSAGE: shadowRealm: SyntaxError
-CONSOLE MESSAGE: shadowRealm: TypeError
-CONSOLE MESSAGE: shadowRealm: URIError
-CONSOLE MESSAGE: shadowRealm: AggregateError
-CONSOLE MESSAGE: shadowRealm: Proxy
-CONSOLE MESSAGE: shadowRealm: Reflect
-CONSOLE MESSAGE: shadowRealm: JSON
-CONSOLE MESSAGE: shadowRealm: Math
-CONSOLE MESSAGE: shadowRealm: console
-CONSOLE MESSAGE: shadowRealm: Int8Array
-CONSOLE MESSAGE: shadowRealm: Int16Array
-CONSOLE MESSAGE: shadowRealm: Int32Array
-CONSOLE MESSAGE: shadowRealm: Uint8Array
-CONSOLE MESSAGE: shadowRealm: Uint8ClampedArray
-CONSOLE MESSAGE: shadowRealm: Uint16Array
-CONSOLE MESSAGE: shadowRealm: Uint32Array
-CONSOLE MESSAGE: shadowRealm: Float32Array
-CONSOLE MESSAGE: shadowRealm: Float64Array
-CONSOLE MESSAGE: shadowRealm: BigInt64Array
-CONSOLE MESSAGE: shadowRealm: BigUint64Array
-CONSOLE MESSAGE: shadowRealm: DataView
-CONSOLE MESSAGE: shadowRealm: Date
-CONSOLE MESSAGE: shadowRealm: Error
-CONSOLE MESSAGE: shadowRealm: Boolean
-CONSOLE MESSAGE: shadowRealm: Map
-CONSOLE MESSAGE: shadowRealm: Number
-CONSOLE MESSAGE: shadowRealm: Set
-CONSOLE MESSAGE: shadowRealm: Symbol
-CONSOLE MESSAGE: shadowRealm: WeakMap
-CONSOLE MESSAGE: shadowRealm: WeakSet
-CONSOLE MESSAGE: shadowRealm: Object
-CONSOLE MESSAGE: shadowRealm: Function
-CONSOLE MESSAGE: shadowRealm: Array
-CONSOLE MESSAGE: shadowRealm: RegExp
-CONSOLE MESSAGE: shadowRealm: SharedArrayBuffer
-CONSOLE MESSAGE: shadowRealm: Atomics
-CONSOLE MESSAGE: shadowRealm: String
-CONSOLE MESSAGE: shadowRealm: Promise
-CONSOLE MESSAGE: shadowRealm: BigInt
-CONSOLE MESSAGE: shadowRealm: WeakRef
-CONSOLE MESSAGE: shadowRealm: FinalizationRegistry
-CONSOLE MESSAGE: shadowRealm: Intl
-CONSOLE MESSAGE: shadowRealm: ShadowRealm
-CONSOLE MESSAGE: shadowRealm: $vm
-CONSOLE MESSAGE: shadowRealm: WebAssembly
 CONSOLE MESSAGE: 42
-CONSOLE MESSAGE: shadowRealm: calling nested realm wrapper uses correct global: OK
-CONSOLE MESSAGE: shadowRealm: nested realm eval uses correct global: OK
 Test to ensure correct behaviour of ShadowRealm.prototype.importValue
 
 On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
 
 
+shadowRealm: calling nested realm wrapper uses correct global: OK
+shadowRealm: nested realm eval uses correct global: OK
 
 PASS can import module in a shadow realm
 PASS can nest realms

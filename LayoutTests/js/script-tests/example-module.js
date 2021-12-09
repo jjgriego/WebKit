@@ -1,10 +1,10 @@
 var value = true;
 
 var check = function(log) {
-    log(Object.getPrototypeOf(globalThis).toString());
-    log(Object.getPrototypeOf(globalThis) === Object.getPrototypeOf({}));
-    for (let name of Object.getOwnPropertyNames(globalThis)) {
-        log(name);
+    if (Object.getPrototypeOf(globalThis) !== Object.prototype) {
+        log("globalThis prototype is Object.prototype");
+        log(Object.getPrototypeOf(globalThis).toString());
+        return false;
     }
     return true;
 }

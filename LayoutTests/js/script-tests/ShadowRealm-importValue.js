@@ -7,12 +7,12 @@ function assert_closed_opener(w, closed, opener) {
 
 function wrappedLog(prefix) {
     return function (msg) {
-        console.log(prefix + ": " + msg);
+        debug(prefix + ": " + msg);
     };
 }
 
 promise_test(async t => {
-  const openee = window.open("", "greatname");
+  // const openee = window.open("", "greatname");
   const outerShadowRealm = new ShadowRealm();
   const checkFn = await outerShadowRealm.importValue("./example-module.js", "check");
   assert_equals(checkFn(wrappedLog("shadowRealm")), true);
@@ -32,7 +32,7 @@ promise_test(async t => {
 }, "can import module in a shadow realm");
 
 promise_test(async t => {
-    const openee = window.open("", "greatname");
+    // const openee = window.open("", "greatname");
     const outerShadowRealm = new ShadowRealm();
     const checkFn = await outerShadowRealm.importValue("./example-module.js", "check_nested");
     assert_equals(checkFn(wrappedLog("shadowRealm")), true);

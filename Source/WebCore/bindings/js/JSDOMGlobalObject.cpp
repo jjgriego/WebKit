@@ -509,6 +509,8 @@ static ScriptModuleLoader* scriptModuleLoader(JSDOMGlobalObject* globalObject)
             return &document->moduleLoader();
         return nullptr;
     }
+    if (globalObject->inherits<JSShadowRealmGlobalScopeBase>(vm))
+        return &jsCast<const JSShadowRealmGlobalScopeBase*>(globalObject)->wrapped().moduleLoader();
     if (globalObject->inherits<JSRemoteDOMWindowBase>(vm))
         return nullptr;
     if (globalObject->inherits<JSWorkerGlobalScopeBase>(vm))
