@@ -93,6 +93,8 @@ void JSShadowRealmGlobalScopeBase::visitChildrenImpl(JSCell* cell, Visitor& visi
     visitor.append(thisObject->m_proxy);
 }
 
+DEFINE_VISIT_CHILDREN(JSShadowRealmGlobalScopeBase);
+
 ScriptExecutionContext* JSShadowRealmGlobalScopeBase::scriptExecutionContext() const
 {
     return incubating()->scriptExecutionContext();
@@ -100,10 +102,10 @@ ScriptExecutionContext* JSShadowRealmGlobalScopeBase::scriptExecutionContext() c
 
 const JSDOMGlobalObject* JSShadowRealmGlobalScopeBase::incubating() const
 {
-    return m_wrapped->m_incubatingWrapper.get();
+    auto incubatingWrapper = m_wrapped->m_incubatingWrapper.get();
+    ASSERT(incubatingWrapper);
+    return incubatingWrapper;
 }
-
-DEFINE_VISIT_CHILDREN(JSShadowRealmGlobalScopeBase);
 
 void JSShadowRealmGlobalScopeBase::destroy(JSCell* cell)
 {

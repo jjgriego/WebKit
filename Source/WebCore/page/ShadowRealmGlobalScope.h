@@ -47,7 +47,7 @@ class ShadowRealmGlobalScope : public RefCounted<ShadowRealmGlobalScope> {
     WTF_MAKE_ISO_ALLOCATED(ShadowRealmGlobalScope);
 
 public:
-    static RefPtr<ShadowRealmGlobalScope> tryCreate(JSC::VM&, JSDOMGlobalObject*, ScriptModuleLoader*);
+    static RefPtr<ShadowRealmGlobalScope> tryCreate(JSDOMGlobalObject*, ScriptModuleLoader*);
     ~ShadowRealmGlobalScope();
 
     ShadowRealmGlobalScope& self() { return *this; }
@@ -55,11 +55,10 @@ public:
     JSShadowRealmGlobalScopeBase* wrapper();
 
 protected:
-    ShadowRealmGlobalScope(JSC::VM&, JSDOMGlobalObject*, ScriptModuleLoader*);
+    ShadowRealmGlobalScope(JSDOMGlobalObject*, ScriptModuleLoader*);
 
 private:
-    RefPtr<JSC::VM> m_vm;
-    JSC::Strong<JSDOMGlobalObject> m_incubatingWrapper;
+    JSC::Weak<JSDOMGlobalObject> m_incubatingWrapper;
     ScriptModuleLoader* m_parentLoader;
     JSC::Weak<JSShadowRealmGlobalScopeBase> m_wrapper { };
     std::unique_ptr<ScriptModuleLoader> m_moduleLoader { };

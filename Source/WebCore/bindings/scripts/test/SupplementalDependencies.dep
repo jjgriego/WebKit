@@ -21,6 +21,10 @@ JSServiceWorkerGlobalScope.h: ServiceWorkerGlobalScopeConstructors.idl
 DOMServiceWorkerGlobalScope.h: ServiceWorkerGlobalScopeConstructors.idl
 WebDOMServiceWorkerGlobalScope.h: ServiceWorkerGlobalScopeConstructors.idl
 ServiceWorkerGlobalScopeConstructors.idl:
+JSShadowRealmGlobalScope.h: ShadowRealmGlobalScopeConstructors.idl
+DOMShadowRealmGlobalScope.h: ShadowRealmGlobalScopeConstructors.idl
+WebDOMShadowRealmGlobalScope.h: ShadowRealmGlobalScopeConstructors.idl
+ShadowRealmGlobalScopeConstructors.idl:
 JSSharedWorkerGlobalScope.h: SharedWorkerGlobalScopeConstructors.idl
 DOMSharedWorkerGlobalScope.h: SharedWorkerGlobalScopeConstructors.idl
 WebDOMSharedWorkerGlobalScope.h: SharedWorkerGlobalScopeConstructors.idl
@@ -308,8 +312,6 @@ WebDOMTestTypedefs.h:
 JSTestVoidCallbackFunction.h: 
 DOMTestVoidCallbackFunction.h: 
 WebDOMTestVoidCallbackFunction.h: 
-JSShadowRealmGlobalScope.h: ShadowRealmGlobalScopeConstructors.idl
-ShadowRealmGlobalScopeConstructors.idl:
 JSWorkerGlobalScope.h: WorkerGlobalScopeConstructors.idl
 DOMWorkerGlobalScope.h: WorkerGlobalScopeConstructors.idl
 WebDOMWorkerGlobalScope.h: WorkerGlobalScopeConstructors.idl

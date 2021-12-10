@@ -580,11 +580,7 @@ JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::VM& v
     auto domGlobalObject = jsCast<JSDOMGlobalObject*>(globalObject);
 
     ASSERT(domGlobalObject);
-    auto scope = ShadowRealmGlobalScope::tryCreate(
-        vm,
-        domGlobalObject,
-        scriptModuleLoader(domGlobalObject)
-    ).releaseNonNull();
+    auto scope = ShadowRealmGlobalScope::tryCreate(domGlobalObject, scriptModuleLoader(domGlobalObject)).releaseNonNull();
 
     Structure* structure = JSShadowRealmGlobalScope::createStructure(vm, nullptr, JSC::jsNull());
     auto proxyStructure = JSProxy::createStructure(vm, nullptr, JSC::jsNull());
