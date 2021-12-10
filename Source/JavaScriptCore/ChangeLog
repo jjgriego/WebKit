@@ -1,3 +1,25 @@
+2021-12-10  Joseph Griego  <jgriego@igalia.com>
+
+        [Shadow Realms] Use WebCore module loaders for shadow realm importValue
+        https://bugs.webkit.org/show_bug.cgi?id=234155
+
+        Add hook for creating the new realm object for shadow realms, since
+        importValue requires the cooperation of the module loading logic to work
+        right.
+
+        Reviewed by NOBODY (OOPS!).
+
+        * API/JSAPIGlobalObject.cpp:
+        * jsc.cpp:
+        * runtime/JSGlobalObject.cpp:
+        * runtime/JSGlobalObject.h:
+        (JSC::JSGlobalObject::deriveShadowRealmGlobalObject):
+        * runtime/ShadowRealmConstructor.cpp:
+        (JSC::JSC_DEFINE_HOST_FUNCTION):
+        * runtime/ShadowRealmObject.cpp:
+        (JSC::ShadowRealmObject::create):
+        * runtime/ShadowRealmObject.h:
+
 2022-01-21  Alex Christensen  <achristensen@webkit.org>
 
         Fix build when using Visual Studio 2022

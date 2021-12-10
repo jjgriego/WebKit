@@ -1,3 +1,14 @@
+2021-12-10  Joseph Griego  <jgriego@igalia.com>
+
+        [Shadow Realms] Use WebCore module loaders for shadow realm importValue
+        https://bugs.webkit.org/show_bug.cgi?id=234155
+
+        Reviewed by NOBODY (OOPS!).
+
+        * Scripts/webkitpy/bindings/main.py:
+        (BindingsTests.generate_supplemental_dependency):
+        (BindingsTests.main):
+
 2022-01-19  Jonathan Bedard  <jbedard@apple.com>
 
         [EWS] Use token when processing hook
