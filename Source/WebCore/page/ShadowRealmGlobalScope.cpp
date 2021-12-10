@@ -46,11 +46,6 @@ ShadowRealmGlobalScope::ShadowRealmGlobalScope(JSC::VM& vm, JSDOMGlobalObject* w
     , m_parentLoader(loader)
 { }
 
-ScriptExecutionContext* ShadowRealmGlobalScope::enclosingContext() const
-{
-    return m_incubatingWrapper->scriptExecutionContext();
-}
-
 ScriptModuleLoader& ShadowRealmGlobalScope::moduleLoader()
 {
     if (m_moduleLoader)
@@ -61,12 +56,6 @@ ScriptModuleLoader& ShadowRealmGlobalScope::moduleLoader()
 
     m_moduleLoader = m_parentLoader->shadowRealmLoader(wrapper);
     return *m_moduleLoader;
-}
-
-JSC::RuntimeFlags ShadowRealmGlobalScope::javaScriptRuntimeFlags() const
-{
-    auto const incubatingGlobalObj = m_incubatingWrapper;
-    return incubatingGlobalObj->globalObjectMethodTable()->javaScriptRuntimeFlags(incubatingGlobalObj.get());
 }
 
 JSShadowRealmGlobalScopeBase* ShadowRealmGlobalScope::wrapper()

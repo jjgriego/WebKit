@@ -50,9 +50,6 @@ public:
     static RefPtr<ShadowRealmGlobalScope> tryCreate(JSC::VM&, JSDOMGlobalObject*, ScriptModuleLoader*);
     ~ShadowRealmGlobalScope();
 
-    JSC::RuntimeFlags javaScriptRuntimeFlags() const;
-    ScriptExecutionContext* enclosingContext() const;
-
     ShadowRealmGlobalScope& self() { return *this; }
     ScriptModuleLoader& moduleLoader();
     JSShadowRealmGlobalScopeBase* wrapper();

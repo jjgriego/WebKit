@@ -46,12 +46,14 @@ public:
     DECLARE_INFO;
 
     ShadowRealmGlobalScope& wrapped() const { return *m_wrapped; }
-    ScriptExecutionContext* scriptExecutionContext() const;
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    const JSDOMGlobalObject* incubating() const;
+    JSDOMGlobalObject* incubating()
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags), info());
+        return const_cast<JSDOMGlobalObject*>(const_cast<const JSShadowRealmGlobalScopeBase*>(this)->incubating());
     }
+
+    ScriptExecutionContext* scriptExecutionContext() const;
 
     static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
 
