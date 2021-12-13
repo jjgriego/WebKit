@@ -3867,6 +3867,7 @@ JSServiceWorkerGlobalScope.cpp
 JSServiceWorkerRegistration.cpp
 JSServiceWorkerUpdateViaCache.cpp
 JSServiceWorkerWindowClient.cpp
+JSShadowRealmGlobalScope.cpp
 JSShadowRoot.cpp
 JSShadowRootInit.cpp
 JSShadowRootMode.cpp
