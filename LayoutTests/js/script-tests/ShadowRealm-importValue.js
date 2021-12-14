@@ -6,27 +6,29 @@ function wrappedLog(prefix) {
     };
 }
 
+const module_path = "../resources/example-module.js";
+
 promise_test(async t => {
   const outerShadowRealm = new ShadowRealm();
-  const checkFn = await outerShadowRealm.importValue("./example-module.js", "check");
+  const checkFn = await outerShadowRealm.importValue(module_path, "check");
   assert_equals(checkFn(wrappedLog("shadowRealm")), true);
 
-  const ourModule = await import("./example-module.js");
+  const ourModule = await import(module_path);
   assert_equals(ourModule.value, true, "bloop");
   ourModule.setValue(42);
   assert_equals(ourModule.value, 42);
 
-  const importedVal = await outerShadowRealm.importValue("./example-module.js", "value");
+  const importedVal = await outerShadowRealm.importValue(module_path, "value");
   assert_equals(importedVal, true);
-  const setValueImported = await outerShadowRealm.importValue("./example-module.js", "setValue");
+  const setValueImported = await outerShadowRealm.importValue(module_path, "setValue");
   setValueImported(100);
-  const importedVal2 = await outerShadowRealm.importValue("./example-module.js", "value");
+  const importedVal2 = await outerShadowRealm.importValue(module_path, "value");
   assert_equals(importedVal2, 100);
   assert_equals(ourModule.value, 42);
 }, "can import module in a shadow realm");
 
 promise_test(async t => {
     const outerShadowRealm = new ShadowRealm();
-    const checkFn = await outerShadowRealm.importValue("./example-module.js", "check_nested");
+    const checkFn = await outerShadowRealm.importValue(module_path, "check_nested");
     assert_equals(checkFn(wrappedLog("shadowRealm")), true);
 }, "can nest realms");
