@@ -142,10 +142,10 @@ JSC::ScriptExecutionStatus JSShadowRealmGlobalScopeBase::scriptExecutionStatus(J
     return obj->globalObjectMethodTable()->scriptExecutionStatus(obj, owner);
 }
 
-void JSShadowRealmGlobalScopeBase::reportViolationForUnsafeEval(JSC::JSGlobalObject* globalObject)
+void JSShadowRealmGlobalScopeBase::reportViolationForUnsafeEval(JSC::JSGlobalObject* globalObject, JSC::JSString* msg)
 {
     auto obj = jsCast<JSShadowRealmGlobalScopeBase*>(globalObject)->incubating();
-    obj->globalObjectMethodTable()->reportViolationForUnsafeEval(obj);
+    obj->globalObjectMethodTable()->reportViolationForUnsafeEval(obj, msg);
 }
 
 void JSShadowRealmGlobalScopeBase::queueMicrotaskToEventLoop(JSGlobalObject& object, Ref<JSC::Microtask>&& task)

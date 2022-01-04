@@ -578,6 +578,20 @@ JSC::JSObject* JSDOMGlobalObject::moduleLoaderCreateImportMetaProperties(JSC::JS
 JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     auto domGlobalObject = jsCast<JSDOMGlobalObject*>(globalObject);
+    auto context = domGlobalObject->scriptExecutionContext();
+
+    if (is<Document>(context)) {
+        // Same-origin iframes present a difficult circumstance because the
+        // shadow realm global object cannot retain the incubating realm's
+        // global object (that would be a refcount loop); but, same-origin
+        // iframes can create objects that outlive their global object--for
+        // these, we can substitute the top document's global (without changing
+        // the security context of script loads)
+        auto doc = downcast<Document>(context);
+        if (doc->isSameOriginAsTopDocument()) {
+            domGlobalObject = jsCast<JSDOMGlobalObject*>(doc->topDocument().globalObject());
+        }
+    }
 
     ASSERT(domGlobalObject);
     auto scope = ShadowRealmGlobalScope::tryCreate(domGlobalObject, scriptModuleLoader(domGlobalObject)).releaseNonNull();
