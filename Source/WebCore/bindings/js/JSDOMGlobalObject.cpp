@@ -584,12 +584,23 @@ JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::VM& v
         // Same-origin iframes present a difficult circumstance because the
         // shadow realm global object cannot retain the incubating realm's
         // global object (that would be a refcount loop); but, same-origin
-        // iframes can create objects that outlive their global object--for
-        // these, we can substitute the top document's global (without changing
-        // the security context of script loads)
+        // iframes can create objects that outlive their global object.
+        //
+        // Our solution is to walk up the parent tree of documents as far as
+        // possible while still staying in the same DOMWrapperWorld--this should
+        // insure we don't allow the ShadowRealm to fetch modules masquerading
+        // as the wrong origin while avoiding any lifetime issues (since the
+        // topmost document with a given wrapper world should outlive other
+        // objects in that world)
         auto doc = downcast<Document>(context);
-        if (doc->isSameOriginAsTopDocument()) {
-            domGlobalObject = jsCast<JSDOMGlobalObject*>(doc->topDocument().globalObject());
+
+        while (!doc->isTopDocument()) {
+            auto candidate = doc->parentDocument();
+            auto topGlobal = jsCast<JSDOMGlobalObject*>(candidate->globalObject());
+            if (&topGlobal->world() == &domGlobalObject->world()) {
+                doc = candidate;
+                domGlobalObject = topGlobal;
+            }
         }
     }
 
