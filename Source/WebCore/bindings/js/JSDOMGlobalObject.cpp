@@ -576,15 +576,16 @@ JSC::JSObject* JSDOMGlobalObject::moduleLoaderCreateImportMetaProperties(JSC::JS
     return constructEmptyObject(globalObject->vm(), globalObject->nullPrototypeObjectStructure());
 }
 
-JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::JSGlobalObject* globalObject)
 {
+    auto& vm = globalObject->vm();
 
     auto domGlobalObject = jsCast<JSDOMGlobalObject*>(globalObject);
     auto context = domGlobalObject->scriptExecutionContext();
     if (is<Document>(context)) {
         // Same-origin iframes present a difficult circumstance because the
         // shadow realm global object cannot retain the incubating realm's
-        // global object (that would be a refcount loop); but, same-origin
+        // global object (that would be a refcount loop); but, same-origioriginalWorld);
         // iframes can create objects that outlive their global object.
         //
         // Our solution is to walk up the parent tree of documents as far as
@@ -594,15 +595,17 @@ JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::VM& v
         // topmost document with a given wrapper world should outlive other
         // objects in that world)
         auto document = downcast<Document>(context);
+        auto const& originalOrigin = document->securityOrigin();
+        auto& originalWorld = domGlobalObject->world();
 
         while (!document->isTopDocument()) {
             auto candidateDocument = document->parentDocument();
 
-            if (!candidateDocument->securityOrigin().isSameOriginDomain(document->securityOrigin()))
+            if (!candidateDocument->securityOrigin().isSameOriginDomain(originalOrigin))
                 break;
 
             document = candidateDocument;
-            domGlobalObject = candidateDocument->frame()->script().globalObject(domGlobalObject->world());
+            domGlobalObject = candidateDocument->frame()->script().globalObject(originalWorld);
         }
     }
 

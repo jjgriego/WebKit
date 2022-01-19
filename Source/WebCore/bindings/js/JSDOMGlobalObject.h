@@ -86,7 +86,7 @@ public:
     JSBuiltinInternalFunctions& builtinInternalFunctions() { return m_builtinInternalFunctions; }
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
-    static JSC::JSGlobalObject* deriveShadowRealmGlobalObject(JSC::VM&, JSC::JSGlobalObject*);
+    static JSC::JSGlobalObject* deriveShadowRealmGlobalObject(JSC::JSGlobalObject*);
 
     void clearDOMGuardedObjects() const;
 

@@ -265,7 +265,7 @@ struct GlobalObjectMethodTable {
     typedef JSPromise* (*InstantiateStreamingPtr)(JSGlobalObject*, JSValue, JSObject*);
     InstantiateStreamingPtr instantiateStreaming;
 
-    typedef JSGlobalObject* (*DeriveShadowRealmGlobalFunctionPtr)(VM&, JSGlobalObject*);
+    typedef JSGlobalObject* (*DeriveShadowRealmGlobalFunctionPtr)(JSGlobalObject*);
     DeriveShadowRealmGlobalFunctionPtr deriveShadowRealmGlobalObject;
 };
 
@@ -1077,8 +1077,9 @@ public:
 
     static bool supportsRichSourceInfo(const JSGlobalObject*) { return true; }
 
-    static JSGlobalObject* deriveShadowRealmGlobalObject(VM& vm, JSGlobalObject* globalObject)
+    static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
     {
+        auto& vm = globalObject->vm();
         return JSGlobalObject::createWithCustomMethodTable(vm, JSGlobalObject::createStructure(vm, jsNull()), globalObject->globalObjectMethodTable());
     }
 
