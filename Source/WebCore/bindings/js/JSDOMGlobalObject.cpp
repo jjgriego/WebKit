@@ -598,12 +598,11 @@ JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::VM& v
         while (!document->isTopDocument()) {
             auto candidateDocument = document->parentDocument();
 
-            if (//&candidateGlobal->world() != &domGlobalObject->world() ||
-                !candidateDocument->securityOrigin().isSameOriginDomain(document->securityOrigin()))
+            if (!candidateDocument->securityOrigin().isSameOriginDomain(document->securityOrigin()))
                 break;
 
             document = candidateDocument;
-            globalObject = candidateDocument->frame()->script().globalObject(domGlobalObject->world());
+            domGlobalObject = candidateDocument->frame()->script().globalObject(domGlobalObject->world());
         }
     }
 
