@@ -43,7 +43,8 @@ RefPtr<ShadowRealmGlobalScope> ShadowRealmGlobalScope::tryCreate(JSDOMGlobalObje
 ShadowRealmGlobalScope::ShadowRealmGlobalScope(JSDOMGlobalObject* wrapper, ScriptModuleLoader* loader)
     : m_incubatingWrapper(wrapper)
     , m_parentLoader(loader)
-{ }
+{
+}
 
 ScriptModuleLoader& ShadowRealmGlobalScope::moduleLoader()
 {
@@ -53,7 +54,7 @@ ScriptModuleLoader& ShadowRealmGlobalScope::moduleLoader()
     auto wrapper = m_wrapper.get();
     ASSERT(wrapper);
 
-    m_moduleLoader = m_parentLoader->shadowRealmLoader(wrapper);
+    m_moduleLoader = m_parentLoader->shadowRealmLoader(wrapper).moveToUniquePtr();
     return *m_moduleLoader;
 }
 
@@ -62,6 +63,6 @@ JSShadowRealmGlobalScopeBase* ShadowRealmGlobalScope::wrapper()
     return m_wrapper.get();
 }
 
-ShadowRealmGlobalScope::~ShadowRealmGlobalScope() { }
+ShadowRealmGlobalScope::~ShadowRealmGlobalScope() = default;
 
 } // namespace WebCore

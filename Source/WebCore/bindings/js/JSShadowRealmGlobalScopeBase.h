@@ -38,8 +38,10 @@ class JSShadowRealmGlobalScopeBase : public JSDOMGlobalObject {
 public:
     using Base = JSDOMGlobalObject;
 
+    /*
     template<typename, JSC::SubspaceAccess>
     static void subspaceFor(JSC::VM&) { RELEASE_ASSERT_NOT_REACHED(); }
+    */
 
     static void destroy(JSC::JSCell*);
 
@@ -47,14 +49,12 @@ public:
 
     ShadowRealmGlobalScope& wrapped() const { return *m_wrapped; }
 
-    const JSDOMGlobalObject* incubating() const;
-    JSDOMGlobalObject* incubating()
-    {
-        return const_cast<JSDOMGlobalObject*>(const_cast<const JSShadowRealmGlobalScopeBase*>(this)->incubating());
-    }
+    const JSDOMGlobalObject* incubatingRealm() const;
+    JSDOMGlobalObject* incubatingRealm();
 
     ScriptExecutionContext* scriptExecutionContext() const;
 
+private:
     static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
 
     static bool supportsRichSourceInfo(const JSC::JSGlobalObject*);
@@ -74,6 +74,11 @@ protected:
 private:
     RefPtr<ShadowRealmGlobalScope> m_wrapped;
 };
+
+inline JSDOMGlobalObject* JSShadowRealmGlobalScopeBase::incubatingRealm()
+{
+    return const_cast<JSDOMGlobalObject*>(const_cast<const JSShadowRealmGlobalScopeBase*>(this)->incubatingRealm());
+}
 
 // Returns a JSWorkerGlobalScope or jsNull()
 // Always ignores the execState and passed globalObject, ShadowRealmGlobalScope is itself a globalObject and will always use its own prototype chain.

@@ -75,9 +75,9 @@ ScriptModuleLoader::~ScriptModuleLoader()
         loader->clearClient();
 }
 
-std::unique_ptr<ScriptModuleLoader> ScriptModuleLoader::shadowRealmLoader(JSC::JSGlobalObject* realmGlobal) const
+UniqueRef<ScriptModuleLoader> ScriptModuleLoader::shadowRealmLoader(JSC::JSGlobalObject* realmGlobal) const
 {
-    auto loader = WTF::makeUnique<ScriptModuleLoader>(m_context, m_ownerType);
+    auto loader = makeUniqueRef<ScriptModuleLoader>(m_context, m_ownerType);
     loader->m_shadowRealmGlobal = realmGlobal;
     return loader;
 }
@@ -252,9 +252,9 @@ JSC::JSValue ScriptModuleLoader::evaluate(JSC::JSGlobalObject* jsGlobalObject, J
     if (!sourceURL.isValid())
         return JSC::throwTypeError(jsGlobalObject, scope, "Module key is an invalid URL."_s);
 
-    if (m_shadowRealmGlobal) {
+    if (m_shadowRealmGlobal)
         RELEASE_AND_RETURN(scope, moduleRecord->evaluate(m_shadowRealmGlobal, awaitedValue, resumeMode));
-    } else if (m_ownerType == OwnerType::Document) {
+    else if (m_ownerType == OwnerType::Document) {
         if (auto* frame = downcast<Document>(m_context).frame())
             RELEASE_AND_RETURN(scope, frame->script().evaluateModule(sourceURL, *moduleRecord, awaitedValue, resumeMode));
     } else {

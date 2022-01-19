@@ -97,10 +97,10 @@ DEFINE_VISIT_CHILDREN(JSShadowRealmGlobalScopeBase);
 
 ScriptExecutionContext* JSShadowRealmGlobalScopeBase::scriptExecutionContext() const
 {
-    return incubating()->scriptExecutionContext();
+    return incubatingRealm()->scriptExecutionContext();
 }
 
-const JSDOMGlobalObject* JSShadowRealmGlobalScopeBase::incubating() const
+const JSDOMGlobalObject* JSShadowRealmGlobalScopeBase::incubatingRealm() const
 {
     auto incubatingWrapper = m_wrapped->m_incubatingWrapper.get();
     ASSERT(incubatingWrapper);
@@ -114,44 +114,58 @@ void JSShadowRealmGlobalScopeBase::destroy(JSCell* cell)
 
 bool JSShadowRealmGlobalScopeBase::supportsRichSourceInfo(const JSGlobalObject* object)
 {
-    auto obj = jsCast<const JSShadowRealmGlobalScopeBase*>(object)->incubating();
-    return obj->globalObjectMethodTable()->supportsRichSourceInfo(obj);
+    auto incubatingGlobalObject = jsCast<const JSShadowRealmGlobalScopeBase*>(object)->incubatingRealm();
+    return incubatingGlobalObject->globalObjectMethodTable()->supportsRichSourceInfo(
+        incubatingGlobalObject
+    );
 }
 
 bool JSShadowRealmGlobalScopeBase::shouldInterruptScript(const JSGlobalObject* object)
 {
-    auto obj = jsCast<const JSShadowRealmGlobalScopeBase*>(object)->incubating();
-    return obj->globalObjectMethodTable()->shouldInterruptScript(obj);
+    auto incubatingGlobalObject = jsCast<const JSShadowRealmGlobalScopeBase*>(object)->incubatingRealm();
+    return incubatingGlobalObject->globalObjectMethodTable()->shouldInterruptScript(
+        incubatingGlobalObject
+    );
 }
 
 bool JSShadowRealmGlobalScopeBase::shouldInterruptScriptBeforeTimeout(const JSGlobalObject* object)
 {
-    auto obj = jsCast<const JSShadowRealmGlobalScopeBase*>(object)->incubating();
-    return obj->globalObjectMethodTable()->shouldInterruptScriptBeforeTimeout(obj);
+    auto incubatingGlobalObject = jsCast<const JSShadowRealmGlobalScopeBase*>(object)->incubatingRealm();
+    return incubatingGlobalObject->globalObjectMethodTable()->shouldInterruptScriptBeforeTimeout(
+        incubatingGlobalObject
+    );
 }
 
 RuntimeFlags JSShadowRealmGlobalScopeBase::javaScriptRuntimeFlags(const JSGlobalObject* object)
 {
-    auto obj = jsCast<const JSShadowRealmGlobalScopeBase*>(object)->incubating();
-    return obj->globalObjectMethodTable()->javaScriptRuntimeFlags(obj);
+    auto incubatingGlobalObject = jsCast<const JSShadowRealmGlobalScopeBase*>(object)->incubatingRealm();
+    return incubatingGlobalObject->globalObjectMethodTable()->javaScriptRuntimeFlags(
+        incubatingGlobalObject
+    );
 }
 
 JSC::ScriptExecutionStatus JSShadowRealmGlobalScopeBase::scriptExecutionStatus(JSC::JSGlobalObject* globalObject, JSC::JSObject* owner)
 {
-    auto obj = jsCast<JSShadowRealmGlobalScopeBase*>(globalObject)->incubating();
-    return obj->globalObjectMethodTable()->scriptExecutionStatus(obj, owner);
+    auto incubatingGlobalObject = jsCast<JSShadowRealmGlobalScopeBase*>(globalObject)->incubatingRealm();
+    return incubatingGlobalObject->globalObjectMethodTable()->scriptExecutionStatus(
+        incubatingGlobalObject, owner
+    );
 }
 
 void JSShadowRealmGlobalScopeBase::reportViolationForUnsafeEval(JSC::JSGlobalObject* globalObject, JSC::JSString* msg)
 {
-    auto obj = jsCast<JSShadowRealmGlobalScopeBase*>(globalObject)->incubating();
-    obj->globalObjectMethodTable()->reportViolationForUnsafeEval(obj, msg);
+    auto incubatingGlobalObject = jsCast<JSShadowRealmGlobalScopeBase*>(globalObject)->incubatingRealm();
+    incubatingGlobalObject->globalObjectMethodTable()->reportViolationForUnsafeEval(
+        incubatingGlobalObject, msg
+    );
 }
 
 void JSShadowRealmGlobalScopeBase::queueMicrotaskToEventLoop(JSGlobalObject& object, Ref<JSC::Microtask>&& task)
 {
-    auto obj = jsCast<JSShadowRealmGlobalScopeBase*>(&object)->incubating();
-    obj->globalObjectMethodTable()->queueMicrotaskToEventLoop(*obj, WTFMove(task));
+    auto incubatingGlobalObject = jsCast<JSShadowRealmGlobalScopeBase*>(&object)->incubatingRealm();
+    incubatingGlobalObject->globalObjectMethodTable()->queueMicrotaskToEventLoop(
+        *incubatingGlobalObject, WTFMove(task)
+    );
 }
 
 JSValue toJS(JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject*, ShadowRealmGlobalScope& realmGlobalScope)

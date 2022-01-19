@@ -51,6 +51,7 @@
 #include "JSWritableStream.h"
 #include "RejectedPromiseTracker.h"
 #include "RuntimeEnabledFeatures.h"
+#include "ScriptController.h"
 #include "ScriptModuleLoader.h"
 #include "StructuredClone.h"
 #include "WebCoreJSClientData.h"
@@ -577,9 +578,9 @@ JSC::JSObject* JSDOMGlobalObject::moduleLoaderCreateImportMetaProperties(JSC::JS
 
 JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
+
     auto domGlobalObject = jsCast<JSDOMGlobalObject*>(globalObject);
     auto context = domGlobalObject->scriptExecutionContext();
-
     if (is<Document>(context)) {
         // Same-origin iframes present a difficult circumstance because the
         // shadow realm global object cannot retain the incubating realm's
@@ -592,22 +593,24 @@ JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::VM& v
         // as the wrong origin while avoiding any lifetime issues (since the
         // topmost document with a given wrapper world should outlive other
         // objects in that world)
-        auto doc = downcast<Document>(context);
+        auto document = downcast<Document>(context);
 
-        while (!doc->isTopDocument()) {
-            auto candidate = doc->parentDocument();
-            auto topGlobal = jsCast<JSDOMGlobalObject*>(candidate->globalObject());
-            if (&topGlobal->world() == &domGlobalObject->world()) {
-                doc = candidate;
-                domGlobalObject = topGlobal;
-            }
+        while (!document->isTopDocument()) {
+            auto candidateDocument = document->parentDocument();
+
+            if (//&candidateGlobal->world() != &domGlobalObject->world() ||
+                !candidateDocument->securityOrigin().isSameOriginDomain(document->securityOrigin()))
+                break;
+
+            document = candidateDocument;
+            globalObject = candidateDocument->frame()->script().globalObject(domGlobalObject->world());
         }
     }
 
     ASSERT(domGlobalObject);
     auto scope = ShadowRealmGlobalScope::tryCreate(domGlobalObject, scriptModuleLoader(domGlobalObject)).releaseNonNull();
 
-    Structure* structure = JSShadowRealmGlobalScope::createStructure(vm, nullptr, JSC::jsNull());
+    auto structure = JSShadowRealmGlobalScope::createStructure(vm, nullptr, JSC::jsNull());
     auto proxyStructure = JSProxy::createStructure(vm, nullptr, JSC::jsNull());
     auto proxy = JSProxy::create(vm, proxyStructure);
     auto wrapper = JSShadowRealmGlobalScope::create(vm, structure, WTFMove(scope), proxy);

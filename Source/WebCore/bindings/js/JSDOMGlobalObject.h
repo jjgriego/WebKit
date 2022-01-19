@@ -39,7 +39,6 @@ class DOMGuardedObject;
 class Event;
 class DOMWrapperWorld;
 class ScriptExecutionContext;
-class ScriptModuleLoader;
 
 using JSDOMStructureMap = HashMap<const JSC::ClassInfo*, JSC::WriteBarrier<JSC::Structure>>;
 using DOMGuardedObjectSet = HashSet<DOMGuardedObject*>;

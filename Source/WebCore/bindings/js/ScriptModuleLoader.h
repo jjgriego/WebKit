@@ -55,7 +55,7 @@ public:
     explicit ScriptModuleLoader(ScriptExecutionContext&, OwnerType);
     ~ScriptModuleLoader();
 
-    std::unique_ptr<ScriptModuleLoader> shadowRealmLoader(JSC::JSGlobalObject* realmGlobal) const;
+    UniqueRef<ScriptModuleLoader> shadowRealmLoader(JSC::JSGlobalObject* realmGlobal) const;
 
     ScriptExecutionContext& context() { return m_context; }
 

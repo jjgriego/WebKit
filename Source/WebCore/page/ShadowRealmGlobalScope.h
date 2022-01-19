@@ -25,22 +25,17 @@
 
 #pragma once
 
-#include <JavaScriptCore/RuntimeFlags.h>
-#include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/Weak.h>
 #include <memory>
 #include <wtf/IsoMalloc.h>
 #include <wtf/RefCounted.h>
-#include <wtf/RefPtr.h>
-
-namespace JSC { class VM; }
 
 namespace WebCore {
 
-class JSShadowRealmGlobalScopeBase;
 class JSDOMGlobalObject;
-class ScriptModuleLoader;
+class JSShadowRealmGlobalScopeBase;
 class ScriptExecutionContext;
+class ScriptModuleLoader;
 
 class ShadowRealmGlobalScope : public RefCounted<ShadowRealmGlobalScope> {
     friend class JSShadowRealmGlobalScopeBase;
@@ -50,7 +45,7 @@ public:
     static RefPtr<ShadowRealmGlobalScope> tryCreate(JSDOMGlobalObject*, ScriptModuleLoader*);
     ~ShadowRealmGlobalScope();
 
-    ShadowRealmGlobalScope& self() { return *this; }
+    ShadowRealmGlobalScope& self();
     ScriptModuleLoader& moduleLoader();
     JSShadowRealmGlobalScopeBase* wrapper();
 
@@ -59,9 +54,11 @@ protected:
 
 private:
     JSC::Weak<JSDOMGlobalObject> m_incubatingWrapper;
-    ScriptModuleLoader* m_parentLoader;
-    JSC::Weak<JSShadowRealmGlobalScopeBase> m_wrapper { };
-    std::unique_ptr<ScriptModuleLoader> m_moduleLoader { };
+    ScriptModuleLoader* m_parentLoader{nullptr};
+    JSC::Weak<JSShadowRealmGlobalScopeBase> m_wrapper;
+    std::unique_ptr<ScriptModuleLoader> m_moduleLoader;
 };
+
+inline ShadowRealmGlobalScope& ShadowRealmGlobalScope::self() { return *this; }
 
 } // namespace WebCore

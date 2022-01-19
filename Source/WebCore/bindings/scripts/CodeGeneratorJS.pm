@@ -788,6 +788,13 @@ sub ShouldUseOrdinaryObjectPrototype
     return $interface->isNamespaceObject() || $interface->type->name eq "ShadowRealmGlobalScope";
 }
 
+sub CreateNeedsJSProxy
+{
+    my ($codeGenerator, $interface) = @_;
+
+    return $interface->type->name eq "ShadowRealmGlobalScope" || $codeGenerator->InheritsInterface($interface, "WorkerGlobalScope") || $codeGenerator->InheritsInterface($interface, "WorkletGlobalScope");
+}
+
 sub GenerateIndexedGetter
 {
     my ($interface, $indexedGetterOperation, $indexExpression) = @_;
@@ -2884,7 +2891,7 @@ sub GenerateHeader
         push(@headerContent, "        ptr->finishCreation(vm, proxy);\n");
         push(@headerContent, "        return ptr;\n");
         push(@headerContent, "    }\n\n");
-    } elsif ($interfaceName eq "ShadowRealmGlobalScope" || $codeGenerator->InheritsInterface($interface, "WorkerGlobalScope") || $codeGenerator->InheritsInterface($interface, "WorkletGlobalScope")) {
+    } elsif (CreateNeedsJSProxy($codeGenerator, $interface)) {
         push(@headerContent, "    static $className* create(JSC::VM& vm, JSC::Structure* structure, Ref<$implType>&& impl, JSC::JSProxy* proxy)\n");
         push(@headerContent, "    {\n");
         push(@headerContent, "        $className* ptr = new (NotNull, JSC::allocateCell<$className>(vm)) ${className}(vm, structure, WTFMove(impl));\n");
@@ -3190,7 +3197,7 @@ sub GenerateHeader
     # Constructor
     if ($interfaceName eq "DOMWindow" || $interfaceName eq "RemoteDOMWindow") {
         push(@headerContent, "    $className(JSC::VM&, JSC::Structure*, Ref<$implType>&&, JSWindowProxy*);\n");
-    } elsif ($interfaceName eq "ShadowRealmGlobalScope" || $codeGenerator->InheritsInterface($interface, "WorkerGlobalScope") || $codeGenerator->InheritsInterface($interface, "WorkletGlobalScope")) {
+    } elsif (CreateNeedsJSProxy($codeGenerator, $interface)) {
         push(@headerContent, "    $className(JSC::VM&, JSC::Structure*, Ref<$implType>&&);\n");
     } elsif (!NeedsImplementationClass($interface)) {
         push(@headerContent, "    $className(JSC::Structure*, JSDOMGlobalObject&);\n\n");
@@ -4659,7 +4666,7 @@ sub GenerateImplementation
         push(@implContent, "void ${className}::finishCreation(VM& vm, JSWindowProxy* proxy)\n");
         push(@implContent, "{\n");
         push(@implContent, "    Base::finishCreation(vm, proxy);\n\n");
-    } elsif ($interfaceName eq "ShadowRealmGlobalScope" || $codeGenerator->InheritsInterface($interface, "WorkerGlobalScope") || $codeGenerator->InheritsInterface($interface, "WorkletGlobalScope")) {
+    } elsif (CreateNeedsJSProxy($codeGenerator, $interface)) {
         push(@implContent, "void ${className}::finishCreation(VM& vm, JSProxy* proxy)\n");
         push(@implContent, "{\n");
         push(@implContent, "    Base::finishCreation(vm, proxy);\n\n");
