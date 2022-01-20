@@ -3207,7 +3207,7 @@ sub GenerateHeader
 
     if ($interfaceName eq "DOMWindow" || $interfaceName eq "RemoteDOMWindow") {
         push(@headerContent, "    void finishCreation(JSC::VM&, JSWindowProxy*);\n");
-    } elsif ($interfaceName eq "ShadowRealmGlobalScope" || $codeGenerator->InheritsInterface($interface, "WorkerGlobalScope") || $codeGenerator->InheritsInterface($interface, "WorkletGlobalScope")) {
+    } elsif (CreateNeedsJSProxy($codeGenerator, $interface)) {
         push(@headerContent, "    void finishCreation(JSC::VM&, JSC::JSProxy*);\n");
     } else {
         push(@headerContent, "    void finishCreation(JSC::VM&);\n");
@@ -4645,7 +4645,7 @@ sub GenerateImplementation
         push(@implContent, "    : $parentClassName(vm, structure, WTFMove(impl), proxy)\n");
         push(@implContent, "{\n");
         push(@implContent, "}\n\n");
-    } elsif ($interfaceName eq "ShadowRealmGlobalScope" || $codeGenerator->InheritsInterface($interface, "WorkerGlobalScope") || $codeGenerator->InheritsInterface($interface, "WorkletGlobalScope")) {
+      } elsif (CreateNeedsJSProxy($codeGenerator, $interface)) {
         AddIncludesForImplementationTypeInImpl($interfaceName);
         push(@implContent, "${className}::$className(VM& vm, Structure* structure, Ref<$implType>&& impl)\n");
         push(@implContent, "    : $parentClassName(vm, structure, WTFMove(impl))\n");

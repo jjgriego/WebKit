@@ -589,11 +589,11 @@ JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::JSGlo
         // iframes can create objects that outlive their global object.
         //
         // Our solution is to walk up the parent tree of documents as far as
-        // possible while still staying in the same DOMWrapperWorld--this should
-        // insure we don't allow the ShadowRealm to fetch modules masquerading
-        // as the wrong origin while avoiding any lifetime issues (since the
-        // topmost document with a given wrapper world should outlive other
-        // objects in that world)
+        // possible while still staying in the same origin to insure we don't
+        // allow the ShadowRealm to fetch modules masquerading as the wrong
+        // origin while avoiding any lifetime issues (since the topmost document
+        // with a given wrapper world should outlive other objects in that
+        // world)
         auto document = downcast<Document>(context);
         auto const& originalOrigin = document->securityOrigin();
         auto& originalWorld = domGlobalObject->world();
