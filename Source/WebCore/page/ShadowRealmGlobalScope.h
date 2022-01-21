@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "JSShadowRealmGlobalScopeBase.h"
 #include <JavaScriptCore/Weak.h>
 #include <memory>
 #include <wtf/IsoMalloc.h>
@@ -33,7 +34,6 @@
 namespace WebCore {
 
 class JSDOMGlobalObject;
-class JSShadowRealmGlobalScopeBase;
 class ScriptExecutionContext;
 class ScriptModuleLoader;
 
@@ -42,7 +42,7 @@ class ShadowRealmGlobalScope : public RefCounted<ShadowRealmGlobalScope> {
     WTF_MAKE_ISO_ALLOCATED(ShadowRealmGlobalScope);
 
 public:
-    static RefPtr<ShadowRealmGlobalScope> tryCreate(JSDOMGlobalObject*, ScriptModuleLoader*);
+    static Ref<ShadowRealmGlobalScope> create(JSDOMGlobalObject*, ScriptModuleLoader*);
     ~ShadowRealmGlobalScope();
 
     ShadowRealmGlobalScope& self();
@@ -59,6 +59,14 @@ private:
     std::unique_ptr<ScriptModuleLoader> m_moduleLoader;
 };
 
-inline ShadowRealmGlobalScope& ShadowRealmGlobalScope::self() { return *this; }
+inline ShadowRealmGlobalScope& ShadowRealmGlobalScope::self()
+{
+    return *this;
+}
+
+inline JSShadowRealmGlobalScopeBase* ShadowRealmGlobalScope::wrapper()
+{
+    return m_wrapper.get();
+}
 
 } // namespace WebCore

@@ -35,9 +35,9 @@ namespace WebCore {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(ShadowRealmGlobalScope);
 
-RefPtr<ShadowRealmGlobalScope> ShadowRealmGlobalScope::tryCreate(JSDOMGlobalObject* wrapper, ScriptModuleLoader* loader)
+Ref<ShadowRealmGlobalScope> ShadowRealmGlobalScope::create(JSDOMGlobalObject* wrapper, ScriptModuleLoader* loader)
 {
-    return adoptRef(new ShadowRealmGlobalScope(wrapper, loader));
+    return adoptRef(*new ShadowRealmGlobalScope(wrapper, loader));
 }
 
 ShadowRealmGlobalScope::ShadowRealmGlobalScope(JSDOMGlobalObject* wrapper, ScriptModuleLoader* loader)
@@ -56,11 +56,6 @@ ScriptModuleLoader& ShadowRealmGlobalScope::moduleLoader()
 
     m_moduleLoader = m_parentLoader->shadowRealmLoader(wrapper).moveToUniquePtr();
     return *m_moduleLoader;
-}
-
-JSShadowRealmGlobalScopeBase* ShadowRealmGlobalScope::wrapper()
-{
-    return m_wrapper.get();
 }
 
 ShadowRealmGlobalScope::~ShadowRealmGlobalScope() = default;

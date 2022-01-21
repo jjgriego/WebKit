@@ -53,6 +53,7 @@
 #include "RuntimeEnabledFeatures.h"
 #include "ScriptController.h"
 #include "ScriptModuleLoader.h"
+#include "ShadowRealmGlobalScope.h"
 #include "StructuredClone.h"
 #include "WebCoreJSClientData.h"
 #include "WorkerGlobalScope.h"
@@ -594,7 +595,7 @@ JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::JSGlo
         // origin while avoiding any lifetime issues (since the topmost document
         // with a given wrapper world should outlive other objects in that
         // world)
-        auto document = downcast<Document>(context);
+        auto document = &downcast<Document>(*context);
         auto const& originalOrigin = document->securityOrigin();
         auto& originalWorld = domGlobalObject->world();
 
@@ -610,7 +611,7 @@ JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::JSGlo
     }
 
     ASSERT(domGlobalObject);
-    auto scope = ShadowRealmGlobalScope::tryCreate(domGlobalObject, scriptModuleLoader(domGlobalObject)).releaseNonNull();
+    auto scope = ShadowRealmGlobalScope::create(domGlobalObject, scriptModuleLoader(domGlobalObject));
 
     auto structure = JSShadowRealmGlobalScope::createStructure(vm, nullptr, JSC::jsNull());
     auto proxyStructure = JSProxy::createStructure(vm, nullptr, JSC::jsNull());

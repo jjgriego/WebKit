@@ -27,9 +27,10 @@
 
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapper.h"
-#include "ShadowRealmGlobalScope.h"
 
 namespace WebCore {
+
+class ShadowRealmGlobalScope;
 
 class JSShadowRealmGlobalScopeBase : public JSDOMGlobalObject {
 public:
@@ -72,7 +73,6 @@ inline JSDOMGlobalObject* JSShadowRealmGlobalScopeBase::incubatingRealm()
     return const_cast<JSDOMGlobalObject*>(const_cast<const JSShadowRealmGlobalScopeBase*>(this)->incubatingRealm());
 }
 
-// Returns a JSWorkerGlobalScope or jsNull()
 // Always ignores the execState and passed globalObject, ShadowRealmGlobalScope is itself a globalObject and will always use its own prototype chain.
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, ShadowRealmGlobalScope&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, ShadowRealmGlobalScope* scope) { return scope ? toJS(lexicalGlobalObject, globalObject, *scope) : JSC::jsNull(); }
