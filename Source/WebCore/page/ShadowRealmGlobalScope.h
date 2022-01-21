@@ -54,7 +54,7 @@ protected:
 
 private:
     JSC::Weak<JSDOMGlobalObject> m_incubatingWrapper;
-    ScriptModuleLoader* m_parentLoader{nullptr};
+    ScriptModuleLoader* m_parentLoader { nullptr };
     JSC::Weak<JSShadowRealmGlobalScopeBase> m_wrapper;
     std::unique_ptr<ScriptModuleLoader> m_moduleLoader;
 };
