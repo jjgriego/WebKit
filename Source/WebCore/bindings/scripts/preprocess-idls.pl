@@ -65,6 +65,7 @@ my @supportedGlobalContexts = (
     "Window",
     "DedicatedWorker",
     "ServiceWorker",
+    "SharedWorker",
     "PaintWorklet",
     "AudioWorklet",
     "ShadowRealm",
