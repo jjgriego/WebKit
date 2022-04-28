@@ -26,10 +26,10 @@ require 'risc'
 
 # GPR conventions, to match the baseline JIT
 #
-# $a0 => a0, t7
-# $a1 => a1, t8
-# $a2 => a2, t9
-# $a3 => a3, t10
+# $a0 => a0, t7,  wa0
+# $a1 => a1, t8,  wa1
+# $a2 => a2, t9,  wa2
+# $a3 => a3, t10, wa3
 # $v0 => t0, r0
 # $v1 => t1, r1
 # $t0 =>            (scratch)
@@ -37,14 +37,16 @@ require 'risc'
 # $t2 =>         t2
 # $t3 =>         t3
 # $t4 =>         t4
-# $t5 =>         t5
-# $t6 =>         t6
+# $t5 =>         t5, ws0
+# $t6 =>         t6, ws1
 # $t7 =>            (scratch)
 # $t8 =>            (scratch)
 # $t9 =>            (stores the callee of a call opcode)
 # $gp =>            (globals)
-# $s0 => csr0       (callee-save, metadataTable)
+# $s0 => csr0       (callee-save, metadataTable/WASM instance pointer)
 # $s1 => csr1       (callee-save, PB)
+# $s2 => csr2       (callee-save, WASM memory base)
+# $s3 => csr3       (callee-save, WASM memory size)
 # $s4 =>            (callee-save used to preserve $gp across calls)
 # $ra => lr
 # $sp => sp
@@ -58,8 +60,8 @@ require 'risc'
 #  $f6 => ft3
 #  $f8 => ft4
 # $f10 => ft5
-# $f12 =>        fa0
-# $f14 =>        fa1
+# $f12 =>        fa0, wfa0
+# $f14 =>        fa1, wfa1
 # $f16 =>            (scratch)
 # $f18 =>            (scratch)
 
@@ -110,13 +112,13 @@ end
 class RegisterID
     def mipsOperand
         case name
-        when "a0", "t7"
+        when "a0", "t7", "wa0"
             "$a0"
-        when "a1", "t8"
+        when "a1", "t8", "wa1"
             "$a1"
-        when "a2", "t9"
+        when "a2", "t9", "wa2"
             "$a2"
-        when "a3", "t10"
+        when "a3", "t10", "wa3"
             "$a3"
         when "t0", "r0"
             "$v0"
@@ -128,14 +130,18 @@ class RegisterID
             "$t3"
         when "t4"
             "$t4"
-        when "t5"
+        when "t5", "ws0"
             "$t5"
+        when "t6", "ws1"
+            "$t6"
         when "cfr"
             "$fp"
         when "csr0"
             "$s0"
         when "csr1"
             "$s1"
+        when "csr2"
+            "$s2"
         when "lr"
             "$ra"
         when "sp"
@@ -149,22 +155,24 @@ end
 class FPRegisterID
     def mipsOperand
         case name
-        when "ft0", "fr"
+        when "ft0", "fr", "wfa2"
             "$f0"
-        when "ft1"
+        when "ft1", "wfa3"
             "$f2"
-        when "ft2"
+        when "ft2", "wfa3"
             "$f4"
-        when "ft3"
+        when "ft3", "wfa4"
             "$f6"
-        when "ft4"
+        when "ft4", "wfa5"
             "$f8"
-        when "ft5"
+        when "ft5", "wfa6"
             "$f10"
-        when "fa0"
+        when "fa0", "wfa0"
             "$f12"
-        when "fa1"
+        when "fa1", "wfa1"
             "$f14"
+        when "wfa7"
+            "$f16"
         else
             raise "Bad register #{name} for MIPS at #{codeOriginString}"
         end
@@ -278,6 +286,57 @@ def lowerMIPSCondBranch(list, condOp, node)
     else
         raise "Expected 2 or 3 operands but got #{node.operands.size} at #{node.codeOriginString}"
     end
+end
+
+#
+# Lower `load2ia` and `store2ia` to separate loads/stores
+#
+# store2ia r0, r1, [addr]
+#
+# will become:
+#
+# storei r0, [addr]
+# storei r1, [addr] + 4
+#
+# ... likewise,
+#
+# load2ia r0, r1, [addr]
+#
+# will become:
+#
+# loadi [addr], r0
+# loadi [addr] + 4, r0
+
+def mipsLowerPairedMemoryOps(list)
+    newList = []
+    list.each {
+        | node |
+        if node.is_a? Instruction
+            ann = node.annotation
+
+            case node.opcode
+            when "store2ia"
+                r0 = node.operands[0]
+                r1 = node.operands[1]
+                addr0 = node.operands[2]
+                addr1 = addr0.withOffset(4)
+                newList << Instruction.new(node.codeOrigin, "storei", [r0, addr0], ann)
+                newList << Instruction.new(node.codeOrigin, "storei", [r1, addr1])
+            when "load2ia"
+                addr0 = node.operands[0]
+                addr1 = addr0.withOffset(4)
+                r0 = node.operands[1]
+                r1 = node.operands[2]
+                newList << Instruction.new(node.codeOrigin, "loadi", [addr0, r0], ann)
+                newList << Instruction.new(node.codeOrigin, "loadi", [addr1, r1])
+            else
+                newList << node
+            end
+        else
+            newList << node
+        end
+    }
+    newList
 end
 
 #
@@ -700,6 +759,7 @@ class Sequence
             end
         }
 
+        result = mipsLowerPairedMemoryOps(result)
         result = mipsAddPICCode(result)
         result = mipsLowerFarBranchOps(result)
         result = mipsLowerSimpleBranchOps(result)
@@ -879,6 +939,15 @@ class Instruction
             $asm.puts "negu #{operands[0].mipsOperand}, #{operands[0].mipsOperand}"
         when "noti"
             $asm.puts "nor #{operands[0].mipsOperand}, #{operands[0].mipsOperand}, $zero"
+        when "tzcnti"
+            # we have no way to count trailing zeroes, so use a cute stanza to reverse the bits
+            # and do count leading zeroes
+            $asm.puts "bitswap #{operands[0].mipsOperand}, #{operands[0].mipsOperand}"
+            $asm.puts "wsbh #{operands[0].mipsOperand}, #{operands[0].mipsOperand}"
+            $asm.puts "rotr #{operands[0].mipsOperand}, #{operands[0].mipsOperand}, 16"
+            $asm.puts "clz #{operands[0].mipsOperand}, #{operands[1].mipsOperand}"
+        when "lzcnti"
+            $asm.puts "clz #{operands[0].mipsOperand}, #{operands[1].mipsOperand}"
         when "loadi", "loadis", "loadp"
             $asm.puts "lw #{mipsFlippedOperands(operands)}"
         when "storei", "storep"

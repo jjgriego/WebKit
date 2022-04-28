@@ -191,7 +191,7 @@ end)
 # Opcodes that don't have the `b3op` entry in wasm.json. This should be kept in sync
 
 macro callDivRem(fn)
-if ARMv7
+if MIPS or ARMv7
     subp StackAlignment, sp
     storep PC, [sp]
     cCall4(fn)

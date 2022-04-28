@@ -34,7 +34,7 @@ if X86_64
     const NumberOfWasmArgumentJSRs = 6
 elsif ARM64 or ARM64E or RISCV64
     const NumberOfWasmArgumentJSRs = 8
-elsif ARMv7
+elsif ARMv7 or MIPS
     const NumberOfWasmArgumentJSRs = 2
 else
     error
@@ -55,6 +55,10 @@ elsif ARMv7
     const wasmInstance = csr0
     const memoryBase = invalidGPR
     const boundsCheckingSize = invalidGPR
+elsif MIPS
+    const wasmInstance = csr0
+    const memoryBase = csr2
+    const boundsCheckingSize = csr3
 else
     error
 end
@@ -64,7 +68,7 @@ if X86_64
     const PB = csr2
 elsif ARM64 or ARM64E or RISCV64
     const PB = csr7
-elsif ARMv7
+elsif ARMv7 or MIPS
     const PB = csr1
 else
     error
@@ -230,7 +234,7 @@ macro preserveCalleeSavesUsedByWasm()
     elsif X86_64 or RISCV64
         storep PB, -0x8[cfr]
         storep wasmInstance, -0x10[cfr]
-    elsif ARMv7
+    elsif ARMv7 or MIPS
         storep PB, -4[cfr]
         storep wasmInstance, -8[cfr]
     else
@@ -247,7 +251,7 @@ macro restoreCalleeSavesUsedByWasm()
     elsif X86_64 or RISCV64
         loadp -0x8[cfr], PB
         loadp -0x10[cfr], wasmInstance
-    elsif ARMv7
+    elsif ARMv7 or MIPS
         loadp -4[cfr], PB
         loadp -8[cfr], wasmInstance
     else
@@ -280,7 +284,7 @@ end
 end
 
 macro reloadMemoryRegistersFromInstance(instance, scratch1, scratch2)
-if not ARMv7
+if not ARMv7 and not MIPS
     loadp Wasm::Instance::m_cachedMemory[instance], memoryBase
     loadp Wasm::Instance::m_cachedBoundsCheckingSize[instance], boundsCheckingSize
     cagedPrimitiveMayBeNull(memoryBase, boundsCheckingSize, scratch1, scratch2) # If boundsCheckingSize is 0, pointer can be a nullptr.
