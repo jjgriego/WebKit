@@ -131,7 +131,7 @@ RegisterAtOffsetList* LLIntCallee::calleeSaveRegisters()
         registers.set(GPRInfo::regCS2); // PB
 #elif CPU(ARM64) || CPU(RISCV64)
         registers.set(GPRInfo::regCS7); // PB
-#elif CPU(ARM)
+#elif CPU(ARM) || CPU(MIPS)
         registers.set(GPRInfo::regCS1); // PB
 #else
 #error Unsupported architecture.

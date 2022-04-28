@@ -171,6 +171,8 @@ RegisterSet RegisterSet::vmCalleeSaveRegisters()
 #elif CPU(MIPS)
     result.set(GPRInfo::regCS0);
     result.set(GPRInfo::regCS1);
+    result.set(GPRInfo::regCS2);
+    result.set(GPRInfo::regCS3);
 #elif CPU(RISCV64)
     result.set(GPRInfo::regCS0);
     result.set(GPRInfo::regCS1);

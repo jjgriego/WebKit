@@ -2839,6 +2839,11 @@ public:
         return Call(m_assembler.label(), Call::LinkableNear);
     }
 
+    Call threadSafePatchableNearCall()
+    {
+        return nearCall();
+    }
+
     Call nearTailCall()
     {
         m_assembler.nop();
@@ -2879,6 +2884,11 @@ public:
     ALWAYS_INLINE Call call(RegisterID callTag) { return UNUSED_PARAM(callTag), call(NoPtrTag); }
     ALWAYS_INLINE Call call(RegisterID target, RegisterID callTag) { return UNUSED_PARAM(callTag), call(target, NoPtrTag); }
     ALWAYS_INLINE Call call(Address address, RegisterID callTag) { return UNUSED_PARAM(callTag), call(address, NoPtrTag); }
+
+    ALWAYS_INLINE void callOperation(const FunctionPtr<OperationPtrTag> operation) {
+        move(TrustedImmPtr(operation.executableAddress()), addrTempRegister);
+        call(addrTempRegister, OperationPtrTag);
+    }
 
     void ret()
     {
@@ -3477,6 +3487,12 @@ public:
         load32(src.m_ptr, dataTempRegister);
         m_assembler.mtc1(dataTempRegister, fpTempRegister);
         m_assembler.cvtdw(dest, fpTempRegister);
+    }
+
+    void convertInt32ToFloat(RegisterID src, FPRegisterID dest)
+    {
+        m_assembler.mtc1(src, fpTempRegister);
+        m_assembler.cvtsw(dest, fpTempRegister);
     }
 
     void convertFloatToDouble(FPRegisterID src, FPRegisterID dst)

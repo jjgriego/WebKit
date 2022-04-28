@@ -26,10 +26,10 @@ require 'risc'
 
 # GPR conventions, to match the baseline JIT
 #
-# $a0 => a0, t7
-# $a1 => a1, t8
-# $a2 => a2, t9
-# $a3 => a3, t10
+# $a0 => a0, t7,  wa0
+# $a1 => a1, t8,  wa1
+# $a2 => a2, t9,  wa2
+# $a3 => a3, t10, wa3
 # $v0 => t0, r0
 # $v1 => t1, r1
 # $t0 =>            (scratch)
@@ -37,14 +37,16 @@ require 'risc'
 # $t2 =>         t2
 # $t3 =>         t3
 # $t4 =>         t4
-# $t5 =>         t5
-# $t6 =>         t6
+# $t5 =>         t5, ws0
+# $t6 =>         t6, ws1
 # $t7 =>            (scratch)
 # $t8 =>            (scratch)
 # $t9 =>            (stores the callee of a call opcode)
 # $gp =>            (globals)
-# $s0 => csr0       (callee-save, metadataTable)
+# $s0 => csr0       (callee-save, metadataTable/WASM instance pointer)
 # $s1 => csr1       (callee-save, PB)
+# $s2 => csr2       (callee-save, WASM memory base)
+# $s3 => csr3       (callee-save, WASM memory size)
 # $s4 =>            (callee-save used to preserve $gp across calls)
 # $ra => lr
 # $sp => sp
@@ -53,13 +55,13 @@ require 'risc'
 # FPR conventions, to match the baseline JIT
 # We don't have fa2 or fa3!
 #  $f0 => ft0, fr
-#  $f2 => ft1
-#  $f4 => ft2
-#  $f6 => ft3
-#  $f8 => ft4
-# $f10 => ft5
-# $f12 =>        fa0
-# $f14 =>        fa1
+#  $f2 => ft1,
+#  $f4 => ft2,
+#  $f6 => ft3,
+#  $f8 => ft4,
+# $f10 => ft5,
+# $f12 =>        fa0, wfa0
+# $f14 =>        fa1, wfa1
 # $f16 =>            (scratch)
 # $f18 =>            (scratch)
 
@@ -96,8 +98,8 @@ MIPS_GP_REG = SpecialRegister.new("$gp")
 MIPS_GPSAVE_REG = SpecialRegister.new("$s4")
 MIPS_CALL_REG = SpecialRegister.new("$t9")
 MIPS_RETURN_ADDRESS_REG = SpecialRegister.new("$ra")
-MIPS_TEMP_FPRS = [SpecialRegister.new("$f16")]
-MIPS_SCRATCH_FPR = SpecialRegister.new("$f18")
+MIPS_TEMP_FPRS = [SpecialRegister.new("$f18")]
+MIPS_SCRATCH_FPR = SpecialRegister.new("$f20")
 
 def mipsMoveImmediate(value, register)
     if value == 0
@@ -110,13 +112,13 @@ end
 class RegisterID
     def mipsOperand
         case name
-        when "a0", "t7"
+        when "a0", "t7", "wa0"
             "$a0"
-        when "a1", "t8"
+        when "a1", "t8", "wa1"
             "$a1"
-        when "a2", "t9"
+        when "a2", "t9", "wa2"
             "$a2"
-        when "a3", "t10"
+        when "a3", "t10", "wa3"
             "$a3"
         when "t0", "r0"
             "$v0"
@@ -128,14 +130,22 @@ class RegisterID
             "$t3"
         when "t4"
             "$t4"
-        when "t5"
+        when "t5", "ws0"
             "$t5"
+        when "t6", "ws1"
+            "$t6"
         when "cfr"
             "$fp"
         when "csr0"
             "$s0"
         when "csr1"
             "$s1"
+        when "csr2"
+            "$s2"
+        when "csr3"
+            "$s3"
+        when "csr4"
+            "$s4"
         when "lr"
             "$ra"
         when "sp"
@@ -161,9 +171,9 @@ class FPRegisterID
             "$f8"
         when "ft5"
             "$f10"
-        when "fa0"
+        when "fa0", "wfa0"
             "$f12"
-        when "fa1"
+        when "fa1", "wfa1"
             "$f14"
         else
             raise "Bad register #{name} for MIPS at #{codeOriginString}"
@@ -278,6 +288,141 @@ def lowerMIPSCondBranch(list, condOp, node)
     else
         raise "Expected 2 or 3 operands but got #{node.operands.size} at #{node.codeOriginString}"
     end
+end
+
+#
+# Lower `load2ia` and `store2ia` to separate loads/stores
+#
+# store2ia r0, r1, [addr]
+#
+# will become:
+#
+# storei r0, [addr]
+# storei r1, [addr] + 4
+#
+# ... likewise,
+#
+# load2ia r0, r1, [addr]
+#
+# will become:
+#
+# loadi [addr], r0
+# loadi [addr] + 4, r0
+
+def mipsLowerPairedMemoryOps(list)
+    newList = []
+    list.each {
+        | node |
+        if node.is_a? Instruction
+            ann = node.annotation
+
+            case node.opcode
+            when "store2ia"
+                tmp = Tmp.new(node.codeOrigin, :gpr)
+                addr0 = Address.new(node.codeOrigin, tmp, Immediate.new(node.codeOrigin, 0))
+                addr1 = Address.new(node.codeOrigin, tmp, Immediate.new(node.codeOrigin, 4))
+
+                r0 = node.operands[0]
+                r1 = node.operands[1]
+                newList << Instruction.new(node.codeOrigin, "leap", [node.operands[2], tmp])
+                newList << Instruction.new(node.codeOrigin, "storei", [r0, addr0], ann)
+                newList << Instruction.new(node.codeOrigin, "storei", [r1, addr1])
+            when "load2ia"
+                tmp = Tmp.new(node.codeOrigin, :gpr)
+                addr0 = Address.new(node.codeOrigin, tmp, Immediate.new(node.codeOrigin, 0))
+                addr1 = Address.new(node.codeOrigin, tmp, Immediate.new(node.codeOrigin, 4))
+
+                r0 = node.operands[1]
+                r1 = node.operands[2]
+                newList << Instruction.new(node.codeOrigin, "leap", [node.operands[0], tmp])
+                newList << Instruction.new(node.codeOrigin, "loadi", [addr0, r0], ann)
+                newList << Instruction.new(node.codeOrigin, "loadi", [addr1, r1])
+            else
+                newList << node
+            end
+        else
+            newList << node
+        end
+    }
+    newList
+end
+
+def mipsLowerFPOps(list)
+    newList = []
+    list.each {
+        | node |
+        if node.is_a? Instruction
+            ann = node.annotation
+
+            case node.opcode
+            when "truncatef2i"
+                # MIPS doesn't have an instruction to convert f32 to u32, so
+                # instead, convert to i64, and extract the lower 32 bits, which is easy
+                # because of the paired nature of the FP registers
+                tmp = Tmp.new(node.codeOrigin, :fpr) # tmp register always ends up with an even index
+                # convert to i64 in tmp0 and tmp1
+                newList << Instruction.new(node.codeOrigin, "truncatef2fq", [node.operands[0], tmp], ann)
+                # extract tmp0 to the result gpr
+                newList << Instruction.new(node.codeOrigin, "ff2i", [tmp, node.operands[1]])
+            when "truncatef2is"
+                # similar game, but less dicey, convert to i32 directly and move to gpr
+                tmp = Tmp.new(node.codeOrigin, :fpr)
+                newList << Instruction.new(node.codeOrigin, "truncatef2fi", [node.operands[0], tmp], ann)
+                newList << Instruction.new(node.codeOrigin, "ff2i", [tmp, node.operands[1]])
+            when "truncated2i"
+                tmp = Tmp.new(node.codeOrigin, :fpr)
+                newList << Instruction.new(node.codeOrigin, "truncated2fq", [node.operands[0], tmp], ann)
+                newList << Instruction.new(node.codeOrigin, "ff2i", [tmp, node.operands[1]])
+            when "truncated2is"
+                tmp = Tmp.new(node.codeOrigin, :fpr)
+                newList << Instruction.new(node.codeOrigin, "truncated2fi", [node.operands[0], tmp], ann)
+                newList << Instruction.new(node.codeOrigin, "ff2i", [tmp, node.operands[1]])
+            # we can't deal with logical bitwise operations on the FPU...
+            when "orf"
+                tmp0 = Tmp.new(node.codeOrigin, :gpr)
+                tmp1 = Tmp.new(node.codeOrigin, :gpr)
+                newList << Instruction.new(node.codeOrigin, "ff2i", [node.operands[0], tmp0])
+                newList << Instruction.new(node.codeOrigin, "ff2i", [node.operands[1], tmp1])
+                newList << Instruction.new(node.codeOrigin, "ori", [tmp0, tmp1])
+                newList << Instruction.new(node.codeOrigin, "fi2f", [tmp1, node.operands[1]])
+            when "ord"
+                tmp0 = Tmp.new(node.codeOrigin, :gpr)
+                tmp1 = Tmp.new(node.codeOrigin, :gpr)
+                newList << Instruction.new(node.codeOrigin, "fd2il", [node.operands[0], tmp0])
+                newList << Instruction.new(node.codeOrigin, "fd2il", [node.operands[1], tmp1])
+                newList << Instruction.new(node.codeOrigin, "ori", [tmp0, tmp1])
+                newList << Instruction.new(node.codeOrigin, "fil2d", [tmp1, node.operands[1]])
+                newList << Instruction.new(node.codeOrigin, "fd2ih", [node.operands[0], tmp0])
+                newList << Instruction.new(node.codeOrigin, "fd2ih", [node.operands[1], tmp1])
+                newList << Instruction.new(node.codeOrigin, "ori", [tmp0, tmp1])
+                newList << Instruction.new(node.codeOrigin, "fih2d", [tmp1, node.operands[1]])
+            when "andf"
+                tmp0 = Tmp.new(node.codeOrigin, :gpr)
+                tmp1 = Tmp.new(node.codeOrigin, :gpr)
+                newList << Instruction.new(node.codeOrigin, "ff2i", [node.operands[0], tmp0])
+                newList << Instruction.new(node.codeOrigin, "ff2i", [node.operands[1], tmp1])
+                newList << Instruction.new(node.codeOrigin, "andi", [tmp0, tmp1])
+                newList << Instruction.new(node.codeOrigin, "fi2f", [tmp1, node.operands[1]])
+            when "andd"
+                tmp0 = Tmp.new(node.codeOrigin, :gpr)
+                tmp1 = Tmp.new(node.codeOrigin, :gpr)
+                newList << Instruction.new(node.codeOrigin, "fd2il", [node.operands[0], tmp0])
+                newList << Instruction.new(node.codeOrigin, "fd2il", [node.operands[1], tmp1])
+                newList << Instruction.new(node.codeOrigin, "andi", [tmp0, tmp1])
+                newList << Instruction.new(node.codeOrigin, "fil2d", [tmp1, node.operands[1]])
+                newList << Instruction.new(node.codeOrigin, "fd2ih", [node.operands[0], tmp0])
+                newList << Instruction.new(node.codeOrigin, "fd2ih", [node.operands[1], tmp1])
+                newList << Instruction.new(node.codeOrigin, "andi", [tmp0, tmp1])
+                newList << Instruction.new(node.codeOrigin, "fih2d", [tmp1, node.operands[1]])
+            else
+                newList << node
+            end
+        else
+            newList << node
+        end
+    }
+    newList
+
 end
 
 #
@@ -635,12 +780,33 @@ def mipsLowerCompares(list)
                 mipsLowerCompareTemplate(newList, node, "andp", "movn")
             when "tio", "tbo", "tpo"
                 tmp = Tmp.new(node.codeOrigin, :gpr)
-                list << Instruction.new(node.codeOrigin, "andp", [node.operands[1], node.operands[0], tmp])
-                list << Instruction.new(node.codeOrigin, "slt", [node.operands[2], MIPS_ZERO_REG, tmp])
+                newList << Instruction.new(node.codeOrigin, "andp", [node.operands[1], node.operands[0], tmp])
+                newList << Instruction.new(node.codeOrigin, "slt", [node.operands[2], MIPS_ZERO_REG, tmp])
             when "tis", "tbs", "tps"
                 tmp = Tmp.new(node.codeOrigin, :gpr)
-                list << Instruction.new(node.codeOrigin, "andp", [node.operands[1], node.operands[0], tmp])
-                list << Instruction.new(node.codeOrigin, "slt", [node.operands[2], tmp, MIPS_ZERO_REG])
+                newList << Instruction.new(node.codeOrigin, "andp", [node.operands[1], node.operands[0], tmp])
+                newList << Instruction.new(node.codeOrigin, "slt", [node.operands[2], tmp, MIPS_ZERO_REG])
+            else
+                newList << node
+            end
+        else
+            newList << node
+        end
+    }
+    newList
+end
+
+def mipsLowerLeftRotate(list)
+    newList = []
+    list.each {
+        | node |
+        if node.is_a? Instruction
+            case node.opcode
+            when "lrotatei"
+                tmp = Tmp.new(node.codeOrigin, :gpr)
+                newList << Instruction.new(node.codeOrigin, "move", [node.operands[0], tmp]);
+                newList << Instruction.new(node.codeOrigin, "negi", [tmp, tmp]);
+                newList << Instruction.new(node.codeOrigin, "rrotatei", [tmp, node.operands[1]])
             else
                 newList << node
             end
@@ -674,7 +840,7 @@ def mipsAddPICCode(list)
     list.each {
         | node |
         myList << node
-        if node.is_a? Label
+        if node.is_a? Label and not node.is_return_location?
             myList << Instruction.new(node.codeOrigin, "pichdr", [MIPS_CALL_REG])
         end
     }
@@ -700,6 +866,7 @@ class Sequence
             end
         }
 
+        result = mipsLowerPairedMemoryOps(result)
         result = mipsAddPICCode(result)
         result = mipsLowerFarBranchOps(result)
         result = mipsLowerSimpleBranchOps(result)
@@ -723,6 +890,8 @@ class Sequence
         result = riscLowerMisplacedAddresses(result)
         result = riscLowerRegisterReuse(result)
         result = mipsLowerCompares(result)
+        result = mipsLowerFPOps(result)
+        result = mipsLowerLeftRotate(result)
         result = assignRegistersToTemporaries(result, :gpr, MIPS_TEMP_GPRS)
         result = assignRegistersToTemporaries(result, :fpr, MIPS_TEMP_FPRS)
 
@@ -792,6 +961,7 @@ def emitMIPSShiftCompact(opcode, operands)
     end
 end
 
+
 def emitMIPS(opcode, operands)
     if operands.size == 3
         $asm.puts "#{opcode} #{mipsFlippedOperands(operands)}"
@@ -801,9 +971,9 @@ def emitMIPS(opcode, operands)
     end
 end
 
-def emitMIPSDoubleCompare(branchOpcode, neg, operands)
+def emitMIPSFPCompare(format, branchOpcode, neg, operands)
     mipsMoveImmediate(1, operands[2])
-    $asm.puts "c.#{branchOpcode}.d $fcc0, #{mipsOperands(operands[0..1])}"
+    $asm.puts "c.#{branchOpcode}.#{format} $fcc0, #{mipsOperands(operands[0..1])}"
     if (!neg)
         $asm.puts "movf #{operands[2].mipsOperand}, $zero, $fcc0"
     else
@@ -811,13 +981,29 @@ def emitMIPSDoubleCompare(branchOpcode, neg, operands)
     end
 end
 
-def emitMIPSDoubleBranch(branchOpcode, neg, operands)
-    $asm.puts "c.#{branchOpcode}.d #{mipsOperands(operands[0..1])}"
+def emitMIPSDoubleCompare(branchOpcode, neg, operands)
+    emitMIPSFPCompare("d", branchOpcode, neg, operands)
+end
+
+def emitMIPSFloatCompare(branchOpcode, neg, operands)
+    emitMIPSFPCompare("s", branchOpcode, neg, operands)
+end
+
+def emitMIPSFPBranch(format, branchOpcode, neg, operands)
+    $asm.puts "c.#{branchOpcode}.#{format} #{mipsOperands(operands[0..1])}"
     if (!neg)
         $asm.puts "bc1t #{operands[2].asmLabel}"
     else
         $asm.puts "bc1f #{operands[2].asmLabel}"
     end
+end
+
+def emitMIPSDoubleBranch(branchOpcode, neg, operands)
+    emitMIPSFPBranch('d', branchOpcode, neg, operands)
+end
+
+def emitMIPSFloatBranch(branchOpcode, neg, operands)
+    emitMIPSFPBranch('s', branchOpcode, neg, operands)
 end
 
 def emitMIPSJumpOrCall(opcode, operand)
@@ -871,6 +1057,8 @@ class Instruction
             emitMIPSShiftCompact("sra", operands)
         when "urshifti", "urshiftp"
             emitMIPSShiftCompact("srl", operands)
+        when "rrotatei"
+            emitMIPS("rotrv", operands)
         when "muli", "mulp"
             emitMIPS("mul", operands)
         when "subi", "subp", "subis"
@@ -879,6 +1067,8 @@ class Instruction
             $asm.puts "negu #{operands[0].mipsOperand}, #{operands[0].mipsOperand}"
         when "noti"
             $asm.puts "nor #{operands[0].mipsOperand}, #{operands[0].mipsOperand}, $zero"
+        when "lzcnti"
+            $asm.puts "clz #{operands[1].mipsOperand}, #{operands[0].mipsOperand}"
         when "loadi", "loadis", "loadp"
             $asm.puts "lw #{mipsFlippedOperands(operands)}"
         when "storei", "storep"
@@ -903,42 +1093,107 @@ class Instruction
             $asm.puts "la #{operands[1].mipsOperand}, #{operands[0].asmLabel}"
         when "addd"
             emitMIPS("add.d", operands)
+        when "addf"
+            emitMIPS("add.s", operands)
         when "divd"
             emitMIPS("div.d", operands)
+        when "divf"
+            emitMIPS("div.s", operands)
         when "subd"
             emitMIPS("sub.d", operands)
+        when "subf"
+            emitMIPS("sub.s", operands)
         when "muld"
             emitMIPS("mul.d", operands)
+        when "mulf"
+            emitMIPS("mul.s", operands)
         when "sqrtd"
             $asm.puts "sqrt.d #{mipsFlippedOperands(operands)}"
+        when "sqrtf"
+            $asm.puts "sqrt.s #{mipsFlippedOperands(operands)}"
+        when "absd"
+            $asm.puts "abs.d #{mipsFlippedOperands(operands)}"
+        when "absf"
+            $asm.puts "abs.s #{mipsFlippedOperands(operands)}"
+        when "negd"
+            $asm.puts "neg.d #{mipsFlippedOperands(operands)}"
+        when "negf"
+            $asm.puts "neg.s #{mipsFlippedOperands(operands)}"
         when "ci2ds"
             raise "invalid ops of #{self.inspect} at #{codeOriginString}" unless operands[1].is_a? FPRegisterID and operands[0].register?
             $asm.puts "mtc1 #{operands[0].mipsOperand}, #{operands[1].mipsOperand}"
             $asm.puts "cvt.d.w #{operands[1].mipsOperand}, #{operands[1].mipsOperand}"
+        when "ci2fs"
+            $asm.puts "mtc1 #{operands[0].mipsOperand}, #{operands[1].mipsOperand}"
+            $asm.puts "cvt.s.w #{operands[1].mipsOperand}, #{operands[1].mipsOperand}"
+        when "ci2f"
+            $asm.puts "mtc1 #{operands[0].mipsOperand}, #{operands[1].mipsOperand}"
+            $asm.putStr("#if WTF_MIPS_ISA_REV_AT_LEAST(2)")
+            $asm.puts "mthc1 #{MIPS_ZERO_REG.mipsOperand}, #{operands[1].mipsSingleLo}"
+            $asm.putStr("#else")
+            $asm.puts "mtc1 #{MIPS_ZERO_REG.mipsOperand}, #{operands[1].mipsSingleHi}"
+            $asm.putStr("#endif")
+            $asm.puts "cvt.s.l #{operands[1].mipsOperand}, #{operands[1].mipsOperand}"
+        when "ci2d"
+            $asm.puts "mtc1 #{operands[0].mipsOperand}, #{operands[1].mipsOperand}"
+            $asm.putStr("#if WTF_MIPS_ISA_REV_AT_LEAST(2)")
+            $asm.puts "mthc1 #{MIPS_ZERO_REG.mipsOperand}, #{operands[1].mipsSingleLo}"
+            $asm.putStr("#else")
+            $asm.puts "mtc1 #{MIPS_ZERO_REG.mipsOperand}, #{operands[1].mipsSingleHi}"
+            $asm.putStr("#endif")
+            $asm.puts "cvt.d.l #{operands[1].mipsOperand}, #{operands[1].mipsOperand}"
+        when "cd2f"
+            $asm.puts "cvt.s.d #{operands[1].mipsOperand}, #{operands[0].mipsOperand}"
+        when "cf2d"
+            $asm.puts "cvt.d.s #{operands[1].mipsOperand}, #{operands[0].mipsOperand}"
         when "bdeq"
             emitMIPSDoubleBranch("eq", false, operands)
+        when "bfeq"
+            emitMIPSFloatBranch("eq", false, operands)
         when "bdneq"
             emitMIPSDoubleBranch("ueq", true, operands)
+        when "bfneq"
+            emitMIPSFloatBranch("ueq", true, operands)
         when "bdgt"
             emitMIPSDoubleBranch("ule", true, operands)
+        when "bfgt"
+            emitMIPSFloatBranch("ule", true, operands)
         when "bdgteq"
             emitMIPSDoubleBranch("ult", true, operands)
+        when "bfgteq"
+            emitMIPSFloatBranch("ult", true, operands)
         when "bdlt"
             emitMIPSDoubleBranch("olt", false, operands)
+        when "bflt"
+            emitMIPSFloatBranch("olt", false, operands)
         when "bdlteq"
             emitMIPSDoubleBranch("ole", false, operands)
+        when "bflteq"
+            emitMIPSFloatBranch("ole", false, operands)
         when "bdequn"
             emitMIPSDoubleBranch("ueq", false, operands)
+        when "bfequn"
+            emitMIPSFloatBranch("ueq", false, operands)
         when "bdnequn"
             emitMIPSDoubleBranch("eq", true, operands)
+        when "bfnequn"
+            emitMIPSFloatBranch("eq", true, operands)
         when "bdgtun"
             emitMIPSDoubleBranch("ole", true, operands)
+        when "bfgtun"
+            emitMIPSFloatBranch("ole", true, operands)
         when "bdgtequn"
             emitMIPSDoubleBranch("olt", true, operands)
+        when "bfgtequn"
+            emitMIPSFloatBranch("olt", true, operands)
         when "bdltun"
             emitMIPSDoubleBranch("ult", false, operands)
+        when "bfltun"
+            emitMIPSFloatBranch("ult", false, operands)
         when "bdltequn"
             emitMIPSDoubleBranch("ule", false, operands)
+        when "bfltequn"
+            emitMIPSFloatBranch("ule", false, operands)
         when "btd2i"
             # FIXME: may be a good idea to just get rid of this instruction, since the interpreter
             # currently does not use it.
@@ -973,6 +1228,10 @@ class Instruction
             else
                 $asm.puts "move #{mipsFlippedOperands(operands)}"
             end
+        when "moveii"
+            raise "First operand of moveii must be an immediate" unless operands[0].immediate?
+            mipsMoveImmediate(operands[0].value >> 32, operands[1])
+            mipsMoveImmediate(operands[0].value & 0xffffffff, operands[2])
         when "nop"
             $asm.puts "nop"
         when "bieq", "bpeq", "bbeq"
@@ -1017,12 +1276,28 @@ class Instruction
             $asm.puts "xori #{operands[2].mipsOperand}, 1"
         when "cdgt"
             emitMIPSDoubleCompare("ule", true, operands)
+        when "cfgt"
+            emitMIPSFloatCompare("ule", true, operands)
         when "cdgteq"
             emitMIPSDoubleCompare("ult", true, operands)
+        when "cfgteq"
+            emitMIPSFloatCompare("ult", true, operands)
         when "cdlt"
             emitMIPSDoubleCompare("olt", false, operands)
+        when "cflt"
+            emitMIPSFloatCompare("olt", false, operands)
         when "cdlteq"
             emitMIPSDoubleCompare("ole", false, operands)
+        when "cflteq"
+            emitMIPSFloatCompare("ole", false, operands)
+        when "cdeq"
+            emitMIPSDoubleCompare("eq", false, operands)
+        when "cfeq"
+            emitMIPSFloatCompare("eq", false, operands)
+        when "cdnequn"
+            emitMIPSDoubleCompare("eq", true, operands)
+        when "cfnequn"
+            emitMIPSFloatCompare("eq", true, operands)
         when "peek"
             $asm.puts "lw #{operands[1].mipsOperand}, #{operands[0].value * 4}($sp)"
         when "poke"
@@ -1041,6 +1316,22 @@ class Instruction
             $asm.putStr("#else")
             $asm.puts "mfc1 #{operands[2].mipsOperand}, #{operands[0].mipsSingleHi}"
             $asm.putStr("#endif")
+        when "fih2d"
+            $asm.putStr("#if WTF_MIPS_ISA_REV_AT_LEAST(2)")
+            $asm.puts "mthc1 #{operands[0].mipsOperand}, #{operands[1].mipsSingleLo}"
+            $asm.putStr("#else")
+            $asm.puts "mtc1 #{operands[0].mipsOperand}, #{operands[1].mipsSingleHi}"
+            $asm.putStr("#endif")
+        when "fil2d"
+            $asm.puts "mtc1 #{operands[0].mipsOperand}, #{operands[1].mipsSingleLo}"
+        when "fd2ih"
+            $asm.putStr("#if WTF_MIPS_ISA_REV_AT_LEAST(2)")
+            $asm.puts "mfhc1 #{operands[1].mipsOperand}, #{operands[0].mipsSingleLo}"
+            $asm.putStr("#else")
+            $asm.puts "mfc1 #{operands[1].mipsOperand}, #{operands[0].mipsSingleHi}"
+            $asm.putStr("#endif")
+        when "fd2il"
+            $asm.puts "mfc1 #{operands[1].mipsOperand}, #{operands[0].mipsSingleLo}"
         when /^bo/
             $asm.puts "bgt #{operands[0].mipsOperand}, #{operands[1].mipsOperand}, #{operands[2].asmLabel}"
         when /^bs/
@@ -1065,6 +1356,11 @@ class Instruction
             $asm.puts "mult #{operands[0].mipsOperand}, #{operands[1].mipsOperand}"
             $asm.puts "mflo #{operands[2].mipsOperand}"
             $asm.puts "mfhi #{operands[3].mipsOperand}"
+        when "umulli"
+            raise "Wrong number of arguments to smull in #{self.inspect} at #{codeOriginString}" unless operands.length == 4
+            $asm.puts "multu #{operands[0].mipsOperand}, #{operands[1].mipsOperand}"
+            $asm.puts "mflo #{operands[2].mipsOperand}"
+            $asm.puts "mfhi #{operands[3].mipsOperand}"
         when "movz"
             $asm.puts "movz #{operands[0].mipsOperand}, #{operands[1].mipsOperand}, #{operands[2].mipsOperand}"
         when "movn"
@@ -1077,8 +1373,49 @@ class Instruction
             $asm.puts "sltu #{operands[0].mipsOperand}, #{operands[1].mipsOperand}, #{operands[2].mipsOperand}"
         when "pichdr"
             $asm.putStr("OFFLINE_ASM_CPLOAD(#{operands[0].mipsOperand})")
-        when "memfence"
+        when "memfence", "fence"
             $asm.puts "sync"
+        when "loadf"
+            $asm.puts "lwc1 #{operands[1].mipsOperand}, #{operands[0].mipsOperand}"
+        when "loadd"
+            $asm.puts "ldc1 #{operands[1].mipsOperand}, #{operands[0].mipsOperand}"
+        when "storef"
+            $asm.puts "swc1 #{mipsOperands(operands)}"
+        when "stored"
+            $asm.puts "sdc1 #{mipsOperands(operands)}"
+        when "movef"
+            $asm.puts "mov.s #{operands[1].mipsOperand}, #{operands[0].mipsOperand}"
+        when "moved"
+            $asm.puts "mov.d #{operands[1].mipsOperand}, #{operands[0].mipsOperand}"
+        when "fi2f"
+            $asm.puts "mtc1 #{mipsOperands(operands)}"
+        when "ff2i"
+            $asm.puts "mfc1 #{operands[1].mipsOperand}, #{operands[0].mipsOperand}"
+        when "truncatef2fq"
+            $asm.puts "trunc.l.s #{operands[1].mipsOperand}, #{operands[0].mipsOperand}"
+        when "truncatef2fi"
+            $asm.puts "trunc.w.s #{operands[1].mipsOperand}, #{operands[0].mipsOperand}"
+        when "truncated2fq"
+            $asm.puts "trunc.l.d #{operands[1].mipsOperand}, #{operands[0].mipsOperand}"
+        when "truncated2fi"
+            $asm.puts "trunc.w.d #{operands[1].mipsOperand}, #{operands[0].mipsOperand}"
+        when "sxb2i"
+            $asm.puts "sll #{operands[1].mipsOperand}, #{operands[0].mipsOperand}, 24"
+            $asm.puts "sra #{operands[1].mipsOperand}, #{operands[1].mipsOperand}, 24"
+        when "sxh2i"
+            $asm.puts "sll #{operands[1].mipsOperand}, #{operands[0].mipsOperand}, 16"
+            $asm.puts "sra #{operands[1].mipsOperand}, #{operands[1].mipsOperand}, 16"
+        # when "storecond2i"
+            # $asm.puts "scwp #{operands[1].mipsOperand}, #{operands[2].mipsOperand}, #{operands[3].mipsOperand}"
+        # # TODO
+            # $asm.puts "move #{operands[0].mipsOperand}, #{operands[1].mipsOperand}"
+        # when "storecondi"
+            # $asm.puts "sc #{operands[1].mipsOperand}, #{operands[2].mipsOperand}"
+            # $asm.puts "move #{operands[0].mipsOperand}, #{operands[1].mipsOperand}"
+        # when "loadlink2i"
+            # $asm.puts "llwp #{operands[0].mipsOperand}, #{operands[1].mipsOperand}, #{operands[2].mipsOperand}"
+        # when "loadlinki"
+            # $asm.puts "ll #{operands[1].mipsOperand}, #{operands[0].mipsOperand}"
         else
             lowerDefault
         end

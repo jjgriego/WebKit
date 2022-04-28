@@ -678,9 +678,14 @@ private:
     {
         ASSERT(gpr != InvalidGPRReg && !m_newRegisters[gpr]);
         ASSERT(recovery.technique() == Int32DisplacedInJSStack
-            || recovery.technique() == Int32TagDisplacedInJSStack);
+            || recovery.technique() == Int32TagDisplacedInJSStack
+            || recovery.technique() == UnboxedInt32InGPR);
+
         CachedRecovery* cachedRecovery = addCachedRecovery(recovery);
-        if (JSValueRegs oldRegs { cachedRecovery->wantedJSValueRegs() }) {
+
+        auto const oldRegs = cachedRecovery->wantedJSValueRegs();
+
+        if (oldRegs && recovery.technique() != UnboxedInt32InGPR) {
             // Combine with the other CSR in the same virtual register slot
             ASSERT(oldRegs.tagGPR() == InvalidGPRReg);
             ASSERT(oldRegs.payloadGPR() != InvalidGPRReg && oldRegs.payloadGPR() != gpr);

@@ -767,7 +767,7 @@ if C_LOOP or C_LOOP_WIN or ARM64 or ARM64E or X86_64 or X86_64_WIN or RISCV64
 elsif ARMv7
     const CalleeSaveRegisterCount = 5 + 2 * 1 // 5 32-bit GPRs + 1 64-bit FPR
 elsif MIPS
-    const CalleeSaveRegisterCount = 3
+    const CalleeSaveRegisterCount = 5
 elsif X86 or X86_WIN
     const CalleeSaveRegisterCount = 3
 end
@@ -788,10 +788,12 @@ macro pushCalleeSaves()
         emit "vpush.64 {d15}"
         emit "push {r4-r6, r8-r9}"
     elsif MIPS
-        emit "addiu $sp, $sp, -12"
+        emit "addiu $sp, $sp, -20"
         emit "sw $s0, 0($sp)" # csr0/metaData
         emit "sw $s1, 4($sp)" # csr1/PB
-        emit "sw $s4, 8($sp)"
+        emit "sw $s2, 8($sp)"
+        emit "sw $s3, 12($sp)"
+        emit "sw $s4, 16($sp)"
         # save $gp to $s4 so that we can restore it after a function call
         emit "move $s4, $gp"
     elsif X86
@@ -813,8 +815,10 @@ macro popCalleeSaves()
     elsif MIPS
         emit "lw $s0, 0($sp)"
         emit "lw $s1, 4($sp)"
-        emit "lw $s4, 8($sp)"
-        emit "addiu $sp, $sp, 12"
+        emit "lw $s2, 8($sp)"
+        emit "lw $s3, 12($sp)"
+        emit "lw $s4, 16($sp)"
+        emit "addiu $sp, $sp, 20"
     elsif X86
         emit "pop %ebx"
         emit "pop %edi"
@@ -1139,6 +1143,14 @@ macro defineReturnLabel(opcodeName, size)
     end
 
     size(defineNarrow, defineWide16, defineWide32, macro (f) f() end)
+
+if MIPS
+    # on MIPS, the call opcode lowers to both the call and code to restore $gp
+    # that is needed for PIC code--unfortunately it's not simple for us to move the label
+    # between those two instructions, so, for these return labels, we duplicate the code
+    # to restore $gp
+    emit "move $gp, $s4"
+end
 end
 
 if ARM64E

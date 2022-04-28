@@ -1105,6 +1105,9 @@ FOR_EACH_WASM_MEMORY_STORE_OP(CREATE_CASE)
     }
 
     case ExtAtomic: {
+#if CPU(MIPS)
+        WASM_PARSER_FAIL_IF(true, "wasm atomics are not available on MIPS");
+#else
         WASM_PARSER_FAIL_IF(!Options::useWebAssemblyThreading(), "wasm-threading is not enabled");
         uint8_t extOp;
         WASM_PARSER_FAIL_IF(!parseUInt8(extOp), "can't parse atomic extended opcode");
@@ -1142,6 +1145,7 @@ FOR_EACH_WASM_MEMORY_STORE_OP(CREATE_CASE)
             break;
         }
         return { };
+#endif // CPU(MIPS)
     }
 
     case RefNull: {
@@ -2025,6 +2029,9 @@ auto FunctionParser<Context>::parseUnreachableExpression() -> PartialResult
 
 #define CREATE_ATOMIC_CASE(name, ...) case ExtAtomicOpType::name:
     case ExtAtomic: {
+#if CPU(MIPS)
+        WASM_PARSER_FAIL_IF(true, "wasm atomics are not available on MIPS");
+#else
         WASM_PARSER_FAIL_IF(!Options::useWebAssemblyThreading(), "wasm-threading is not enabled");
         uint8_t extOp;
         WASM_PARSER_FAIL_IF(!parseUInt8(extOp), "can't parse atomic extended opcode");
@@ -2064,6 +2071,7 @@ auto FunctionParser<Context>::parseUnreachableExpression() -> PartialResult
         }
 
         return { };
+#endif // CPU(MIPS)
     }
 #undef CREATE_ATOMIC_CASE
 

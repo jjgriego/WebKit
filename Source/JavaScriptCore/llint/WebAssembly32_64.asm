@@ -50,10 +50,28 @@ if ARMv7
     throwException(OutOfBoundsMemoryAccess)
 .continuation:
     addp Wasm::Instance::m_cachedMemory[wasmInstance], pointer
-else
+elsif MIPS
+    # no overflow/carry flags on MIPS, we have to manually check for overflow
+    move offset, t2
+    noti t2
+    bpb t2, pointer, .throw
+    addp offset, pointer
+    bpb (~(size - 1)), pointer, .throw
+    addp (size - 1), pointer, t3
+    bpb t3, boundsCheckingSize, .continuation
+.throw:
+    throwException(OutOfBoundsMemoryAccess)
+.continuation:
+    addp memoryBase, pointer
+
+else # not MIPS or ARMv7
     crash()
 end
 end
+
+# this macro is only used for atomics, which are not implemented
+# on MIPS--see below
+if not MIPS
 
 macro emitCheckAndPreparePointerAddingOffsetWithAlignmentCheck(pointer, offset, size)
     # This macro updates 'pointer' to target address, and may thrash 'offset'
@@ -73,6 +91,8 @@ if ARMv7
 else
     crash()
 end
+end
+
 end
 
 macro wasmLoadOp(name, struct, size, fn)
@@ -191,7 +211,7 @@ end)
 # Opcodes that don't have the `b3op` entry in wasm.json. This should be kept in sync
 
 macro callDivRem(fn)
-if ARMv7
+if MIPS or ARMv7
     subp StackAlignment, sp
     storep PC, [sp]
     cCall4(fn)
@@ -277,16 +297,32 @@ end)
 wasmOp(i64_add, WasmI64Add, macro(ctx)
     mload2i(ctx, m_lhs, t1, t0)
     mload2i(ctx, m_rhs, t3, t2)
-    addis t2, t0
-    adci  t3, t1
+    if ARMv7
+      addis t2, t0
+      adci  t3, t1
+    else
+      addi t1, t3
+      move t0, t1
+      noti t1
+      cia t2, t1, t1
+      addi t3, t1
+      addi t2, t0
+    end
     return2i(ctx, t1, t0)
 end)
 
 wasmOp(i64_sub, WasmI64Sub, macro(ctx)
     mload2i(ctx, m_lhs, t1, t0)
     mload2i(ctx, m_rhs, t3, t2)
-    subis t2, t0
-    sbci  t3, t1
+    if ARMv7
+      subis t2, t0
+      sbci  t3, t1
+    else
+      subi t3, t1
+      cia t2, t0, t3
+      subi t3, t1
+      subi t2, t0
+    end
     return2i(ctx, t1, t0)
 end)
 
@@ -301,6 +337,7 @@ wasmOp(i64_mul, WasmI64Mul, macro(ctx)
     return2i(ctx, t2, t0)
 end)
 
+if ARMv7 or MIPS
 wasmOp(i64_div_s, WasmI64DivS, macro (ctx)
     mload2i(ctx, m_lhs, a1, a0)
     mload2i(ctx, m_rhs, a3, a2)
@@ -381,6 +418,7 @@ wasmOp(i64_rem_u, WasmI64RemU, macro (ctx)
 .throwDivisionByZero:
     throwException(DivisionByZero)
 end)
+end # MIPS or ARMv7, see note above
 
 wasmOp(i64_and, WasmI64And, macro(ctx)
     mload2i(ctx, m_lhs, t1, t0)
@@ -663,20 +701,24 @@ end)
 
 # i64 unary ops
 
-wasmOp(i64_ctz, WasmI64Ctz, macro (ctx)
-    mload2i(ctx, m_operand, t1, t0)
-    btiz t0, .top
+if MIPS
+  slowWasmOp(i64_ctz)
+else
+  wasmOp(i64_ctz, WasmI64Ctz, macro (ctx)
+      mload2i(ctx, m_operand, t1, t0)
+      btiz t0, .top
 
-    tzcnti t0, t0
-    jmp .return
+      tzcnti t0, t0
+      jmp .return
 
-.top:
-    tzcnti t1, t0
-    addi 32, t0
+  .top:
+      tzcnti t1, t0
+      addi 32, t0
 
-.return:
-    return2i(ctx, 0, t0)
-end)
+  .return:
+      return2i(ctx, 0, t0)
+  end)
+end
 
 wasmOp(i64_clz, WasmI64Clz, macro(ctx)
     mload2i(ctx, m_operand, t1, t0)
@@ -870,6 +912,8 @@ end)
 
 # Atomics
 
+if not MIPS
+
 macro wasmAtomicBinaryRMWOps(lowerCaseOpcode, upperCaseOpcode, fnb, fnh, fni, fn2i)
     wasmOp(i64_atomic_rmw8%lowerCaseOpcode%_u, WasmI64AtomicRmw8%upperCaseOpcode%U, macro(ctx)
         mloadi(ctx, m_pointer, t3)
@@ -951,56 +995,55 @@ macro wasmAtomicBinaryRMWOpsWithWeakCAS(lowerCaseOpcode, upperCaseOpcode, fni, f
         end)
 end
 
-if ARMv7
-    wasmAtomicBinaryRMWOpsWithWeakCAS(_add, Add,
-        macro(src0, src1, dst)
-            addi src0, src1, dst
-        end,
-        macro(src0Msw, src0Lsw, src1Msw, src1Lsw, dstMsw, dstLsw)
-            addis src0Lsw, src1Lsw, dstLsw
-            adci  src0Msw, src1Msw, dstMsw
-        end)
-    wasmAtomicBinaryRMWOpsWithWeakCAS(_sub, Sub,
-        macro(src0, src1, dst)
-            subi src1, src0, dst
-        end,
-        macro(src0Msw, src0Lsw, src1Msw, src1Lsw, dstMsw, dstLsw)
-            subis src1Lsw, src0Lsw, dstLsw
-            sbci  src1Msw, src0Msw, dstMsw
-        end)
-    wasmAtomicBinaryRMWOpsWithWeakCAS(_xchg, Xchg,
-        macro(src0, src1, dst)
-            move src0, dst
-        end,
-        macro(src0Msw, src0Lsw, src1Msw, src1Lsw, dstMsw, dstLsw)
-            move src0Lsw, dstLsw
-            move src0Msw, dstMsw
-        end)
-    wasmAtomicBinaryRMWOpsWithWeakCAS(_and, And,
-        macro(src0, src1, dst)
-            andi src0, src1, dst
-        end,
-        macro(src0Msw, src0Lsw, src1Msw, src1Lsw, dstMsw, dstLsw)
-            andi src0Lsw, src1Lsw, dstLsw
-            andi src0Msw, src1Msw, dstMsw
-        end)
-    wasmAtomicBinaryRMWOpsWithWeakCAS(_or, Or,
-        macro(src0, src1, dst)
-            ori src0, src1, dst
-        end,
-        macro(src0Msw, src0Lsw, src1Msw, src1Lsw, dstMsw, dstLsw)
-            ori src0Lsw, src1Lsw, dstLsw
-            ori src0Msw, src1Msw, dstMsw
-        end)
-    wasmAtomicBinaryRMWOpsWithWeakCAS(_xor, Xor,
-        macro(src0, src1, dst)
-            xori src0, src1, dst
-        end,
-        macro(src0Msw, src0Lsw, src1Msw, src1Lsw, dstMsw, dstLsw)
-            xori src0Lsw, src1Lsw, dstLsw
-            xori src0Msw, src1Msw, dstMsw
-        end)
-end
+wasmAtomicBinaryRMWOpsWithWeakCAS(_add, Add,
+    macro(src0, src1, dst)
+        addi src0, src1, dst
+    end,
+    macro(src0Msw, src0Lsw, src1Msw, src1Lsw, dstMsw, dstLsw)
+        addis src0Lsw, src1Lsw, dstLsw
+        adci  src0Msw, src1Msw, dstMsw
+    end)
+wasmAtomicBinaryRMWOpsWithWeakCAS(_sub, Sub,
+    macro(src0, src1, dst)
+        subi src1, src0, dst
+    end,
+    macro(src0Msw, src0Lsw, src1Msw, src1Lsw, dstMsw, dstLsw)
+        subis src1Lsw, src0Lsw, dstLsw
+        sbci  src1Msw, src0Msw, dstMsw
+    end)
+wasmAtomicBinaryRMWOpsWithWeakCAS(_xchg, Xchg,
+    macro(src0, src1, dst)
+        move src0, dst
+    end,
+    macro(src0Msw, src0Lsw, src1Msw, src1Lsw, dstMsw, dstLsw)
+        move src0Lsw, dstLsw
+        move src0Msw, dstMsw
+    end)
+wasmAtomicBinaryRMWOpsWithWeakCAS(_and, And,
+    macro(src0, src1, dst)
+        andi src0, src1, dst
+    end,
+    macro(src0Msw, src0Lsw, src1Msw, src1Lsw, dstMsw, dstLsw)
+        andi src0Lsw, src1Lsw, dstLsw
+        andi src0Msw, src1Msw, dstMsw
+    end)
+wasmAtomicBinaryRMWOpsWithWeakCAS(_or, Or,
+    macro(src0, src1, dst)
+        ori src0, src1, dst
+    end,
+    macro(src0Msw, src0Lsw, src1Msw, src1Lsw, dstMsw, dstLsw)
+        ori src0Lsw, src1Lsw, dstLsw
+        ori src0Msw, src1Msw, dstMsw
+    end)
+wasmAtomicBinaryRMWOpsWithWeakCAS(_xor, Xor,
+    macro(src0, src1, dst)
+        xori src0, src1, dst
+    end,
+    macro(src0Msw, src0Lsw, src1Msw, src1Lsw, dstMsw, dstLsw)
+        xori src0Lsw, src1Lsw, dstLsw
+        xori src0Msw, src1Msw, dstMsw
+    end)
+
 
 macro wasmAtomicCompareExchangeOps(lowerCaseOpcode, upperCaseOpcode, fnb, fnh, fni, fn2i)
     wasmOp(i64_atomic_rmw8%lowerCaseOpcode%_u, WasmI64AtomicRmw8%upperCaseOpcode%U, macro(ctx)
@@ -1050,7 +1093,6 @@ macro wasmAtomicCompareExchangeOps(lowerCaseOpcode, upperCaseOpcode, fnb, fnh, f
     end)
 end
 
-if ARMv7
 // exp: "expected", val: "value", res: "result"
 wasmAtomicCompareExchangeOps(_cmpxchg, Cmpxchg,
     macro(expMsw, expLsw, valMsw, valLsw, mem, scratch, resLsw)
@@ -1125,10 +1167,39 @@ wasmAtomicCompareExchangeOps(_cmpxchg, Cmpxchg,
             move resLsw, expLsw
             move resMsw, expMsw
     end)
+
+
+else // if not MIPS
+
+# MIPS does not currently implement any atomic operations
+# since only revision 6 hardware supports 64-bit atomics
+#
+# Rather than conditionally generating the bytecode structs
+# and dispatch code (for which there is no precedent in another architecture as
+# far as I can see) we'll just make them crash on this architecture
+
+macro unimplementedAtomics(ctx)
+  crash()
 end
 
-# GC ops
+macro wasmAtomicBinaryRMWOps(lowerCaseOpcode, upperCaseOpcode)
+  wasmOp(i64_atomic_rmw8%lowerCaseOpcode%_u, WasmI64AtomicRmw8%upperCaseOpcode%U, unimplementedAtomics)
+  wasmOp(i64_atomic_rmw16%lowerCaseOpcode%_u, WasmI64AtomicRmw16%upperCaseOpcode%U, unimplementedAtomics)
+  wasmOp(i64_atomic_rmw32%lowerCaseOpcode%_u, WasmI64AtomicRmw32%upperCaseOpcode%U, unimplementedAtomics)
+  wasmOp(i64_atomic_rmw%lowerCaseOpcode%, WasmI64AtomicRmw%upperCaseOpcode%, unimplementedAtomics)
+end
 
+wasmAtomicBinaryRMWOps(_add, Add)
+wasmAtomicBinaryRMWOps(_sub, Sub)
+wasmAtomicBinaryRMWOps(_xchg, Xchg)
+wasmAtomicBinaryRMWOps(_and, And)
+wasmAtomicBinaryRMWOps(_or, Or)
+wasmAtomicBinaryRMWOps(_xor, Xor)
+wasmAtomicBinaryRMWOps(_cmpxchg, Cmpxchg)
+
+end // if not MIPS
+
+# GC ops
 wasmOp(i31_new, WasmI31New, macro(ctx)
     mloadi(ctx, m_value, t0)
     andi 0x7fffffff, t0

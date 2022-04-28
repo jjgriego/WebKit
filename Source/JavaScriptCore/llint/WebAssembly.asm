@@ -34,13 +34,18 @@ if X86_64
     const NumberOfWasmArgumentJSRs = 6
 elsif ARM64 or ARM64E or RISCV64
     const NumberOfWasmArgumentJSRs = 8
-elsif ARMv7
+elsif ARMv7 or MIPS
     const NumberOfWasmArgumentJSRs = 2
 else
     error
 end
 
-const NumberOfWasmArgumentFPRs = 8
+if MIPS
+  const NumberOfWasmArgumentFPRs = 2
+else
+  const NumberOfWasmArgumentFPRs = 8
+end
+
 
 const NumberOfWasmArguments = NumberOfWasmArgumentJSRs + NumberOfWasmArgumentFPRs
 
@@ -55,6 +60,10 @@ elsif ARMv7
     const wasmInstance = csr0
     const memoryBase = invalidGPR
     const boundsCheckingSize = invalidGPR
+elsif MIPS
+    const wasmInstance = csr0
+    const memoryBase = csr2
+    const boundsCheckingSize = csr3
 else
     error
 end
@@ -64,7 +73,7 @@ if X86_64
     const PB = csr2
 elsif ARM64 or ARM64E or RISCV64
     const PB = csr7
-elsif ARMv7
+elsif ARMv7 or MIPS
     const PB = csr1
 else
     error
@@ -104,12 +113,14 @@ macro forEachArgumentFPR(fn)
     else
         fn((NumberOfWasmArgumentJSRs + 0) * 8, wfa0)
         fn((NumberOfWasmArgumentJSRs + 1) * 8, wfa1)
+    if not MIPS
         fn((NumberOfWasmArgumentJSRs + 2) * 8, wfa2)
         fn((NumberOfWasmArgumentJSRs + 3) * 8, wfa3)
         fn((NumberOfWasmArgumentJSRs + 4) * 8, wfa4)
         fn((NumberOfWasmArgumentJSRs + 5) * 8, wfa5)
         fn((NumberOfWasmArgumentJSRs + 6) * 8, wfa6)
         fn((NumberOfWasmArgumentJSRs + 7) * 8, wfa7)
+    end
     end
 end
 
@@ -248,7 +259,7 @@ macro preserveCalleeSavesUsedByWasm()
     elsif X86_64 or RISCV64
         storep PB, -0x8[cfr]
         storep wasmInstance, -0x10[cfr]
-    elsif ARMv7
+    elsif ARMv7 or MIPS
         storep PB, -4[cfr]
         storep wasmInstance, -8[cfr]
     else
@@ -265,7 +276,7 @@ macro restoreCalleeSavesUsedByWasm()
     elsif X86_64 or RISCV64
         loadp -0x8[cfr], PB
         loadp -0x10[cfr], wasmInstance
-    elsif ARMv7
+    elsif ARMv7 or MIPS
         loadp -4[cfr], PB
         loadp -8[cfr], wasmInstance
     else
@@ -1073,11 +1084,16 @@ end)
 
 # Opcodes that don't have the `b3op` entry in wasm.json. This should be kept in sync
 
-wasmOp(i32_ctz, WasmI32Ctz, macro (ctx)
-    mloadi(ctx, m_operand, t0)
-    tzcnti t0, t0
-    returni(ctx, t0)
-end)
+if MIPS
+  slowWasmOp(i32_ctz)
+else
+  wasmOp(i32_ctz, WasmI32Ctz, macro (ctx)
+      mloadi(ctx, m_operand, t0)
+      tzcnti t0, t0
+      returni(ctx, t0)
+  end)
+end
+
 
 wasmOp(i32_popcnt, WasmI32Popcnt, macro (ctx)
     mloadi(ctx, m_operand, a1)
