@@ -1016,11 +1016,18 @@ end)
 
 # Opcodes that don't have the `b3op` entry in wasm.json. This should be kept in sync
 
-wasmOp(i32_ctz, WasmI32Ctz, macro (ctx)
-    mloadi(ctx, m_operand, t0)
-    tzcnti t0, t0
-    returni(ctx, t0)
-end)
+if MIPS
+  # TODO
+  wasmOp(i32_ctz, WasmI32Ctz, macro (ctx)
+  end)
+else
+  wasmOp(i32_ctz, WasmI32Ctz, macro (ctx)
+      mloadi(ctx, m_operand, t0)
+      tzcnti t0, t0
+      returni(ctx, t0)
+  end)
+end
+
 
 wasmOp(i32_popcnt, WasmI32Popcnt, macro (ctx)
     mloadi(ctx, m_operand, a1)

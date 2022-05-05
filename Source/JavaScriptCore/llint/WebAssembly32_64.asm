@@ -277,16 +277,32 @@ end)
 wasmOp(i64_add, WasmI64Add, macro(ctx)
     mload2i(ctx, m_lhs, t1, t0)
     mload2i(ctx, m_rhs, t3, t2)
-    addis t2, t0
-    adci  t3, t1
-    return2i(ctx, t1, t0)
+    if ARMv7
+      addis t2, t0
+      adci  t3, t1
+      return2i(ctx, t1, t0)
+    else
+      noti t0, t4
+      cia t4, t2, t4
+      addi t2, t0
+      addi t1, t4
+      addi t3, t4
+      return2i(ctx, t4, t0)
+    end
 end)
 
 wasmOp(i64_sub, WasmI64Sub, macro(ctx)
     mload2i(ctx, m_lhs, t1, t0)
     mload2i(ctx, m_rhs, t3, t2)
-    subis t2, t0
-    sbci  t3, t1
+    if ARMv7
+      subis t2, t0
+      sbci  t3, t1
+    else
+      cia t2, t0, t4
+      subi t2, t0
+      subi t4, t1
+      subi t3, t1
+    end
     return2i(ctx, t1, t0)
 end)
 
@@ -301,6 +317,10 @@ wasmOp(i64_mul, WasmI64Mul, macro(ctx)
     return2i(ctx, t2, t0)
 end)
 
+# unfortunately MIPS32 doesn't have any compact enough way to encode
+# i64 or u64 division--these instructions will need to call out to C to use
+# the compiler's implementation of the long division in software
+if ARMv7
 wasmOp(i64_div_s, WasmI64DivS, macro (ctx)
     mload2i(ctx, m_lhs, a1, a0)
     mload2i(ctx, m_rhs, a3, a2)
@@ -381,6 +401,7 @@ wasmOp(i64_rem_u, WasmI64RemU, macro (ctx)
 .throwDivisionByZero:
     throwException(DivisionByZero)
 end)
+end # ARMv7, see note above
 
 wasmOp(i64_and, WasmI64And, macro(ctx)
     mload2i(ctx, m_lhs, t1, t0)
@@ -663,20 +684,26 @@ end)
 
 # i64 unary ops
 
-wasmOp(i64_ctz, WasmI64Ctz, macro (ctx)
-    mload2i(ctx, m_operand, t1, t0)
-    btiz t0, .top
+if MIPS 
+  # TODO
+  wasmOp(i64_ctz, WasmI64Ctz, macro (ctx)
+  end)
+else
+  wasmOp(i64_ctz, WasmI64Ctz, macro (ctx)
+      mload2i(ctx, m_operand, t1, t0)
+      btiz t0, .top
 
-    tzcnti t0, t0
-    jmp .return
+      tzcnti t0, t0
+      jmp .return
 
-.top:
-    tzcnti t1, t0
-    addi 32, t0
+  .top:
+      tzcnti t1, t0
+      addi 32, t0
 
-.return:
-    return2i(ctx, 0, t0)
-end)
+  .return:
+      return2i(ctx, 0, t0)
+  end)
+end
 
 wasmOp(i64_clz, WasmI64Clz, macro(ctx)
     mload2i(ctx, m_operand, t1, t0)
