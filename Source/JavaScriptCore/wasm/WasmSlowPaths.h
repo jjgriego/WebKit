@@ -128,6 +128,10 @@ extern "C" int64_t slow_path_wasm_i64_rem_s(int64_t a, int64_t b) REFERENCED_FRO
 extern "C" uint64_t slow_path_wasm_i64_rem_u(uint64_t a, uint64_t b) REFERENCED_FROM_ASM WTF_INTERNAL;
 #endif
 
+#if CPU(MIPS)
+WASM_SLOW_PATH_HIDDEN_DECL(i32_ctz);
+#endif // CPU(MIPS)
+
 } } // namespace JSC::LLInt
 
 #endif // ENABLE(WEBASSEMBLY)

@@ -206,6 +206,8 @@ MacroAssemblerCodePtr<JSEntryPtrTag> WebAssemblyFunction::jsCallEntrypointSlow()
 
     totalFrameSize = WTF::roundUpToMultipleOf(stackAlignmentBytes(), totalFrameSize);
 
+    // jit.abortWithReason(ArbitraryNonsense);
+
     jit.emitFunctionPrologue();
     jit.subPtr(MacroAssembler::TrustedImm32(totalFrameSize), MacroAssembler::stackPointerRegister);
     jit.emitZeroToCallFrameHeader(CallFrameSlot::codeBlock);

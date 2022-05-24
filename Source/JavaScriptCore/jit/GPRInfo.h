@@ -742,7 +742,7 @@ public:
 
 #if CPU(MIPS)
 #define NUMBER_OF_ARGUMENT_REGISTERS 4u
-#define NUMBER_OF_CALLEE_SAVES_REGISTERS 2u
+#define NUMBER_OF_CALLEE_SAVES_REGISTERS 5u
 
 class GPRInfo {
 public:
@@ -778,6 +778,9 @@ public:
     static constexpr GPRReg nonPreservedNonReturnGPR = regT2;
     static constexpr GPRReg regCS0 = MIPSRegisters::s0;
     static constexpr GPRReg regCS1 = MIPSRegisters::s1;
+    static constexpr GPRReg regCS2 = MIPSRegisters::s2;
+    static constexpr GPRReg regCS3 = MIPSRegisters::s3;
+    static constexpr GPRReg regCS4 = MIPSRegisters::s4;
 
     static GPRReg toRegister(unsigned index)
     {

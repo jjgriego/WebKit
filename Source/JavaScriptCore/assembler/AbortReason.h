@@ -75,6 +75,7 @@ enum AbortReason {
     TGInvalidPointer                                  = 320,
     TGNotSupported                                    = 330,
     UncheckedOverflow                                 = 335,
+    ArbitraryNonsense                                 = 1000,
 };
 
 // This enum is for CRASH_WITH_SECURITY_IMPLICATION_AND_INFO so we can easily identify which assertion

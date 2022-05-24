@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "WasmSlowPaths.h"
+#include "wtf/StdLibExtras.h"
 
 #if ENABLE(WEBASSEMBLY)
 
@@ -956,6 +957,19 @@ extern "C" uint64_t slow_path_wasm_i64_div_u(uint64_t a, uint64_t b) { return a 
 extern "C" int64_t slow_path_wasm_i64_rem_s(int64_t a, int64_t b) { return a % b; }
 extern "C" uint64_t slow_path_wasm_i64_rem_u(uint64_t a, uint64_t b) { return a % b; }
 #endif
+
+#if CPU(MIPS)
+
+WASM_SLOW_PATH_DECL(i32_ctz)
+{
+    UNUSED_PARAM(instance);
+    auto instruction = pc->as<WasmI32Ctz>();
+    auto operand = READ(instruction.m_operand).unboxedInt32();
+    uint32_t result = WTF::ctz(operand);
+    WASM_RETURN(result);
+}
+
+#endif // CPU(MIPS)
 
 } } // namespace JSC::LLInt
 

@@ -759,7 +759,7 @@ if C_LOOP or C_LOOP_WIN or ARM64 or ARM64E or X86_64 or X86_64_WIN or RISCV64
 elsif ARMv7
     const CalleeSaveRegisterCount = 7
 elsif MIPS
-    const CalleeSaveRegisterCount = 3
+    const CalleeSaveRegisterCount = 5
 elsif X86 or X86_WIN
     const CalleeSaveRegisterCount = 3
 end
@@ -775,10 +775,12 @@ macro pushCalleeSaves()
     elsif ARMv7
         emit "push {r4-r6, r8-r11}"
     elsif MIPS
-        emit "addiu $sp, $sp, -12"
+        emit "addiu $sp, $sp, -20"
         emit "sw $s0, 0($sp)" # csr0/metaData
         emit "sw $s1, 4($sp)" # csr1/PB
-        emit "sw $s4, 8($sp)"
+        emit "sw $s2, 8($sp)" # wasm memory base
+        emit "sw $s3, 12($sp)" # wasm memory size
+        emit "sw $s4, 16($sp)"
         # save $gp to $s4 so that we can restore it after a function call
         emit "move $s4, $gp"
     elsif X86
@@ -799,8 +801,10 @@ macro popCalleeSaves()
     elsif MIPS
         emit "lw $s0, 0($sp)"
         emit "lw $s1, 4($sp)"
-        emit "lw $s4, 8($sp)"
-        emit "addiu $sp, $sp, 12"
+        emit "lw $s2, 8($sp)"
+        emit "lw $s3, 12($sp)"
+        emit "lw $s4, 16($sp)"
+        emit "addiu $sp, $sp, 20"
     elsif X86
         emit "pop %ebx"
         emit "pop %edi"

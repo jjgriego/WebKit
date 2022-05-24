@@ -780,6 +780,7 @@ auto LLIntGenerator::addArguments(const Signature& signature) -> PartialResult
     m_normalizedArguments.resize(m_codeBlock->m_numArguments);
 
     const auto& callingConvention = wasmCallingConvention();
+    //CRASH();
     const uint32_t gprCount = callingConvention.jsrArgs.size();
     const uint32_t fprCount = callingConvention.fprArgs.size();
     const uint32_t maxGPRIndex = gprCount;

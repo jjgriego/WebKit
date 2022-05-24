@@ -45,7 +45,7 @@ Expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm(unsi
     JIT jit;
 
     GPRReg scratch = wasmCallingConvention().prologueScratchGPRs[0];
-#if USE(JSVALUE32_64)
+#if CPU(ARM)
     GPRReg baseMemory = wasmCallingConvention().prologueScratchGPRs[1];
     GPRReg sizeRegAsScratch = wasmCallingConvention().prologueScratchGPRs[2];
 #else

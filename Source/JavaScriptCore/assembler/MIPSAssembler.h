@@ -598,6 +598,11 @@ public:
         emitInst(0x46200020 | (fd << OP_SH_FD) | (fs << OP_SH_FS));
     }
 
+    void cvtsw(FPRegisterID fd, FPRegisterID fs)
+    {
+        emitInst(0x44000020 | (fd << OP_SH_FD) | (fs << OP_SH_FS));
+    }
+
     void ceqd(FPRegisterID fs, FPRegisterID ft)
     {
         emitInst(0x46200032 | (fs << OP_SH_FS) | (ft << OP_SH_FT));

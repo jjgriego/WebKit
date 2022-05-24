@@ -280,15 +280,15 @@ wasmOp(i64_add, WasmI64Add, macro(ctx)
     if ARMv7
       addis t2, t0
       adci  t3, t1
-      return2i(ctx, t1, t0)
     else
-      noti t0, t4
-      cia t4, t2, t4
+      addi t1, t3
+      move t0, t1
+      noti t1
+      cia t2, t1, t1
+      addi t3, t1
       addi t2, t0
-      addi t1, t4
-      addi t3, t4
-      return2i(ctx, t4, t0)
     end
+    return2i(ctx, t1, t0)
 end)
 
 wasmOp(i64_sub, WasmI64Sub, macro(ctx)
@@ -298,10 +298,10 @@ wasmOp(i64_sub, WasmI64Sub, macro(ctx)
       subis t2, t0
       sbci  t3, t1
     else
-      cia t2, t0, t4
-      subi t2, t0
-      subi t4, t1
       subi t3, t1
+      cia t2, t0, t3
+      subi t3, t1
+      subi t2, t0
     end
     return2i(ctx, t1, t0)
 end)
@@ -317,10 +317,7 @@ wasmOp(i64_mul, WasmI64Mul, macro(ctx)
     return2i(ctx, t2, t0)
 end)
 
-# unfortunately MIPS32 doesn't have any compact enough way to encode
-# i64 or u64 division--these instructions will need to call out to C to use
-# the compiler's implementation of the long division in software
-if ARMv7
+if ARMv7 or MIPS
 wasmOp(i64_div_s, WasmI64DivS, macro (ctx)
     mload2i(ctx, m_lhs, a1, a0)
     mload2i(ctx, m_rhs, a3, a2)
@@ -401,7 +398,7 @@ wasmOp(i64_rem_u, WasmI64RemU, macro (ctx)
 .throwDivisionByZero:
     throwException(DivisionByZero)
 end)
-end # ARMv7, see note above
+end # MIPS or ARMv7, see note above
 
 wasmOp(i64_and, WasmI64And, macro(ctx)
     mload2i(ctx, m_lhs, t1, t0)
@@ -684,9 +681,10 @@ end)
 
 # i64 unary ops
 
-if MIPS 
+if MIPS
   # TODO
   wasmOp(i64_ctz, WasmI64Ctz, macro (ctx)
+    crash()
   end)
 else
   wasmOp(i64_ctz, WasmI64Ctz, macro (ctx)
@@ -903,7 +901,7 @@ macro wasmAtomicBinaryRMWOps(lowerCaseOpcode, upperCaseOpcode, fnb, fnh, fni, fn
         wgetu(ctx, m_offset, t5)
         mloadi(ctx, m_value, t0)
         emitCheckAndPreparePointerAddingOffset(t3, t5, 1)
-        fnb(t0, [t3], t2, t5, t6)
+        fnb(t0, t3, t2, t5, t6)
         andi 0xff, t6 # FIXME: ZeroExtend8To64
         assert(macro(ok) bibeq t6, 0xff, .ok end)
         return2i(ctx, 0, t6)
@@ -913,7 +911,7 @@ macro wasmAtomicBinaryRMWOps(lowerCaseOpcode, upperCaseOpcode, fnb, fnh, fni, fn
         wgetu(ctx, m_offset, t5)
         mloadi(ctx, m_value, t0)
         emitCheckAndPreparePointerAddingOffsetWithAlignmentCheck(t3, t5, 2)
-        fnh(t0, [t3], t2, t5, t6)
+        fnh(t0, t3, t2, t5, t6)
         andi 0xffff, t6 # FIXME: ZeroExtend16To64
         assert(macro(ok) bibeq t6, 0xffff, .ok end)
         return2i(ctx, 0, t6)
@@ -923,7 +921,7 @@ macro wasmAtomicBinaryRMWOps(lowerCaseOpcode, upperCaseOpcode, fnb, fnh, fni, fn
         wgetu(ctx, m_offset, t5)
         mloadi(ctx, m_value, t0)
         emitCheckAndPreparePointerAddingOffsetWithAlignmentCheck(t3, t5, 4)
-        fni(t0, [t3], t2, t5, t6)
+        fni(t0, t3, t2, t5, t6)
         return2i(ctx, 0, t6)
     end)
     wasmOp(i64_atomic_rmw%lowerCaseOpcode%, WasmI64AtomicRmw%upperCaseOpcode%, macro(ctx)
@@ -932,53 +930,76 @@ macro wasmAtomicBinaryRMWOps(lowerCaseOpcode, upperCaseOpcode, fnb, fnh, fni, fn
         mload2i(ctx, m_value, t1, t0)
         emitCheckAndPreparePointerAddingOffsetWithAlignmentCheck(t3, t5, 8)
         push t4 # This is the PB, so need to be saved and restored
-        fn2i(t1, t0, [t3], t4, t2, t5, t7, t6)
+        fn2i(t1, t0, t3, t4, t2, t5, t7, t6)
         pop t4
         return2i(ctx, t7, t6)
     end)
 end
 
+if ARMv7
+
 macro wasmAtomicBinaryRMWOpsWithWeakCAS(lowerCaseOpcode, upperCaseOpcode, fni, fn2i)
     wasmAtomicBinaryRMWOps(lowerCaseOpcode, upperCaseOpcode,
-        macro(t0GPR, mem, t2GPR, t5GPR, t6GPR)
+        macro(t0GPR, address, t2GPR, t5GPR, t6GPR)
                 fence
             .loop:
-                loadlinkb mem, t6GPR
+                loadlinkb [address], t6GPR
                 fni(t0GPR, t6GPR, t2GPR)
-                storecondb t5GPR, t2GPR, mem
+                storecondb t5GPR, t2GPR, [address]
                 bineq t5GPR, 0, .loop
                 fence
         end,
-        macro(t0GPR, mem, t2GPR, t5GPR, t6GPR)
+        macro(t0GPR, address, t2GPR, t5GPR, t6GPR)
                 fence
             .loop:
-                loadlinkh mem, t6GPR
+                loadlinkh [address], t6GPR
                 fni(t0GPR, t6GPR, t2GPR)
-                storecondh t5GPR, t2GPR, mem
+                storecondh t5GPR, t2GPR, [address]
                 bineq t5GPR, 0, .loop
                 fence
         end,
-        macro(t0GPR, mem, t2GPR, t5GPR, t6GPR)
+        macro(t0GPR, address, t2GPR, t5GPR, t6GPR)
                 fence
             .loop:
-                loadlinki mem, t6GPR
+                loadlinki [address], t6GPR
                 fni(t0GPR, t6GPR, t2GPR)
-                storecondi t5GPR, t2GPR, mem
+                storecondi t5GPR, t2GPR, [address]
                 bineq t5GPR, 0, .loop
                 fence
         end,
-        macro(t1GPR, t0GPR, mem, t4GPR, t2GPR, t5GPR, t7GPR, t6GPR)
+        macro(t1GPR, t0GPR, address, t4GPR, t2GPR, t5GPR, t7GPR, t6GPR)
                 fence
             .loop:
-                loadlink2i mem, t6GPR, t7GPR
+                loadlink2i [address], t6GPR, t7GPR
                 fn2i(t1GPR, t0GPR, t7GPR, t6GPR, t4GPR, t2GPR)
-                storecond2i t5GPR, t2GPR, t4GPR, mem
+                storecond2i t5GPR, t2GPR, t4GPR, [address]
                 bineq t5GPR, 0, .loop
                 fence
         end)
 end
 
-if ARMv7
+end
+
+if MIPS
+
+macro wasmAtomicBinaryRMWOpsWithWeakCAS(lowerCaseOpcode, upperCaseOpcode, fni, fn2i)
+    wasmAtomicBinaryRMWOps(lowerCaseOpcode, upperCaseOpcode,
+        macro(t0GPR, address, t2GPR, t5GPR, t6GPR)
+            crash()
+        end,
+        macro(t0GPR, address, t2GPR, t5GPR, t6GPR)
+            crash()
+        end,
+        macro(t0GPR, address, t2GPR, t5GPR, t6GPR)
+            crash()
+        end,
+        macro(t1GPR, t0GPR, address, t4GPR, t2GPR, t5GPR, t7GPR, t6GPR)
+            crash()
+        end)
+end
+
+end
+
     wasmAtomicBinaryRMWOpsWithWeakCAS(_add, Add,
         macro(src0, src1, dst)
             addi src0, src1, dst
@@ -1027,7 +1048,7 @@ if ARMv7
             xori src0Lsw, src1Lsw, dstLsw
             xori src0Msw, src1Msw, dstMsw
         end)
-end
+
 
 macro wasmAtomicCompareExchangeOps(lowerCaseOpcode, upperCaseOpcode, fnb, fnh, fni, fn2i)
     wasmOp(i64_atomic_rmw8%lowerCaseOpcode%_u, WasmI64AtomicRmw8%upperCaseOpcode%U, macro(ctx)
@@ -1036,7 +1057,7 @@ macro wasmAtomicCompareExchangeOps(lowerCaseOpcode, upperCaseOpcode, fnb, fnh, f
         mload2i(ctx, m_expected, t1, t0)
         mload2i(ctx, m_value, t7, t2)
         emitCheckAndPreparePointerAddingOffset(t3, t5, 1)
-        fnb(t1, t0, t7, t2, [t3], t6, t5)
+        fnb(t1, t0, t7, t2, t3, t6, t5)
         andi 0xff, t0 # FIXME: ZeroExtend8To64
         assert(macro(ok) bibeq t0, 0xff, .ok end)
         assert(macro(ok) bieq t1, 0, .ok end)
@@ -1048,7 +1069,7 @@ macro wasmAtomicCompareExchangeOps(lowerCaseOpcode, upperCaseOpcode, fnb, fnh, f
         mload2i(ctx, m_expected, t1, t0)
         mload2i(ctx, m_value, t7, t2)
         emitCheckAndPreparePointerAddingOffsetWithAlignmentCheck(t3, t5, 2)
-        fnh(t1, t0, t7, t2, [t3], t6, t5)
+        fnh(t1, t0, t7, t2, t3, t6, t5)
         andi 0xffff, t0 # FIXME: ZeroExtend16To64
         assert(macro(ok) bibeq t0, 0xffff, .ok end)
         assert(macro(ok) bieq t1, 0, .ok end)
@@ -1060,7 +1081,7 @@ macro wasmAtomicCompareExchangeOps(lowerCaseOpcode, upperCaseOpcode, fnb, fnh, f
         mload2i(ctx, m_expected, t1, t0)
         mload2i(ctx, m_value, t7, t2)
         emitCheckAndPreparePointerAddingOffsetWithAlignmentCheck(t3, t5, 8)
-        fni(t1, t0, t7, t2, [t3], t6, t5)
+        fni(t1, t0, t7, t2, t3, t6, t5)
         assert(macro(ok) bieq t1, 0, .ok end)
         return2i(ctx, t1, t0)
     end)
@@ -1071,26 +1092,26 @@ macro wasmAtomicCompareExchangeOps(lowerCaseOpcode, upperCaseOpcode, fnb, fnh, f
         mload2i(ctx, m_value, t7, t2)
         emitCheckAndPreparePointerAddingOffsetWithAlignmentCheck(t3, t5, 8)
         push t4 # This is the PB, so need to be saved and restored
-        fn2i(t1, t0, t7, t2, [t3], t4, t6, t5)
+        fn2i(t1, t0, t7, t2, t3, t4, t6, t5)
         pop t4
         return2i(ctx, t1, t0)
     end)
 end
 
-if ARMv7
+if ARMv7 
 // exp: "expected", val: "value", res: "result"
 wasmAtomicCompareExchangeOps(_cmpxchg, Cmpxchg,
-    macro(expMsw, expLsw, valMsw, valLsw, mem, scratch, resLsw)
+    macro(expMsw, expLsw, valMsw, valLsw, address, scratch, resLsw)
             fence
         .loop:
-            loadlinkb mem, resLsw
+            loadlinkb [address], resLsw
             bineq expLsw, resLsw, .fail
             bineq expMsw, 0, .fail
-            storecondb scratch, valLsw, mem
+            storecondb scratch, valLsw, [address]
             bieq scratch, 0, .done
             jmp .loop
         .fail:
-            storecondb scratch, resLsw, mem
+            storecondb scratch, resLsw, [address]
             bieq scratch, 0, .done
             jmp .loop
         .done:
@@ -1098,17 +1119,17 @@ wasmAtomicCompareExchangeOps(_cmpxchg, Cmpxchg,
             move resLsw, expLsw
             move 0, expMsw
     end,
-    macro(expMsw, expLsw, valMsw, valLsw, mem, scratch, resLsw)
+    macro(expMsw, expLsw, valMsw, valLsw, address, scratch, resLsw)
             fence
         .loop:
-            loadlinkh mem, resLsw
+            loadlinkh [address], resLsw
             bineq expLsw, resLsw, .fail
             bineq expMsw, 0, .fail
-            storecondh scratch, valLsw, mem
+            storecondh scratch, valLsw, [address]
             bieq scratch, 0, .done
             jmp .loop
         .fail:
-            storecondh scratch, resLsw, mem
+            storecondh scratch, resLsw, [address]
             bieq scratch, 0, .done
             jmp .loop
         .done:
@@ -1116,17 +1137,17 @@ wasmAtomicCompareExchangeOps(_cmpxchg, Cmpxchg,
             move resLsw, expLsw
             move 0, expMsw
     end,
-    macro(expMsw, expLsw, valMsw, valLsw, mem, scratch, resLsw)
+    macro(expMsw, expLsw, valMsw, valLsw, address, scratch, resLsw)
             fence
         .loop:
-            loadlinki mem, resLsw
+            loadlinki [address], resLsw
             bineq expLsw, resLsw, .fail
             bineq expMsw, 0, .fail
-            storecondi scratch, valLsw, mem
+            storecondi scratch, valLsw, [address]
             bieq scratch, 0, .done
             jmp .loop
         .fail:
-            storecondi scratch, resLsw, mem
+            storecondi scratch, resLsw, [address]
             bieq scratch, 0, .done
             jmp .loop
         .done:
@@ -1134,17 +1155,17 @@ wasmAtomicCompareExchangeOps(_cmpxchg, Cmpxchg,
             move resLsw, expLsw
             move 0, expMsw
     end,
-    macro(expMsw, expLsw, valMsw, valLsw, mem, scratch, resMsw, resLsw)
+    macro(expMsw, expLsw, valMsw, valLsw, address, scratch, resMsw, resLsw)
             fence
         .loop:
-            loadlink2i mem, resLsw, resMsw
+            loadlink2i [address], resLsw, resMsw
             bineq expLsw, resLsw, .fail
             bineq expMsw, resMsw, .fail
-            storecond2i scratch, valLsw, valMsw, mem
+            storecond2i scratch, valLsw, valMsw, [address]
             bieq scratch, 0, .done
             jmp .loop
         .fail:
-            storecond2i scratch, resLsw, resMsw, mem
+            storecond2i scratch, resLsw, resMsw, [address]
             bieq scratch, 0, .done
             jmp .loop
         .done:
@@ -1154,3 +1175,85 @@ wasmAtomicCompareExchangeOps(_cmpxchg, Cmpxchg,
     end)
 end
 
+if MIPS
+// exp: "expected", val: "value", res: "result"
+wasmAtomicCompareExchangeOps(_cmpxchg, Cmpxchg,
+    macro(expMsw, expLsw, valMsw, valLsw, address, scratch, resLsw)
+      crash()
+    end,
+    macro(expMsw, expLsw, valMsw, valLsw, address, scratch, resLsw)
+       crash()
+#      # we have to compute the address of the word containing the halfword of interest
+#      # but we are already assured that `address` is halfword aligned
+#      move address, scratch
+#      andi 0xfffffffc, address
+#      subi address, scratch
+#      # scratch now contains the offset within the word (i.e. either 0 or 2)
+#      # we use it to construct a mask, and to shift expLsw and valLsw appropriately
+#      lshifti 3, scratch # address is now 0 or 16
+#      lshifti scratch, expLsw
+#      lshifti scratch, valLsw
+#      # we can abuse resLsw to construct the mask
+#      move 0xffff, resLsw
+#      lshifti scratch, resLsw
+#      move resLsw, scratch
+#      # scratch now contains a mask for the appropriate halfword
+#      fence
+#  .loop:
+#      loadlinki [address], resLsw
+#      # we can also abuse valMsw as a scratch register
+#      move resLsw, valMsw
+#      andi scratch, valMsw
+#      bineq expLsw, valMsw, .fail
+#      bineq expMsw, 0, .fail
+#      # compute the new value to store
+#      move scratch, valMsw
+#      noti valMsw
+#      andi resLsw, valMsw
+#      ori  valLsw, valMsw
+#      # valMsw contains the new word to push back
+#      storecondi valMsw, valMsw, [address]
+#      bineq valMsw, 0, .done
+#      jmp .loop
+#  .fail:
+#      storecondi valMsw, resLsw, [address]
+#      bineq valMsw, 0, .done
+#      jmp .loop
+#  .done:
+#      fence
+    end,
+    macro(expMsw, expLsw, valMsw, valLsw, address, scratch, resLsw)
+  fence
+.loop:
+  loadlinki [address], resLsw
+  bineq expLsw, resLsw, .fail
+  bineq expMsw, 0, .fail
+  storecondi scratch, valLsw, [address]
+  bineq scratch, 0, .done
+  jmp .loop
+.fail:
+  storecondi scratch, resLsw, [address]
+  bineq scratch, 0, .done
+  jmp .loop
+.done:
+  fence
+    end,
+    macro(expMsw, expLsw, valMsw, valLsw, address, scratch, resMsw, resLsw)
+      crash()
+#  fence
+#.loop:
+#  loadlink2i [address], resLsw, resMsw
+#  bineq expLsw, resLsw, .fail
+#  bineq expMsw, resMsw, .fail
+#  storecond2i scratch, valLsw, valMsw, [address]
+#  bineq scratch, 0, .done
+  # but we do need to try again if the linked store fails
+#  jmp .loop
+#.fail:
+#  storecond2i scratch, resLsw, resMsw, [address]
+#  bineq scratch, 0, .done
+#  jmp .loop
+#.done:
+#  fence
+    end)
+end

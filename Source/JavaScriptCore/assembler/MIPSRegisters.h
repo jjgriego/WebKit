@@ -33,7 +33,7 @@
     FOR_EACH_FP_REGISTER(macro)
 
 #define FOR_EACH_GP_REGISTER(macro)             \
-    macro(r0,  "zero", 0, 0)                    \
+    macro(r0,  "zero", 1, 0)                    \
     macro(r1,  "at",   0, 0)                    \
     macro(r2,  "v0",   0, 0)                    \
     macro(r3,  "v1",   0, 0)                    \
@@ -51,9 +51,9 @@
     macro(r15, "t7",   0, 0)                    \
     macro(r16, "s0",   0, 1)                    \
     macro(r17, "s1",   0, 1)                    \
-    macro(r18, "s2",   0, 0)                    \
-    macro(r19, "s3",   0, 0)                    \
-    macro(r20, "s4",   0, 0)                    \
+    macro(r18, "s2",   0, 1)                    \
+    macro(r19, "s3",   0, 1)                    \
+    macro(r20, "s4",   0, 1)                    \
     macro(r21, "s5",   0, 0)                    \
     macro(r22, "s6",   0, 0)                    \
     macro(r23, "s7",   0, 0)                    \

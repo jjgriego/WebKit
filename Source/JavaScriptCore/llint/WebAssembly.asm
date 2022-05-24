@@ -40,7 +40,12 @@ else
     error
 end
 
-const NumberOfWasmArgumentFPRs = 8
+if MIPS
+  const NumberOfWasmArgumentFPRs = 2
+else
+  const NumberOfWasmArgumentFPRs = 8
+end
+
 
 const NumberOfWasmArguments = NumberOfWasmArgumentJSRs + NumberOfWasmArgumentFPRs
 
@@ -1017,9 +1022,7 @@ end)
 # Opcodes that don't have the `b3op` entry in wasm.json. This should be kept in sync
 
 if MIPS
-  # TODO
-  wasmOp(i32_ctz, WasmI32Ctz, macro (ctx)
-  end)
+  slowWasmOp(i32_ctz)
 else
   wasmOp(i32_ctz, WasmI32Ctz, macro (ctx)
       mloadi(ctx, m_operand, t0)

@@ -33,6 +33,7 @@
 #include "StackAlignment.h"
 #include <wtf/FunctionTraits.h>
 #include <wtf/ScopedLambda.h>
+#include <array>
 
 namespace JSC {
 

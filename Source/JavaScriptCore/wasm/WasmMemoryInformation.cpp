@@ -44,6 +44,9 @@ const PinnedRegisterInfo& PinnedRegisterInfo::get()
 #if CPU(X86_64) || CPU(ARM64)
         GPRReg baseMemoryPointer = GPRInfo::regCS3;
         GPRReg boundsCheckingSizeRegister = GPRInfo::regCS4;
+#elif CPU(MIPS)
+        GPRReg baseMemoryPointer = GPRInfo::regCS2;
+        GPRReg boundsCheckingSizeRegister = GPRInfo::regCS3;
 #elif CPU(ARM)
         // Not enough registers. regCS0 is the wasm instance, regCS1 is LLInt PB
         numberOfPinnedRegisters -= 2;

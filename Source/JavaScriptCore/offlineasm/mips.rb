@@ -142,6 +142,10 @@ class RegisterID
             "$s1"
         when "csr2"
             "$s2"
+        when "csr3"
+            "$s3"
+        when "csr4"
+            "$s4"
         when "lr"
             "$ra"
         when "sp"
@@ -806,7 +810,8 @@ def mipsLowerLeftRotate(list)
             case node.opcode
             when "lrotatei"
                 tmp = Tmp.new(node.codeOrigin, :gpr)
-                newList << Instruction.new(node.codeOrigin, "negi", [node.operands[0], tmp]);
+                newList << Instruction.new(node.codeOrigin, "move", [node.operands[0], tmp]);
+                newList << Instruction.new(node.codeOrigin, "negi", [tmp, tmp]);
                 newList << Instruction.new(node.codeOrigin, "rrotatei", [tmp, node.operands[1]])
             else
                 newList << node
@@ -1075,7 +1080,7 @@ class Instruction
         when "noti"
             $asm.puts "nor #{operands[0].mipsOperand}, #{operands[0].mipsOperand}, $zero"
         when "lzcnti"
-            $asm.puts "clz #{operands[0].mipsOperand}, #{operands[1].mipsOperand}"
+            $asm.puts "clz #{operands[1].mipsOperand}, #{operands[0].mipsOperand}"
         when "loadi", "loadis", "loadp"
             $asm.puts "lw #{mipsFlippedOperands(operands)}"
         when "storei", "storep"
@@ -1413,6 +1418,17 @@ class Instruction
         when "sxh2i"
             $asm.puts "sll #{operands[1].mipsOperand}, #{operands[0].mipsOperand}, 16"
             $asm.puts "sra #{operands[1].mipsOperand}, #{operands[1].mipsOperand}, 16"
+        when "storecond2i"
+            $asm.puts "scwp #{operands[1].mipsOperand}, #{operands[2].mipsOperand}, #{operands[3].mipsOperand}"
+        # TODO
+            $asm.puts "move #{operands[0].mipsOperand}, #{operands[1].mipsOperand}"
+        when "storecondi"
+            $asm.puts "sc #{operands[1].mipsOperand}, #{operands[2].mipsOperand}"
+            $asm.puts "move #{operands[0].mipsOperand}, #{operands[1].mipsOperand}"
+        when "loadlink2i"
+            $asm.puts "llwp #{operands[0].mipsOperand}, #{operands[1].mipsOperand}, #{operands[2].mipsOperand}"
+        when "loadlinki"
+            $asm.puts "ll #{operands[1].mipsOperand}, #{operands[0].mipsOperand}"
         else
             lowerDefault
         end
