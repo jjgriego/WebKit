@@ -778,8 +778,8 @@ macro pushCalleeSaves()
         emit "addiu $sp, $sp, -20"
         emit "sw $s0, 0($sp)" # csr0/metaData
         emit "sw $s1, 4($sp)" # csr1/PB
-        emit "sw $s2, 8($sp)" # wasm memory base
-        emit "sw $s3, 12($sp)" # wasm memory size
+        emit "sw $s2, 8($sp)"
+        emit "sw $s3, 12($sp)"
         emit "sw $s4, 16($sp)"
         # save $gp to $s4 so that we can restore it after a function call
         emit "move $s4, $gp"

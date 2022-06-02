@@ -1106,6 +1106,10 @@ class Label < NoChildren
     def dump
         "#{name}:"
     end
+
+    def is_return_location?
+        @name =~ /.+_return_location$/
+    end
 end
 
 class LocalLabel < NoChildren

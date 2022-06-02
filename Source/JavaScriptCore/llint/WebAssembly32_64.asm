@@ -50,7 +50,20 @@ if ARMv7
     throwException(OutOfBoundsMemoryAccess)
 .continuation:
     addp Wasm::Instance::m_cachedMemory[wasmInstance], pointer
-else
+elsif MIPS
+    move offset, t2
+    noti t2
+    bpb t2, pointer, .throw
+    addp offset, pointer
+    bpb (~(size - 1)), pointer, .throw
+    addp (size - 1), pointer, t3
+    bpb t3, boundsCheckingSize, .continuation
+.throw:
+    throwException(OutOfBoundsMemoryAccess)
+.continuation:
+    addp memoryBase, pointer
+
+else # not MIPS or ARMv7
     crash()
 end
 end
@@ -70,6 +83,8 @@ if ARMv7
 .continuation:
     addp Wasm::Instance::m_cachedMemory[wasmInstance], pointer
     btpnz pointer, (size - 1), .throw
+elsif MIPS
+    crash()
 else
     crash()
 end
@@ -683,9 +698,7 @@ end)
 
 if MIPS
   # TODO
-  wasmOp(i64_ctz, WasmI64Ctz, macro (ctx)
-    crash()
-  end)
+  slowWasmOp(i64_ctz)
 else
   wasmOp(i64_ctz, WasmI64Ctz, macro (ctx)
       mload2i(ctx, m_operand, t1, t0)

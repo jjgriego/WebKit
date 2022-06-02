@@ -106,12 +106,14 @@ end
 macro forEachArgumentFPR(fn)
     fn((NumberOfWasmArgumentJSRs + 0) * 8, wfa0)
     fn((NumberOfWasmArgumentJSRs + 1) * 8, wfa1)
+    if not MIPS
     fn((NumberOfWasmArgumentJSRs + 2) * 8, wfa2)
     fn((NumberOfWasmArgumentJSRs + 3) * 8, wfa3)
     fn((NumberOfWasmArgumentJSRs + 4) * 8, wfa4)
     fn((NumberOfWasmArgumentJSRs + 5) * 8, wfa5)
     fn((NumberOfWasmArgumentJSRs + 6) * 8, wfa6)
     fn((NumberOfWasmArgumentJSRs + 7) * 8, wfa7)
+    end
 end
 
 # FIXME: Eventually this should be unified with the JS versions
@@ -289,7 +291,7 @@ end
 end
 
 macro reloadMemoryRegistersFromInstance(instance, scratch1, scratch2)
-if not ARMv7 and not MIPS
+if not ARMv7
     loadp Wasm::Instance::m_cachedMemory[instance], memoryBase
     loadp Wasm::Instance::m_cachedBoundsCheckingSize[instance], boundsCheckingSize
     cagedPrimitiveMayBeNull(memoryBase, boundsCheckingSize, scratch1, scratch2) # If boundsCheckingSize is 0, pointer can be a nullptr.
@@ -902,6 +904,12 @@ end
 
                 size(callNarrow, callWide16, callWide32, macro (gen) gen() end)
                 defineReturnLabel(opcodeName, size)
+
+  # - ⚠ -     K L U D G E        A L E R T     - ⚠ -
+  if MIPS
+                emit "move $gp, $s4"
+  end
+  # - ⚠ - E N D         O F        K L U D G E - ⚠ -
             end)
 
             restoreStackPointerAfterCall()

@@ -600,7 +600,7 @@ public:
 
     void cvtsw(FPRegisterID fd, FPRegisterID fs)
     {
-        emitInst(0x44000020 | (fd << OP_SH_FD) | (fs << OP_SH_FS));
+        emitInst(0x46800020 | (fd << OP_SH_FD) | (fs << OP_SH_FS));
     }
 
     void ceqd(FPRegisterID fs, FPRegisterID ft)

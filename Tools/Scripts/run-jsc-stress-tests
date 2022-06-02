@@ -171,7 +171,7 @@ $ldd = nil
 $artifact_exec_wrapper = nil
 $numChildProcessesSetByUser = false
 $runUniqueId = Random.new.bytes(16).unpack("H*")[0]
-$gnuParallelChunkSize = 1
+$gnuParallelChunkSuze = 1
 $testsDebugStream = nil # set to $stderr for debugging
 
 def putd(s)
@@ -590,7 +590,7 @@ $hostOS = determineOS unless $hostOS
 $architecture = determineArchitecture unless $architecture
 $isFTLPlatform = !($architecture == "x86" || $architecture == "arm" || $architecture == "mips" || $architecture == "riscv64" || $hostOS == "windows" || $hostOS == "playstation")
 # Special case armv7, we want to run the wasm tests temporarily without B3/Air support
-$isWasmPlatform = isFTLEnabled || $architecture == "arm"
+$isWasmPlatform = isFTLEnabled || $architecture == "arm" || $architecture == "mips"
 
 if $architecture == "x86"
     # The JIT is temporarily disabled on this platform since
@@ -1810,8 +1810,8 @@ end
 def runWebAssemblyWithHarness(*optionalTestSpecificOptions)
     raise unless $benchmark.to_s =~ /harness\.m?js/
     return if !$isWasmPlatform
-    # Skip this completely on armv7 for now, since most of the tests are related to OSR and it's a bit hairy to skip them manually
-    return if $architecture == "arm"
+    # Skip this completely on armv7 and MIPS for now, since most of the tests are related to OSR and it's a bit hairy to skip them manually
+    return if $architecture == "arm" or $architecture == "mips"
 
     wasmFiles = allWasmFiles($collection)
     prepareExtraRelativeFiles(wasmFiles.map { |f| f.basename }, $collection)
@@ -3206,7 +3206,7 @@ end
 class BundleTestsExecutor < NonRemoteTestsExecutor
     def prepareArtifacts(remoteHosts)
         raise "remoteHosts not nil" unless remoteHosts.nil?
-        cleanRunnerDirectory
+        # cleanRunnerDirectory
         cleanOldResults
     end
     def executeTests(remoteHosts)

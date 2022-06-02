@@ -130,6 +130,7 @@ extern "C" uint64_t slow_path_wasm_i64_rem_u(uint64_t a, uint64_t b) REFERENCED_
 
 #if CPU(MIPS)
 WASM_SLOW_PATH_HIDDEN_DECL(i32_ctz);
+WASM_SLOW_PATH_HIDDEN_DECL(i64_ctz);
 #endif // CPU(MIPS)
 
 } } // namespace JSC::LLInt

@@ -969,6 +969,15 @@ WASM_SLOW_PATH_DECL(i32_ctz)
     WASM_RETURN(result);
 }
 
+WASM_SLOW_PATH_DECL(i64_ctz)
+{
+    UNUSED_PARAM(instance);
+    auto instruction = pc->as<WasmI64Ctz>();
+    auto operand = READ(instruction.m_operand).unboxedInt64();
+    int64_t result = WTF::ctz(operand);
+    WASM_RETURN(result);
+}
+
 #endif // CPU(MIPS)
 
 } } // namespace JSC::LLInt
