@@ -175,9 +175,6 @@ void lowerAfterRegAlloc(Code& code)
             }
 
             case ColdCCall: {
-#if USE(JSVALUE32_64)
-                UNREACHABLE_FOR_PLATFORM(); // Needs porting when used
-#endif
                 CCallValue* value = inst.origin->as<CCallValue>();
                 Kind oldKind = inst.kind;
 
@@ -189,32 +186,47 @@ void lowerAfterRegAlloc(Code& code)
 
                 RegisterSet preUsed = liveRegs;
                 Vector<Arg> destinations = computeCCallingConvention(code, value);
-                Tmp result = cCallResult(value, 0);
-                Arg originalResult = result ? inst.args[1] : Arg();
-                
-                Vector<ShufflePair> pairs;
-                for (unsigned i = 0; i < destinations.size(); ++i) {
-                    Value* child = value->child(i);
-                    Arg src = inst.args[result ? (i >= 1 ? i + 1 : i) : i ];
-                    Arg dst = destinations[i];
-                    Width width = widthForType(child->type());
-                    pairs.append(ShufflePair(src, dst, width));
+                unsigned resultCount = cCallResultCount(value);
 
+                Vector<ShufflePair> pairs;
+                unsigned offset = 0;
+                auto addNextPair = [&](Width width) {
+                    Arg src = inst.args[offset ? offset + resultCount : 0];
+                    Arg dst = destinations[offset];
+                    pairs.append(ShufflePair(src, dst, width));
                     auto excludeRegisters = [&] (Tmp tmp) {
                         if (tmp.isReg())
                             preUsed.set(tmp.reg());
                     };
                     src.forEachTmpFast(excludeRegisters);
                     dst.forEachTmpFast(excludeRegisters);
+                    ++offset;
+                };
+                for (unsigned i = 0; i < value->numChildren(); ++i) {
+                    Value* child = value->child(i);
+#if USE(JSVALUE32_64)
+                    if (child->type() == Int64) {
+                        addNextPair(Width32);
+                        addNextPair(Width32);
+                        continue;
+                    }
+#endif
+                    addNextPair(widthForType(child->type()));
                 }
+                ASSERT(offset = destinations.size());
 
                 std::array<Arg, 2> gpScratch = getScratches(preUsed, GP);
                 std::array<Arg, 2> fpScratch = getScratches(preUsed, FP);
-                
+
+                Arg originalResult0 = resultCount >= 1 ? inst.args[1] : Arg();
+                Arg originalResult1 = is32Bit() && resultCount >= 2 ? inst.args[2] : Arg();
+
                 // Also need to save all live registers. Don't need to worry about the result
                 // register.
-                if (originalResult.isReg())
-                    regsToSave.clear(originalResult.reg());
+                if (originalResult0.isReg())
+                    regsToSave.clear(originalResult0.reg());
+                if (originalResult1.isReg())
+                    regsToSave.clear(originalResult1.reg());
                 Vector<StackSlot*> stackSlots;
                 regsToSave.forEach(
                     [&] (Reg reg) {
@@ -248,15 +260,20 @@ void lowerAfterRegAlloc(Code& code)
                         StackSlot* stackSlot = stackSlots[stackSlotIndex++];
                         pairs.append(ShufflePair(Arg::stack(stackSlot), arg, width));
                     });
-                if (result) {
-                    ShufflePair pair(result, originalResult, widthForType(value->type()));
-                    pairs.append(pair);
-                }
+                if (is32Bit() && resultCount >= 2) {
+                    ASSERT(value->type() == Int64);
+                    pairs.append(ShufflePair(cCallResult(value, 0), originalResult0, Width32));
+                    pairs.append(ShufflePair(cCallResult(value, 1), originalResult1, Width32));
+                } else if (resultCount == 1)
+                    pairs.append(ShufflePair(cCallResult(value, 0), originalResult0, widthForType(value->type())));
+
 
                 // For finding scratch registers, we need to account for the possibility that
                 // the result is dead.
-                if (originalResult.isReg())
-                    liveRegs.set(originalResult.reg());
+                if (originalResult0.isReg())
+                    liveRegs.set(originalResult0.reg());
+                if (originalResult1.isReg())
+                    liveRegs.set(originalResult1.reg());
 
                 gpScratch = getScratches(liveRegs, GP);
                 fpScratch = getScratches(liveRegs, FP);
