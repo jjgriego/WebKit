@@ -1,3 +1,4 @@
+//@ skip if $architecture == "mips"
 import * as assert from '../assert.js';
 
 const num = 3;

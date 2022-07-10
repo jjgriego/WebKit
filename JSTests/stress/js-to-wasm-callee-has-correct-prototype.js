@@ -1,3 +1,4 @@
+//@ skip if $architecture == 'mips'
 //@ runDefault("--jitPolicyScale=0", "--useSamplingProfiler=1")
 
 function test() {

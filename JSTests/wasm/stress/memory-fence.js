@@ -1,3 +1,4 @@
+//@ skip if $architecture == 'mips'
 import { instantiate } from "../wabt-wrapper.js";
 
 (async function () {
