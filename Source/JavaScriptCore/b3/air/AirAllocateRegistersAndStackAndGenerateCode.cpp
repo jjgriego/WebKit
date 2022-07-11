@@ -38,7 +38,24 @@
 #include "CCallHelpers.h"
 #include "DisallowMacroScratchRegisterUsage.h"
 
-namespace JSC { namespace B3 { namespace Air {
+
+namespace JSC {
+
+namespace {
+
+constexpr bool verbose() { return true; }
+
+template <typename ... Args>
+void logVerbose(Args&& ... args) {
+    if constexpr (verbose()) {
+            dataLog("Air [emit] ", std::forward<Args>(args) ..., "\n");
+    }
+}
+
+}
+
+namespace B3 { namespace Air {
+
 
 GenerateAndAllocateRegisters::GenerateAndAllocateRegisters(Code& code)
     : m_code(code)
@@ -161,6 +178,7 @@ static ALWAYS_INLINE CCallHelpers::Address callFrameAddr(CCallHelpers& jit, intp
 
 ALWAYS_INLINE void GenerateAndAllocateRegisters::release(Tmp tmp, Reg reg)
 {
+    logVerbose("release(", tmp, ") from ", reg);
     ASSERT(reg);
     ASSERT(m_currentAllocation->at(reg) == tmp);
     m_currentAllocation->at(reg) = Tmp();
@@ -175,6 +193,7 @@ ALWAYS_INLINE void GenerateAndAllocateRegisters::flush(Tmp tmp, Reg reg)
 {
     ASSERT(tmp);
     intptr_t offset = m_map[tmp].spillSlot->offsetFromFP();
+    logVerbose("flush(", tmp, ") from ", reg, " to ", offset);
     if (tmp.isGP())
         m_jit->storePtr(reg.gpr(), callFrameAddr(*m_jit, offset));
     else
@@ -192,6 +211,7 @@ ALWAYS_INLINE void GenerateAndAllocateRegisters::spill(Tmp tmp, Reg reg)
 
 ALWAYS_INLINE void GenerateAndAllocateRegisters::alloc(Tmp tmp, Reg reg, Arg::Role role)
 {
+    logVerbose("alloc(", tmp, ") in ", reg, " for ", role);
     if (Tmp occupyingTmp = m_currentAllocation->at(reg))
         spill(occupyingTmp, reg);
     else {
@@ -204,6 +224,7 @@ ALWAYS_INLINE void GenerateAndAllocateRegisters::alloc(Tmp tmp, Reg reg, Arg::Ro
     m_currentAllocation->at(reg) = tmp;
 
     if (Arg::isAnyUse(role)) {
+        ASSERT(m_map[tmp].spillSlot);
         intptr_t offset = m_map[tmp].spillSlot->offsetFromFP();
         if (tmp.bank() == GP)
             m_jit->loadPtr(callFrameAddr(*m_jit, offset), reg.gpr());
@@ -526,6 +547,7 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
     m_globalInstIndex = 1;
 
     for (BasicBlock* block : m_code) {
+        logVerbose("*** *** begin block ", block->index());
         context.currentBlock = block;
         context.indexInBlock = UINT_MAX;
         blockJumps[block].link(m_jit);
@@ -646,6 +668,8 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
                 return false;
             })();
             checkConsistency();
+
+            logVerbose("*** ", instCopy, (needsToGenerate ? "" : " (elided)"));
 
             inst.forEachTmp([&] (const Tmp& tmp, Arg::Role role, Bank, Width) {
                 if (tmp.isReg() && isDisallowedRegister(tmp.reg()))
