@@ -226,6 +226,7 @@ ALWAYS_INLINE void GenerateAndAllocateRegisters::alloc(Tmp tmp, Reg reg, Arg::Ro
     if (Arg::isAnyUse(role)) {
         ASSERT(m_map[tmp].spillSlot);
         intptr_t offset = m_map[tmp].spillSlot->offsetFromFP();
+        logVerbose("  | - restoring from ", offset);
         if (tmp.bank() == GP)
             m_jit->loadPtr(callFrameAddr(*m_jit, offset), reg.gpr());
         else
@@ -629,47 +630,65 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
             m_lateClobber = RegisterSet();
             m_clobberedToClear = RegisterSet();
 
-            bool needsToGenerate = ([&] () -> bool {
+            auto generateReason = ([&] () -> const char* {
                 // FIXME: We should consider trying to figure out if we can also elide Mov32s
                 if (!(inst.kind.opcode == Move || inst.kind.opcode == MoveDouble || (is32Bit() && inst.kind.opcode == Move32)))
-                    return true;
+                    return "not a move instruction";
 
                 ASSERT(inst.args.size() >= 2);
                 Arg source = inst.args[0];
                 Arg dest = inst.args[1];
                 if (!source.isTmp() || !dest.isTmp())
-                    return true;
+                    return "operand is non-Tmp";
 
                 // FIXME: We don't track where the last use of a reg is globally so we don't know where we can elide them.
                 ASSERT(source.isReg() || m_liveRangeEnd[source.tmp()] >= m_globalInstIndex);
-                if (source.isReg() || m_liveRangeEnd[source.tmp()] != m_globalInstIndex)
-                    return true;
-
-                // If we are doing a self move at the end of the temps liveness we can trivially elide the move.
-                if (source == dest)
-                    return false;
+                if (source.isReg())
+                    return "source operand is register Tmp";
 
                 Reg sourceReg = m_map[source.tmp()].reg;
                 // If the value is not already materialized into a register we may still move it into one so let the normal generation code run.
                 if (!sourceReg)
-                    return true;
+                    return "source operand is not available in a register";
 
+                bool atEndOfLifetime = m_liveRangeEnd[source.tmp()] == m_globalInstIndex;
+
+                // If we are doing a self move at the end of the temps liveness we can trivially elide the move.
+                if (atEndOfLifetime && source == dest)
+                    return nullptr;
+
+                // if the source is allocated to the same register as the register-Tmp destination
+                // we can elide the move _even if_ the source is live after this point, since the 
+                // two already coincide
                 ASSERT(m_currentAllocation->at(sourceReg) == source.tmp());
+                if (dest.isReg()) {
+                    if (dest.reg() != sourceReg)
+                        return "dest is register Tmp but does not coincide with source's register allocation";
+                    // if it does, we can trivially elide the move as the below steps will be no-ops
+                    // (except for killing the allocation for source.tmp() but that's fine to leave)
+                    return nullptr;
+                }
 
-                if (dest.isReg() && dest.reg() != sourceReg)
-                    return true;
+                // because the below operations kill the source register, it should already be dead after this
+                if (!atEndOfLifetime)
+                    return "source operand is live after this instruction";
 
+                // now we are committed to elide the move but we have some bookkeeping to do
                 if (Reg oldReg = m_map[dest.tmp()].reg)
                     release(dest.tmp(), oldReg);
 
                 m_map[dest.tmp()].reg = sourceReg;
                 m_currentAllocation->at(sourceReg) = dest.tmp();
                 m_map[source.tmp()].reg = Reg();
-                return false;
+                return nullptr;
             })();
+            bool needsToGenerate = !!generateReason;
             checkConsistency();
 
             logVerbose("*** ", instCopy, (needsToGenerate ? "" : " (elided)"));
+            if (needsToGenerate) {
+                logVerbose("*** | - not elided: ", generateReason);
+            }
 
             inst.forEachTmp([&] (const Tmp& tmp, Arg::Role role, Bank, Width) {
                 if (tmp.isReg() && isDisallowedRegister(tmp.reg()))
