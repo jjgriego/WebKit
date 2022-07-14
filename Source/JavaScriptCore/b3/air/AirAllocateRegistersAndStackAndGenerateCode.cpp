@@ -666,6 +666,12 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
                         return "dest is register Tmp but does not coincide with source's register allocation";
                     // if it does, we can trivially elide the move as the below steps will be no-ops
                     // (except for killing the allocation for source.tmp() but that's fine to leave)
+                    if (!atEndOfLifetime) {
+                        spill(source.tmp(), sourceReg);
+                    } else {
+                        release(source.tmp(), sourceReg);
+                    }
+                    alloc(dest.tmp(), dest.reg(), Arg::Def);
                     return nullptr;
                 }
 
