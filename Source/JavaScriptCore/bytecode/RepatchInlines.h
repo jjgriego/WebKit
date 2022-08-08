@@ -102,6 +102,10 @@ ALWAYS_INLINE SlowPathReturnType linkFor(CallFrame* calleeFrame, JSGlobalObject*
 
     RELEASE_ASSERT(!callLinkInfo->isDirect());
 
+    ASSERT_IMPLIES(calleeFrame->callee().isCell(), calleeFrame->callee().asCell()->isValidCallee());
+
+
+
     JSValue calleeAsValue = calleeFrame->guaranteedJSValueCallee();
     JSCell* calleeAsFunctionCell = getJSFunction(calleeAsValue);
     if (!calleeAsFunctionCell) {

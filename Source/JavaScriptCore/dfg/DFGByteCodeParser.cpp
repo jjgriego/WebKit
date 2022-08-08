@@ -90,7 +90,7 @@ namespace JSC { namespace DFG {
 
 namespace DFGByteCodeParserInternal {
 #ifdef NDEBUG
-static constexpr bool verbose = false;
+static constexpr bool verbose = true;
 #else
 static constexpr bool verbose = true;
 #endif
@@ -775,7 +775,7 @@ private:
     
     Node* addToGraph(Node* node)
     {
-        VERBOSE_LOG("        appended ", node, " ", Graph::opName(node->op()), "\n");
+        // VERBOSE_LOG("        appended ", node, " ", Graph::opName(node->op()), "\n");
 
         m_hasAnyForceOSRExits |= (node->op() == ForceOSRExit);
 
@@ -1565,6 +1565,9 @@ unsigned ByteCodeParser::inliningCost(CallVariant callee, int argumentCountInclu
     CallMode callMode = InlineCallFrame::callModeFor(kind);
     CodeSpecializationKind specializationKind = specializationKindFor(callMode);
     VERBOSE_LOG("Considering inlining ", callee, " into ", currentCodeOrigin(), "\n");
+
+    // VERBOSE_LOG("ur inlining is disabled yo\n");
+    // return UINT_MAX;
     
     if (m_hasDebuggerEnabled) {
         VERBOSE_LOG("    Failing because the debugger is in use.\n");
@@ -5483,7 +5486,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
         m_currentInstruction = currentInstruction; // Some methods want to use this, and we'd rather not thread it through calls.
         OpcodeID opcodeID = currentInstruction->opcodeID();
 
-        VERBOSE_LOG("    parsing ", currentCodeOrigin(), ": ", opcodeID, "\n");
+        // VERBOSE_LOG("    parsing ", currentCodeOrigin(), ": ", opcodeID, "\n");
         
         if (UNLIKELY(m_graph.compilation())) {
             addToGraph(CountExecution, OpInfo(m_graph.compilation()->executionCounterFor(
