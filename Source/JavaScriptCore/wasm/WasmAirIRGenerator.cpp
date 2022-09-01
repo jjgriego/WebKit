@@ -128,9 +128,8 @@ private:
     Type m_type;
 };
 
-class AirIRGenerator {
-public:
-    using ExpressionType = TypedTmp;
+template<typename Derived, typename ExpressionType>
+struct AirIRGeneratorBase {
     using ResultList = Vector<ExpressionType, 8>;
 
     struct ControlData {
@@ -282,7 +281,7 @@ public:
         }
 
     private:
-        friend class AirIRGenerator;
+        friend Derived;
         BlockType controlBlockType;
         BasicBlock* continuation;
         BasicBlock* special;
@@ -297,17 +296,24 @@ public:
 
     using ControlType = ControlData;
 
-    using ControlEntry = FunctionParser<AirIRGenerator>::ControlEntry;
-    using ControlStack = FunctionParser<AirIRGenerator>::ControlStack;
-    using Stack = FunctionParser<AirIRGenerator>::Stack;
-    using TypedExpression = FunctionParser<AirIRGenerator>::TypedExpression;
+    using ParserTypes = FunctionParserTypes<ControlType, ExpressionType>;
+
+    using ControlEntry = typename ParserTypes::ControlEntry;
+    using ControlStack = typename ParserTypes::ControlStack;
+    using Stack = typename ParserTypes::Stack;
+    using TypedExpression = typename ParserTypes::TypedExpression;
 
     using ErrorType = String;
     using UnexpectedResult = Unexpected<ErrorType>;
     using Result = Expected<std::unique_ptr<InternalFunction>, ErrorType>;
     using PartialResult = Expected<void, ErrorType>;
 
-    static_assert(std::is_same_v<ResultList, FunctionParser<AirIRGenerator>::ResultList>);
+    static_assert(std::is_same_v<ResultList, typename ParserTypes::ResultList>);
+};
+
+class AirIRGenerator64 : public AirIRGeneratorBase<AirIRGenerator64, TypedTmp> {
+public:
+    using ExpressionType = TypedTmp;
 
     static ExpressionType emptyExpression() { return { }; };
 
@@ -323,7 +329,7 @@ public:
             return fail(__VA_ARGS__);             \
     } while (0)
 
-    AirIRGenerator(const ModuleInformation&, B3::Procedure&, InternalFunction*, Vector<UnlinkedWasmToWasmCall>&, MemoryMode, unsigned functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount*, const TypeDefinition&, unsigned& osrEntryScratchBufferSize);
+    AirIRGenerator64(const ModuleInformation&, B3::Procedure&, InternalFunction*, Vector<UnlinkedWasmToWasmCall>&, MemoryMode, unsigned functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount*, const TypeDefinition&, unsigned& osrEntryScratchBufferSize);
 
     void finalizeEntrypoints();
 
@@ -434,7 +440,7 @@ public:
     PartialResult addFloatingPointBinOp(Type, B3::Air::Opcode, ExpressionType lhs, ExpressionType rhs, ExpressionType& result);
 
     void dump(const ControlStack&, const Stack* expressionStack);
-    void setParser(FunctionParser<AirIRGenerator>* parser) { m_parser = parser; };
+    void setParser(FunctionParser<AirIRGenerator64>* parser) { m_parser = parser; };
     void didFinishParsingLocals() { }
     void didPopValueFromStack() { }
 
@@ -859,7 +865,7 @@ private:
 #endif
     }
 
-    FunctionParser<AirIRGenerator>* m_parser { nullptr };
+    FunctionParser<AirIRGenerator64>* m_parser { nullptr };
     const ModuleInformation& m_info;
     const MemoryMode m_mode { MemoryMode::BoundsChecking };
     const unsigned m_functionIndex { UINT_MAX };
@@ -911,7 +917,7 @@ private:
 };
 
 // Memory accesses in WebAssembly have unsigned 32-bit offsets, whereas they have signed 32-bit offsets in B3.
-int32_t AirIRGenerator::fixupPointerPlusOffset(ExpressionType& ptr, uint32_t offset)
+int32_t AirIRGenerator64::fixupPointerPlusOffset(ExpressionType& ptr, uint32_t offset)
 {
     if (static_cast<uint64_t>(offset) > static_cast<uint64_t>(std::numeric_limits<int32_t>::max())) {
         auto previousPtr = ptr;
@@ -924,7 +930,7 @@ int32_t AirIRGenerator::fixupPointerPlusOffset(ExpressionType& ptr, uint32_t off
     return offset;
 }
 
-void AirIRGenerator::restoreWasmContextInstance(BasicBlock* block, TypedTmp instance)
+void AirIRGenerator64::restoreWasmContextInstance(BasicBlock* block, TypedTmp instance)
 {
     if (Context::useFastTLS()) {
         auto* patchpoint = addPatchpoint(B3::Void);
@@ -953,7 +959,7 @@ void AirIRGenerator::restoreWasmContextInstance(BasicBlock* block, TypedTmp inst
     emitPatchpoint(block, patchpoint, Tmp(), instance);
 }
 
-AirIRGenerator::AirIRGenerator(const ModuleInformation& info, B3::Procedure& procedure, InternalFunction* compilation, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, MemoryMode mode, unsigned functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp, const TypeDefinition& originalSignature, unsigned& osrEntryScratchBufferSize)
+AirIRGenerator64::AirIRGenerator64(const ModuleInformation& info, B3::Procedure& procedure, InternalFunction* compilation, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, MemoryMode mode, unsigned functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp, const TypeDefinition& originalSignature, unsigned& osrEntryScratchBufferSize)
     : m_info(info)
     , m_mode(mode)
     , m_functionIndex(functionIndex)
@@ -1099,7 +1105,7 @@ AirIRGenerator::AirIRGenerator(const ModuleInformation& info, B3::Procedure& pro
     emitEntryTierUpCheck();
 }
 
-void AirIRGenerator::finalizeEntrypoints()
+void AirIRGenerator64::finalizeEntrypoints()
 {
     unsigned numEntrypoints = Checked<unsigned>(1) + m_catchEntrypoints.size() + m_loopEntryVariableData.size();
     m_proc.setNumEntrypoints(numEntrypoints);
@@ -1149,7 +1155,7 @@ void AirIRGenerator::finalizeEntrypoints()
     m_rootBlock->successors() = successors;
 }
 
-B3::Type AirIRGenerator::toB3ResultType(BlockSignature returnType)
+B3::Type AirIRGenerator64::toB3ResultType(BlockSignature returnType)
 {
     if (returnType->as<FunctionSignature>()->returnsVoid())
         return B3::Void;
@@ -1166,7 +1172,7 @@ B3::Type AirIRGenerator::toB3ResultType(BlockSignature returnType)
     return result.iterator->value;
 }
 
-void AirIRGenerator::restoreWebAssemblyGlobalState(RestoreCachedStackLimit restoreCachedStackLimit, const MemoryInformation& memory, TypedTmp instance, BasicBlock* block)
+void AirIRGenerator64::restoreWebAssemblyGlobalState(RestoreCachedStackLimit restoreCachedStackLimit, const MemoryInformation& memory, TypedTmp instance, BasicBlock* block)
 {
     restoreWasmContextInstance(block, instance);
 
@@ -1212,7 +1218,7 @@ void AirIRGenerator::restoreWebAssemblyGlobalState(RestoreCachedStackLimit resto
     }
 }
 
-void AirIRGenerator::emitThrowException(CCallHelpers& jit, ExceptionType type)
+void AirIRGenerator64::emitThrowException(CCallHelpers& jit, ExceptionType type)
 {
     jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(type)), GPRInfo::argumentGPR1);
     auto jumpToExceptionStub = jit.jump();
@@ -1223,7 +1229,7 @@ void AirIRGenerator::emitThrowException(CCallHelpers& jit, ExceptionType type)
 }
 
 template <typename Function>
-void AirIRGenerator::forEachLiveValue(Function function)
+void AirIRGenerator64::forEachLiveValue(Function function)
 {
     for (const auto& local : m_locals)
         function(local);
@@ -1237,7 +1243,7 @@ void AirIRGenerator::forEachLiveValue(Function function)
     }
 }
 
-auto AirIRGenerator::addLocal(Type type, uint32_t count) -> PartialResult
+auto AirIRGenerator64::addLocal(Type type, uint32_t count) -> PartialResult
 {
     size_t newSize = m_locals.size() + count;
     ASSERT(!(CheckedUint32(count) + m_locals.size()).hasOverflowed());
@@ -1274,12 +1280,12 @@ auto AirIRGenerator::addLocal(Type type, uint32_t count) -> PartialResult
     return { };
 }
 
-auto AirIRGenerator::addConstant(Type type, uint64_t value) -> ExpressionType
+auto AirIRGenerator64::addConstant(Type type, uint64_t value) -> ExpressionType
 {
     return addConstant(m_currentBlock, type, value);
 }
 
-auto AirIRGenerator::addConstant(BasicBlock* block, Type type, uint64_t value) -> ExpressionType
+auto AirIRGenerator64::addConstant(BasicBlock* block, Type type, uint64_t value) -> ExpressionType
 {
     auto result = tmpForType(type);
     switch (type.kind) {
@@ -1306,19 +1312,19 @@ auto AirIRGenerator::addConstant(BasicBlock* block, Type type, uint64_t value) -
     return result;
 }
 
-auto AirIRGenerator::addBottom(BasicBlock* block, Type type) -> ExpressionType
+auto AirIRGenerator64::addBottom(BasicBlock* block, Type type) -> ExpressionType
 {
     append(block, B3::Air::Oops);
     return addConstant(type, 0);
 }
 
-auto AirIRGenerator::addArguments(const TypeDefinition& signature) -> PartialResult
+auto AirIRGenerator64::addArguments(const TypeDefinition& signature) -> PartialResult
 {
     RELEASE_ASSERT(m_locals.size() == signature.as<FunctionSignature>()->argumentCount()); // We handle arguments in the prologue
     return { };
 }
 
-auto AirIRGenerator::addRefIsNull(ExpressionType value, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addRefIsNull(ExpressionType value, ExpressionType& result) -> PartialResult
 {
     ASSERT(value.tmp());
     result = tmpForType(Types::I32);
@@ -1330,7 +1336,7 @@ auto AirIRGenerator::addRefIsNull(ExpressionType value, ExpressionType& result) 
     return { };
 }
 
-auto AirIRGenerator::addRefFunc(uint32_t index, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addRefFunc(uint32_t index, ExpressionType& result) -> PartialResult
 {
     // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
     if (Options::useWebAssemblyTypedFunctionReferences()) {
@@ -1343,7 +1349,7 @@ auto AirIRGenerator::addRefFunc(uint32_t index, ExpressionType& result) -> Parti
     return { };
 }
 
-auto AirIRGenerator::addTableGet(unsigned tableIndex, ExpressionType index, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addTableGet(unsigned tableIndex, ExpressionType index, ExpressionType& result) -> PartialResult
 {
     // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
     ASSERT(index.tmp());
@@ -1361,7 +1367,7 @@ auto AirIRGenerator::addTableGet(unsigned tableIndex, ExpressionType index, Expr
     return { };
 }
 
-auto AirIRGenerator::addTableSet(unsigned tableIndex, ExpressionType index, ExpressionType value) -> PartialResult
+auto AirIRGenerator64::addTableSet(unsigned tableIndex, ExpressionType index, ExpressionType value) -> PartialResult
 {
     // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
     ASSERT(index.tmp());
@@ -1380,7 +1386,7 @@ auto AirIRGenerator::addTableSet(unsigned tableIndex, ExpressionType index, Expr
     return { };
 }
 
-auto AirIRGenerator::addTableInit(unsigned elementIndex, unsigned tableIndex, ExpressionType dstOffset, ExpressionType srcOffset, ExpressionType length) -> PartialResult
+auto AirIRGenerator64::addTableInit(unsigned elementIndex, unsigned tableIndex, ExpressionType dstOffset, ExpressionType srcOffset, ExpressionType length) -> PartialResult
 {
     ASSERT(dstOffset.tmp());
     ASSERT(dstOffset.type().isI32());
@@ -1407,13 +1413,13 @@ auto AirIRGenerator::addTableInit(unsigned elementIndex, unsigned tableIndex, Ex
     return { };
 }
 
-auto AirIRGenerator::addElemDrop(unsigned elementIndex) -> PartialResult
+auto AirIRGenerator64::addElemDrop(unsigned elementIndex) -> PartialResult
 {
     emitCCall(&operationWasmElemDrop, TypedTmp(), instanceValue(), addConstant(Types::I32, elementIndex));
     return { };
 }
 
-auto AirIRGenerator::addTableSize(unsigned tableIndex, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addTableSize(unsigned tableIndex, ExpressionType& result) -> PartialResult
 {
     // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
     result = tmpForType(Types::I32);
@@ -1423,7 +1429,7 @@ auto AirIRGenerator::addTableSize(unsigned tableIndex, ExpressionType& result) -
     return { };
 }
 
-auto AirIRGenerator::addTableGrow(unsigned tableIndex, ExpressionType fill, ExpressionType delta, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addTableGrow(unsigned tableIndex, ExpressionType fill, ExpressionType delta, ExpressionType& result) -> PartialResult
 {
     ASSERT(fill.tmp());
     ASSERT(isSubtype(fill.type(), m_info.tables[tableIndex].wasmType()));
@@ -1436,7 +1442,7 @@ auto AirIRGenerator::addTableGrow(unsigned tableIndex, ExpressionType fill, Expr
     return { };
 }
 
-auto AirIRGenerator::addTableFill(unsigned tableIndex, ExpressionType offset, ExpressionType fill, ExpressionType count) -> PartialResult
+auto AirIRGenerator64::addTableFill(unsigned tableIndex, ExpressionType offset, ExpressionType fill, ExpressionType count) -> PartialResult
 {
     ASSERT(fill.tmp());
     ASSERT(isSubtype(fill.type(), m_info.tables[tableIndex].wasmType()));
@@ -1457,7 +1463,7 @@ auto AirIRGenerator::addTableFill(unsigned tableIndex, ExpressionType offset, Ex
     return { };
 }
 
-auto AirIRGenerator::addTableCopy(unsigned dstTableIndex, unsigned srcTableIndex, ExpressionType dstOffset, ExpressionType srcOffset, ExpressionType length) -> PartialResult
+auto AirIRGenerator64::addTableCopy(unsigned dstTableIndex, unsigned srcTableIndex, ExpressionType dstOffset, ExpressionType srcOffset, ExpressionType length) -> PartialResult
 {
     ASSERT(dstOffset.tmp());
     ASSERT(dstOffset.type().isI32());
@@ -1484,7 +1490,7 @@ auto AirIRGenerator::addTableCopy(unsigned dstTableIndex, unsigned srcTableIndex
     return { };
 }
 
-auto AirIRGenerator::getLocal(uint32_t index, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::getLocal(uint32_t index, ExpressionType& result) -> PartialResult
 {
     ASSERT(m_locals[index].tmp());
     result = tmpForType(m_locals[index].type());
@@ -1492,7 +1498,7 @@ auto AirIRGenerator::getLocal(uint32_t index, ExpressionType& result) -> Partial
     return { };
 }
 
-auto AirIRGenerator::addUnreachable() -> PartialResult
+auto AirIRGenerator64::addUnreachable() -> PartialResult
 {
     B3::PatchpointValue* unreachable = addPatchpoint(B3::Void);
     unreachable->setGenerator([this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
@@ -1503,7 +1509,7 @@ auto AirIRGenerator::addUnreachable() -> PartialResult
     return { };
 }
 
-auto AirIRGenerator::addGrowMemory(ExpressionType delta, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addGrowMemory(ExpressionType delta, ExpressionType& result) -> PartialResult
 {
     result = g32();
     emitCCall(&operationGrowMemory, result, TypedTmp { Tmp(GPRInfo::callFrameRegister), Types::I64 }, instanceValue(), delta);
@@ -1512,7 +1518,7 @@ auto AirIRGenerator::addGrowMemory(ExpressionType delta, ExpressionType& result)
     return { };
 }
 
-auto AirIRGenerator::addCurrentMemory(ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addCurrentMemory(ExpressionType& result) -> PartialResult
 {
     static_assert(sizeof(std::declval<Memory*>()->size()) == sizeof(uint64_t), "codegen relies on this size");
 
@@ -1534,7 +1540,7 @@ auto AirIRGenerator::addCurrentMemory(ExpressionType& result) -> PartialResult
     return { };
 }
 
-auto AirIRGenerator::addMemoryFill(ExpressionType dstAddress, ExpressionType targetValue, ExpressionType count) -> PartialResult
+auto AirIRGenerator64::addMemoryFill(ExpressionType dstAddress, ExpressionType targetValue, ExpressionType count) -> PartialResult
 {
     ASSERT(dstAddress.tmp());
     ASSERT(dstAddress.type().isI32());
@@ -1559,7 +1565,7 @@ auto AirIRGenerator::addMemoryFill(ExpressionType dstAddress, ExpressionType tar
     return { };
 }
 
-auto AirIRGenerator::addMemoryCopy(ExpressionType dstAddress, ExpressionType srcAddress, ExpressionType count) -> PartialResult
+auto AirIRGenerator64::addMemoryCopy(ExpressionType dstAddress, ExpressionType srcAddress, ExpressionType count) -> PartialResult
 {
     ASSERT(dstAddress.tmp());
     ASSERT(dstAddress.type().isI32());
@@ -1584,7 +1590,7 @@ auto AirIRGenerator::addMemoryCopy(ExpressionType dstAddress, ExpressionType src
     return { };
 }
 
-auto AirIRGenerator::addMemoryInit(unsigned dataSegmentIndex, ExpressionType dstAddress, ExpressionType srcAddress, ExpressionType length) -> PartialResult
+auto AirIRGenerator64::addMemoryInit(unsigned dataSegmentIndex, ExpressionType dstAddress, ExpressionType srcAddress, ExpressionType length) -> PartialResult
 {
     ASSERT(dstAddress.tmp());
     ASSERT(dstAddress.type().isI32());
@@ -1610,20 +1616,20 @@ auto AirIRGenerator::addMemoryInit(unsigned dataSegmentIndex, ExpressionType dst
     return { };
 }
 
-auto AirIRGenerator::addDataDrop(unsigned dataSegmentIndex) -> PartialResult
+auto AirIRGenerator64::addDataDrop(unsigned dataSegmentIndex) -> PartialResult
 {
     emitCCall(&operationWasmDataDrop, TypedTmp(), instanceValue(), addConstant(Types::I32, dataSegmentIndex));
     return { };
 }
 
-auto AirIRGenerator::setLocal(uint32_t index, ExpressionType value) -> PartialResult
+auto AirIRGenerator64::setLocal(uint32_t index, ExpressionType value) -> PartialResult
 {
     ASSERT(m_locals[index].tmp());
     append(moveOpForValueType(m_locals[index].type()), value, m_locals[index].tmp());
     return { };
 }
 
-auto AirIRGenerator::getGlobal(uint32_t index, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::getGlobal(uint32_t index, ExpressionType& result) -> PartialResult
 {
     const Wasm::GlobalInformation& global = m_info.globals[index];
     Type type = global.type;
@@ -1663,7 +1669,7 @@ auto AirIRGenerator::getGlobal(uint32_t index, ExpressionType& result) -> Partia
     return { };
 }
 
-auto AirIRGenerator::setGlobal(uint32_t index, ExpressionType value) -> PartialResult
+auto AirIRGenerator64::setGlobal(uint32_t index, ExpressionType value) -> PartialResult
 {
     auto temp = g64();
 
@@ -1748,7 +1754,7 @@ auto AirIRGenerator::setGlobal(uint32_t index, ExpressionType value) -> PartialR
     return { };
 }
 
-inline void AirIRGenerator::emitWriteBarrierForJSWrapper()
+inline void AirIRGenerator64::emitWriteBarrierForJSWrapper()
 {
     auto cell = g64();
     auto vm = g64();
@@ -1791,7 +1797,7 @@ inline void AirIRGenerator::emitWriteBarrierForJSWrapper()
     m_currentBlock = continuation;
 }
 
-inline AirIRGenerator::ExpressionType AirIRGenerator::emitCheckAndPreparePointer(ExpressionType pointer, uint32_t offset, uint32_t sizeOfOperation)
+inline AirIRGenerator64::ExpressionType AirIRGenerator64::emitCheckAndPreparePointer(ExpressionType pointer, uint32_t offset, uint32_t sizeOfOperation)
 {
     ASSERT(m_memoryBaseGPR);
 
@@ -1875,7 +1881,7 @@ inline uint32_t sizeOfLoadOp(LoadOpType op)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-inline TypedTmp AirIRGenerator::emitLoadOp(LoadOpType op, ExpressionType pointer, uint32_t uoffset)
+inline TypedTmp AirIRGenerator64::emitLoadOp(LoadOpType op, ExpressionType pointer, uint32_t uoffset)
 {
     uint32_t offset = fixupPointerPlusOffset(pointer, uoffset);
 
@@ -1985,7 +1991,7 @@ inline TypedTmp AirIRGenerator::emitLoadOp(LoadOpType op, ExpressionType pointer
     return result;
 }
 
-auto AirIRGenerator::load(LoadOpType op, ExpressionType pointer, ExpressionType& result, uint32_t offset) -> PartialResult
+auto AirIRGenerator64::load(LoadOpType op, ExpressionType pointer, ExpressionType& result, uint32_t offset) -> PartialResult
 {
     ASSERT(pointer.tmp().isGP());
 
@@ -2050,7 +2056,7 @@ inline uint32_t sizeOfStoreOp(StoreOpType op)
 }
 
 
-inline void AirIRGenerator::emitStoreOp(StoreOpType op, ExpressionType pointer, ExpressionType value, uint32_t uoffset)
+inline void AirIRGenerator64::emitStoreOp(StoreOpType op, ExpressionType pointer, ExpressionType value, uint32_t uoffset)
 {
     uint32_t offset = fixupPointerPlusOffset(pointer, uoffset);
 
@@ -2100,7 +2106,7 @@ inline void AirIRGenerator::emitStoreOp(StoreOpType op, ExpressionType pointer, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-auto AirIRGenerator::store(StoreOpType op, ExpressionType pointer, ExpressionType value, uint32_t offset) -> PartialResult
+auto AirIRGenerator64::store(StoreOpType op, ExpressionType pointer, ExpressionType value, uint32_t offset) -> PartialResult
 {
     ASSERT(pointer.tmp().isGP());
 
@@ -2136,7 +2142,7 @@ inline uint32_t sizeOfAtomicOpMemoryAccess(ExtAtomicOpType op)
     return bytesForWidth(accessWidth(op));
 }
 
-auto AirIRGenerator::fixupPointerPlusOffsetForAtomicOps(ExtAtomicOpType op, ExpressionType pointer, uint32_t uoffset) -> ExpressionType
+auto AirIRGenerator64::fixupPointerPlusOffsetForAtomicOps(ExtAtomicOpType op, ExpressionType pointer, uint32_t uoffset) -> ExpressionType
 {
     uint32_t offset = fixupPointerPlusOffset(pointer, uoffset);
     if (Arg::isValidAddrForm(offset, B3::widthForBytes(sizeOfAtomicOpMemoryAccess(op)))) {
@@ -2152,7 +2158,7 @@ auto AirIRGenerator::fixupPointerPlusOffsetForAtomicOps(ExtAtomicOpType op, Expr
     return newPtr;
 }
 
-void AirIRGenerator::sanitizeAtomicResult(ExtAtomicOpType op, Type valueType, Tmp source, Tmp dest)
+void AirIRGenerator64::sanitizeAtomicResult(ExtAtomicOpType op, Type valueType, Tmp source, Tmp dest)
 {
     switch (valueType.kind) {
     case TypeKind::I64: {
@@ -2196,12 +2202,12 @@ void AirIRGenerator::sanitizeAtomicResult(ExtAtomicOpType op, Type valueType, Tm
     }
 }
 
-void AirIRGenerator::sanitizeAtomicResult(ExtAtomicOpType op, Type valueType, Tmp result)
+void AirIRGenerator64::sanitizeAtomicResult(ExtAtomicOpType op, Type valueType, Tmp result)
 {
     sanitizeAtomicResult(op, valueType, result, result);
 }
 
-TypedTmp AirIRGenerator::appendGeneralAtomic(ExtAtomicOpType op, B3::Air::Opcode opcode, B3::Commutativity commutativity, Arg input, Arg address, TypedTmp oldValue)
+TypedTmp AirIRGenerator64::appendGeneralAtomic(ExtAtomicOpType op, B3::Air::Opcode opcode, B3::Commutativity commutativity, Arg input, Arg address, TypedTmp oldValue)
 {
     B3::Width accessWidth = Wasm::accessWidth(op);
 
@@ -2312,7 +2318,7 @@ TypedTmp AirIRGenerator::appendGeneralAtomic(ExtAtomicOpType op, B3::Air::Opcode
     return oldValue;
 }
 
-TypedTmp AirIRGenerator::appendStrongCAS(ExtAtomicOpType op, TypedTmp expected, TypedTmp value, Arg address, TypedTmp valueResultTmp)
+TypedTmp AirIRGenerator64::appendStrongCAS(ExtAtomicOpType op, TypedTmp expected, TypedTmp value, Arg address, TypedTmp valueResultTmp)
 {
     B3::Width accessWidth = Wasm::accessWidth(op);
 
@@ -2401,7 +2407,7 @@ TypedTmp AirIRGenerator::appendStrongCAS(ExtAtomicOpType op, TypedTmp expected, 
     return valueResultTmp;
 }
 
-inline TypedTmp AirIRGenerator::emitAtomicLoadOp(ExtAtomicOpType op, Type valueType, ExpressionType pointer, uint32_t uoffset)
+inline TypedTmp AirIRGenerator64::emitAtomicLoadOp(ExtAtomicOpType op, Type valueType, ExpressionType pointer, uint32_t uoffset)
 {
     TypedTmp newPtr = fixupPointerPlusOffsetForAtomicOps(op, pointer, uoffset);
     Arg addrArg = isX86() ? Arg::addr(newPtr) : Arg::simpleAddr(newPtr);
@@ -2442,7 +2448,7 @@ inline TypedTmp AirIRGenerator::emitAtomicLoadOp(ExtAtomicOpType op, Type valueT
     return result;
 }
 
-auto AirIRGenerator::atomicLoad(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType& result, uint32_t offset) -> PartialResult
+auto AirIRGenerator64::atomicLoad(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType& result, uint32_t offset) -> PartialResult
 {
     ASSERT(pointer.tmp().isGP());
 
@@ -2473,7 +2479,7 @@ auto AirIRGenerator::atomicLoad(ExtAtomicOpType op, Type valueType, ExpressionTy
     return { };
 }
 
-inline void AirIRGenerator::emitAtomicStoreOp(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType value, uint32_t uoffset)
+inline void AirIRGenerator64::emitAtomicStoreOp(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType value, uint32_t uoffset)
 {
     TypedTmp newPtr = fixupPointerPlusOffsetForAtomicOps(op, pointer, uoffset);
     Arg addrArg = isX86() ? Arg::addr(newPtr) : Arg::simpleAddr(newPtr);
@@ -2509,7 +2515,7 @@ inline void AirIRGenerator::emitAtomicStoreOp(ExtAtomicOpType op, Type valueType
     appendGeneralAtomic(op, nonAtomicOpcode, B3::Commutative, value, addrArg, valueType.isI64() ? g64() : g32());
 }
 
-auto AirIRGenerator::atomicStore(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType value, uint32_t offset) -> PartialResult
+auto AirIRGenerator64::atomicStore(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType value, uint32_t offset) -> PartialResult
 {
     ASSERT(pointer.tmp().isGP());
 
@@ -2527,7 +2533,7 @@ auto AirIRGenerator::atomicStore(ExtAtomicOpType op, Type valueType, ExpressionT
     return { };
 }
 
-TypedTmp AirIRGenerator::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType value, uint32_t uoffset)
+TypedTmp AirIRGenerator64::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType value, uint32_t uoffset)
 {
     TypedTmp newPtr = fixupPointerPlusOffsetForAtomicOps(op, pointer, uoffset);
     Arg addrArg = isX86() ? Arg::addr(newPtr) : Arg::simpleAddr(newPtr);
@@ -2667,7 +2673,7 @@ TypedTmp AirIRGenerator::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueTyp
     return result;
 }
 
-auto AirIRGenerator::atomicBinaryRMW(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType value, ExpressionType& result, uint32_t offset) -> PartialResult
+auto AirIRGenerator64::atomicBinaryRMW(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType value, ExpressionType& result, uint32_t offset) -> PartialResult
 {
     ASSERT(pointer.tmp().isGP());
 
@@ -2697,7 +2703,7 @@ auto AirIRGenerator::atomicBinaryRMW(ExtAtomicOpType op, Type valueType, Express
     return { };
 }
 
-TypedTmp AirIRGenerator::emitAtomicCompareExchange(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType expected, ExpressionType value, uint32_t uoffset)
+TypedTmp AirIRGenerator64::emitAtomicCompareExchange(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType expected, ExpressionType value, uint32_t uoffset)
 {
     TypedTmp newPtr = fixupPointerPlusOffsetForAtomicOps(op, pointer, uoffset);
     Arg addrArg = isX86() ? Arg::addr(newPtr) : Arg::simpleAddr(newPtr);
@@ -2765,7 +2771,7 @@ TypedTmp AirIRGenerator::emitAtomicCompareExchange(ExtAtomicOpType op, Type valu
     return result;
 }
 
-auto AirIRGenerator::atomicCompareExchange(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType expected, ExpressionType value, ExpressionType& result, uint32_t offset) -> PartialResult
+auto AirIRGenerator64::atomicCompareExchange(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType expected, ExpressionType value, ExpressionType& result, uint32_t offset) -> PartialResult
 {
     ASSERT(pointer.tmp().isGP());
 
@@ -2795,7 +2801,7 @@ auto AirIRGenerator::atomicCompareExchange(ExtAtomicOpType op, Type valueType, E
     return { };
 }
 
-auto AirIRGenerator::atomicWait(ExtAtomicOpType op, ExpressionType pointer, ExpressionType value, ExpressionType timeout, ExpressionType& result, uint32_t offset) -> PartialResult
+auto AirIRGenerator64::atomicWait(ExtAtomicOpType op, ExpressionType pointer, ExpressionType value, ExpressionType timeout, ExpressionType& result, uint32_t offset) -> PartialResult
 {
     result = g32();
 
@@ -2812,7 +2818,7 @@ auto AirIRGenerator::atomicWait(ExtAtomicOpType op, ExpressionType pointer, Expr
     return { };
 }
 
-auto AirIRGenerator::atomicNotify(ExtAtomicOpType, ExpressionType pointer, ExpressionType count, ExpressionType& result, uint32_t offset) -> PartialResult
+auto AirIRGenerator64::atomicNotify(ExtAtomicOpType, ExpressionType pointer, ExpressionType count, ExpressionType& result, uint32_t offset) -> PartialResult
 {
     result = g32();
 
@@ -2826,13 +2832,13 @@ auto AirIRGenerator::atomicNotify(ExtAtomicOpType, ExpressionType pointer, Expre
     return { };
 }
 
-auto AirIRGenerator::atomicFence(ExtAtomicOpType, uint8_t) -> PartialResult
+auto AirIRGenerator64::atomicFence(ExtAtomicOpType, uint8_t) -> PartialResult
 {
     append(MemoryFence);
     return { };
 }
 
-auto AirIRGenerator::truncSaturated(Ext1OpType op, ExpressionType arg, ExpressionType& result, Type returnType, Type operandType) -> PartialResult
+auto AirIRGenerator64::truncSaturated(Ext1OpType op, ExpressionType arg, ExpressionType& result, Type returnType, Type operandType) -> PartialResult
 {
     TypedTmp maxFloat;
     TypedTmp minFloat;
@@ -3020,7 +3026,7 @@ auto AirIRGenerator::truncSaturated(Ext1OpType op, ExpressionType arg, Expressio
     return { };
 }
 
-auto AirIRGenerator::addI31New(ExpressionType value, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI31New(ExpressionType value, ExpressionType& result) -> PartialResult
 {
     auto tmp1 = g32();
     result = gRef(Type { TypeKind::Ref, Nullable::No, static_cast<TypeIndex>(TypeKind::I31ref) });
@@ -3033,7 +3039,7 @@ auto AirIRGenerator::addI31New(ExpressionType value, ExpressionType& result) -> 
     return { };
 }
 
-auto AirIRGenerator::addI31GetS(ExpressionType ref, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI31GetS(ExpressionType ref, ExpressionType& result) -> PartialResult
 {
     // Trap on null reference.
     auto tmpForNull = g64();
@@ -3055,7 +3061,7 @@ auto AirIRGenerator::addI31GetS(ExpressionType ref, ExpressionType& result) -> P
     return { };
 }
 
-auto AirIRGenerator::addI31GetU(ExpressionType ref, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI31GetU(ExpressionType ref, ExpressionType& result) -> PartialResult
 {
     // Trap on null reference.
     auto tmpForNull = g64();
@@ -3072,7 +3078,7 @@ auto AirIRGenerator::addI31GetU(ExpressionType ref, ExpressionType& result) -> P
     return { };
 }
 
-auto AirIRGenerator::addSelect(ExpressionType condition, ExpressionType nonZero, ExpressionType zero, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addSelect(ExpressionType condition, ExpressionType nonZero, ExpressionType zero, ExpressionType& result) -> PartialResult
 {
     ASSERT(nonZero.type() == zero.type());
     result = tmpForType(nonZero.type());
@@ -3093,7 +3099,7 @@ auto AirIRGenerator::addSelect(ExpressionType condition, ExpressionType nonZero,
     return { };
 }
 
-void AirIRGenerator::emitEntryTierUpCheck()
+void AirIRGenerator64::emitEntryTierUpCheck()
 {
     if (!m_tierUp)
         return;
@@ -3137,7 +3143,7 @@ void AirIRGenerator::emitEntryTierUpCheck()
     emitPatchpoint(patch, Tmp(), countdownPtr);
 }
 
-void AirIRGenerator::emitLoopTierUpCheck(uint32_t loopIndex, const Vector<TypedTmp>& liveValues)
+void AirIRGenerator64::emitLoopTierUpCheck(uint32_t loopIndex, const Vector<TypedTmp>& liveValues)
 {
     uint32_t outerLoopIndex = this->outerLoopIndex();
     m_outerLoops.append(loopIndex);
@@ -3201,12 +3207,12 @@ void AirIRGenerator::emitLoopTierUpCheck(uint32_t loopIndex, const Vector<TypedT
     emitPatchpoint(m_currentBlock, patch, ResultList { }, WTFMove(patchArgs));
 }
 
-AirIRGenerator::ControlData AirIRGenerator::addTopLevel(BlockSignature signature)
+AirIRGenerator64::ControlData AirIRGenerator64::addTopLevel(BlockSignature signature)
 {
     return ControlData(B3::Origin(), signature, tmpsForSignature(signature), BlockType::TopLevel, m_code.addBlock());
 }
 
-auto AirIRGenerator::addLoop(BlockSignature signature, Stack& enclosingStack, ControlType& block, Stack& newStack, uint32_t loopIndex) -> PartialResult
+auto AirIRGenerator64::addLoop(BlockSignature signature, Stack& enclosingStack, ControlType& block, Stack& newStack, uint32_t loopIndex) -> PartialResult
 {
     RELEASE_ASSERT(loopIndex == m_loopEntryVariableData.size());
 
@@ -3241,14 +3247,14 @@ auto AirIRGenerator::addLoop(BlockSignature signature, Stack& enclosingStack, Co
     return { };
 }
 
-auto AirIRGenerator::addBlock(BlockSignature signature, Stack& enclosingStack, ControlType& newBlock, Stack& newStack) -> PartialResult
+auto AirIRGenerator64::addBlock(BlockSignature signature, Stack& enclosingStack, ControlType& newBlock, Stack& newStack) -> PartialResult
 {
     splitStack(signature, enclosingStack, newStack);
     newBlock = ControlData(origin(), signature, tmpsForSignature(signature), BlockType::Block, m_code.addBlock());
     return { };
 }
 
-auto AirIRGenerator::addIf(ExpressionType condition, BlockSignature signature, Stack& enclosingStack, ControlType& result, Stack& newStack) -> PartialResult
+auto AirIRGenerator64::addIf(ExpressionType condition, BlockSignature signature, Stack& enclosingStack, ControlType& result, Stack& newStack) -> PartialResult
 {
     BasicBlock* taken = m_code.addBlock();
     BasicBlock* notTaken = m_code.addBlock();
@@ -3281,7 +3287,7 @@ auto AirIRGenerator::addIf(ExpressionType condition, BlockSignature signature, S
     return { };
 }
 
-auto AirIRGenerator::addElse(ControlData& data, const Stack& currentStack) -> PartialResult
+auto AirIRGenerator64::addElse(ControlData& data, const Stack& currentStack) -> PartialResult
 {
     unifyValuesWithBlock(currentStack, data.results);
     append(Jump);
@@ -3289,7 +3295,7 @@ auto AirIRGenerator::addElse(ControlData& data, const Stack& currentStack) -> Pa
     return addElseToUnreachable(data);
 }
 
-auto AirIRGenerator::addElseToUnreachable(ControlData& data) -> PartialResult
+auto AirIRGenerator64::addElseToUnreachable(ControlData& data) -> PartialResult
 {
     ASSERT(data.blockType() == BlockType::If);
     m_currentBlock = data.special;
@@ -3297,7 +3303,7 @@ auto AirIRGenerator::addElseToUnreachable(ControlData& data) -> PartialResult
     return { };
 }
 
-auto AirIRGenerator::addTry(BlockSignature signature, Stack& enclosingStack, ControlType& result, Stack& newStack) -> PartialResult
+auto AirIRGenerator64::addTry(BlockSignature signature, Stack& enclosingStack, ControlType& result, Stack& newStack) -> PartialResult
 {
     ++m_tryCatchDepth;
 
@@ -3307,7 +3313,7 @@ auto AirIRGenerator::addTry(BlockSignature signature, Stack& enclosingStack, Con
     return { };
 }
 
-auto AirIRGenerator::addCatch(unsigned exceptionIndex, const TypeDefinition& signature, Stack& currentStack, ControlType& data, ResultList& results) -> PartialResult
+auto AirIRGenerator64::addCatch(unsigned exceptionIndex, const TypeDefinition& signature, Stack& currentStack, ControlType& data, ResultList& results) -> PartialResult
 {
     unifyValuesWithBlock(currentStack, data.results);
     append(Jump);
@@ -3315,7 +3321,7 @@ auto AirIRGenerator::addCatch(unsigned exceptionIndex, const TypeDefinition& sig
     return addCatchToUnreachable(exceptionIndex, signature, data, results);
 }
 
-auto AirIRGenerator::addCatchAll(Stack& currentStack, ControlType& data) -> PartialResult
+auto AirIRGenerator64::addCatchAll(Stack& currentStack, ControlType& data) -> PartialResult
 {
     unifyValuesWithBlock(currentStack, data.results);
     append(Jump);
@@ -3323,7 +3329,7 @@ auto AirIRGenerator::addCatchAll(Stack& currentStack, ControlType& data) -> Part
     return addCatchAllToUnreachable(data);
 }
 
-auto AirIRGenerator::addCatchToUnreachable(unsigned exceptionIndex, const TypeDefinition& signature, ControlType& data, ResultList& results) -> PartialResult
+auto AirIRGenerator64::addCatchToUnreachable(unsigned exceptionIndex, const TypeDefinition& signature, ControlType& data, ResultList& results) -> PartialResult
 {
     Tmp buffer = emitCatchImpl(CatchKind::Catch, data, exceptionIndex);
     for (unsigned i = 0; i < signature.as<FunctionSignature>()->argumentCount(); ++i) {
@@ -3335,13 +3341,13 @@ auto AirIRGenerator::addCatchToUnreachable(unsigned exceptionIndex, const TypeDe
     return { };
 }
 
-auto AirIRGenerator::addCatchAllToUnreachable(ControlType& data) -> PartialResult
+auto AirIRGenerator64::addCatchAllToUnreachable(ControlType& data) -> PartialResult
 {
     emitCatchImpl(CatchKind::CatchAll, data);
     return { };
 }
 
-Tmp AirIRGenerator::emitCatchImpl(CatchKind kind, ControlType& data, unsigned exceptionIndex)
+Tmp AirIRGenerator64::emitCatchImpl(CatchKind kind, ControlType& data, unsigned exceptionIndex)
 {
     m_currentBlock = m_code.addBlock();
     m_catchEntrypoints.append(m_currentBlock);
@@ -3404,12 +3410,12 @@ Tmp AirIRGenerator::emitCatchImpl(CatchKind kind, ControlType& data, unsigned ex
     return buffer;
 }
 
-auto AirIRGenerator::addDelegate(ControlType& target, ControlType& data) -> PartialResult
+auto AirIRGenerator64::addDelegate(ControlType& target, ControlType& data) -> PartialResult
 {
     return addDelegateToUnreachable(target, data);
 }
 
-auto AirIRGenerator::addDelegateToUnreachable(ControlType& target, ControlType& data) -> PartialResult
+auto AirIRGenerator64::addDelegateToUnreachable(ControlType& target, ControlType& data) -> PartialResult
 {
     unsigned targetDepth = 0;
     if (ControlType::isTry(target))
@@ -3419,7 +3425,7 @@ auto AirIRGenerator::addDelegateToUnreachable(ControlType& target, ControlType& 
     return { };
 }
 
-auto AirIRGenerator::addThrow(unsigned exceptionIndex, Vector<ExpressionType>& args, Stack&) -> PartialResult
+auto AirIRGenerator64::addThrow(unsigned exceptionIndex, Vector<ExpressionType>& args, Stack&) -> PartialResult
 {
     B3::PatchpointValue* patch = addPatchpoint(B3::Void);
     patch->effects.terminal = true;
@@ -3444,7 +3450,7 @@ auto AirIRGenerator::addThrow(unsigned exceptionIndex, Vector<ExpressionType>& a
     return { };
 }
 
-auto AirIRGenerator::addRethrow(unsigned, ControlType& data) -> PartialResult
+auto AirIRGenerator64::addRethrow(unsigned, ControlType& data) -> PartialResult
 {
     B3::PatchpointValue* patch = addPatchpoint(B3::Void);
     patch->clobber(RegisterSet::volatileRegistersForJSCall());
@@ -3467,7 +3473,7 @@ auto AirIRGenerator::addRethrow(unsigned, ControlType& data) -> PartialResult
     return { };
 }
 
-auto AirIRGenerator::addReturn(const ControlData& data, const Stack& returnValues) -> PartialResult
+auto AirIRGenerator64::addReturn(const ControlData& data, const Stack& returnValues) -> PartialResult
 {
     CallInformation wasmCallInfo = wasmCallingConvention().callInformationFor(*data.signature(), CallRole::Callee);
     if (!wasmCallInfo.results.size()) {
@@ -3508,7 +3514,7 @@ auto AirIRGenerator::addReturn(const ControlData& data, const Stack& returnValue
 
 // NOTE: All branches in Wasm are on 32-bit ints
 
-auto AirIRGenerator::addBranch(ControlData& data, ExpressionType condition, const Stack& returnValues) -> PartialResult
+auto AirIRGenerator64::addBranch(ControlData& data, ExpressionType condition, const Stack& returnValues) -> PartialResult
 {
     unifyValuesWithBlock(returnValues, data.results);
 
@@ -3544,7 +3550,7 @@ auto AirIRGenerator::addBranch(ControlData& data, ExpressionType condition, cons
     return { };
 }
 
-auto AirIRGenerator::addSwitch(ExpressionType condition, const Vector<ControlData*>& targets, ControlData& defaultTarget, const Stack& expressionStack) -> PartialResult
+auto AirIRGenerator64::addSwitch(ExpressionType condition, const Vector<ControlData*>& targets, ControlData& defaultTarget, const Stack& expressionStack) -> PartialResult
 {
     auto& successors = m_currentBlock->successors();
     ASSERT(successors.isEmpty());
@@ -3607,7 +3613,7 @@ auto AirIRGenerator::addSwitch(ExpressionType condition, const Vector<ControlDat
     return { };
 }
 
-auto AirIRGenerator::endBlock(ControlEntry& entry, Stack& expressionStack) -> PartialResult
+auto AirIRGenerator64::endBlock(ControlEntry& entry, Stack& expressionStack) -> PartialResult
 {
     ControlData& data = entry.controlData;
 
@@ -3620,7 +3626,7 @@ auto AirIRGenerator::endBlock(ControlEntry& entry, Stack& expressionStack) -> Pa
 }
 
 
-auto AirIRGenerator::addEndToUnreachable(ControlEntry& entry, const Stack& expressionStack) -> PartialResult
+auto AirIRGenerator64::addEndToUnreachable(ControlEntry& entry, const Stack& expressionStack) -> PartialResult
 {
     ControlData& data = entry.controlData;
     m_currentBlock = data.continuation;
@@ -3653,7 +3659,7 @@ auto AirIRGenerator::addEndToUnreachable(ControlEntry& entry, const Stack& expre
     return { };
 }
 
-std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> AirIRGenerator::emitCallPatchpoint(BasicBlock* block, const TypeDefinition& signature, const ResultList& results, const Vector<TypedTmp>& args, Vector<ConstrainedTmp> patchArgs)
+std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> AirIRGenerator64::emitCallPatchpoint(BasicBlock* block, const TypeDefinition& signature, const ResultList& results, const Vector<TypedTmp>& args, Vector<ConstrainedTmp> patchArgs)
 {
     auto* patchpoint = addPatchpoint(toB3ResultType(&signature));
     patchpoint->effects.writesPinned = true;
@@ -3683,7 +3689,7 @@ std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> AirIRGenerator::emitC
     return { patchpoint, exceptionHandle };
 }
 
-auto AirIRGenerator::addCall(uint32_t functionIndex, const TypeDefinition& signature, Vector<ExpressionType>& args, ResultList& results) -> PartialResult
+auto AirIRGenerator64::addCall(uint32_t functionIndex, const TypeDefinition& signature, Vector<ExpressionType>& args, ResultList& results) -> PartialResult
 {
     ASSERT(signature.as<FunctionSignature>()->argumentCount() == args.size());
 
@@ -3786,7 +3792,7 @@ auto AirIRGenerator::addCall(uint32_t functionIndex, const TypeDefinition& signa
     return { };
 }
 
-auto AirIRGenerator::addCallIndirect(unsigned tableIndex, const TypeDefinition& originalSignature, Vector<ExpressionType>& args, ResultList& results) -> PartialResult
+auto AirIRGenerator64::addCallIndirect(unsigned tableIndex, const TypeDefinition& originalSignature, Vector<ExpressionType>& args, ResultList& results) -> PartialResult
 {
     ExpressionType calleeIndex = args.takeLast();
     const TypeDefinition& signature = originalSignature.expand();
@@ -3870,7 +3876,7 @@ auto AirIRGenerator::addCallIndirect(unsigned tableIndex, const TypeDefinition& 
     return emitIndirectCall(calleeInstance, calleeCode, signature, args, results);
 }
 
-auto AirIRGenerator::addCallRef(const TypeDefinition& originalSignature, Vector<ExpressionType>& args, ResultList& results) -> PartialResult
+auto AirIRGenerator64::addCallRef(const TypeDefinition& originalSignature, Vector<ExpressionType>& args, ResultList& results) -> PartialResult
 {
     m_makesCalls = true;
     // Note: call ref can call either WebAssemblyFunction or WebAssemblyWrapperFunction. Because
@@ -3899,7 +3905,7 @@ auto AirIRGenerator::addCallRef(const TypeDefinition& originalSignature, Vector<
     return emitIndirectCall(calleeInstance, calleeCode, signature, args, results);
 }
 
-auto AirIRGenerator::emitIndirectCall(TypedTmp calleeInstance, ExpressionType calleeCode, const TypeDefinition& signature, const Vector<ExpressionType>& args, ResultList& results) -> PartialResult
+auto AirIRGenerator64::emitIndirectCall(TypedTmp calleeInstance, ExpressionType calleeCode, const TypeDefinition& signature, const Vector<ExpressionType>& args, ResultList& results) -> PartialResult
 {
     auto currentInstance = g64();
     append(Move, instanceValue(), currentInstance);
@@ -3980,13 +3986,13 @@ auto AirIRGenerator::emitIndirectCall(TypedTmp calleeInstance, ExpressionType ca
     return { };
 }
 
-void AirIRGenerator::unify(const ExpressionType dst, const ExpressionType source)
+void AirIRGenerator64::unify(const ExpressionType dst, const ExpressionType source)
 {
     ASSERT(isSubtype(source.type(), dst.type()));
     append(moveOpForValueType(dst.type()), source, dst);
 }
 
-void AirIRGenerator::unifyValuesWithBlock(const Stack& resultStack, const ResultList& result)
+void AirIRGenerator64::unifyValuesWithBlock(const Stack& resultStack, const ResultList& result)
 {
     ASSERT(result.size() <= resultStack.size());
 
@@ -3994,14 +4000,14 @@ void AirIRGenerator::unifyValuesWithBlock(const Stack& resultStack, const Result
         unify(result[result.size() - 1 - i], resultStack[resultStack.size() - 1 - i]);
 }
 
-static void dumpExpressionStack(const CommaPrinter& comma, const AirIRGenerator::Stack& expressionStack)
+static void dumpExpressionStack(const CommaPrinter& comma, const AirIRGenerator64::Stack& expressionStack)
 {
     dataLog(comma, "ExpressionStack:");
     for (const auto& expression : expressionStack)
         dataLog(comma, expression.value());
 }
 
-void AirIRGenerator::dump(const ControlStack& controlStack, const Stack* stack)
+void AirIRGenerator64::dump(const ControlStack& controlStack, const Stack* stack)
 {
     dataLogLn("Processing Graph:");
     dataLog(m_code);
@@ -4017,7 +4023,7 @@ void AirIRGenerator::dump(const ControlStack& controlStack, const Stack* stack)
     dataLogLn("\n");
 }
 
-auto AirIRGenerator::origin() -> B3::Origin
+auto AirIRGenerator64::origin() -> B3::Origin
 {
     // FIXME: We should implement a way to give Inst's an origin, and pipe that
     // information into the sampling profiler: https://bugs.webkit.org/show_bug.cgi?id=234182
@@ -4047,8 +4053,8 @@ Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAir(Compilati
     
     procedure.setOptLevel(Options::webAssemblyBBQAirOptimizationLevel());
 
-    AirIRGenerator irGenerator(info, procedure, result.get(), unlinkedWasmToWasmCalls, mode, functionIndex, hasExceptionHandlers, tierUp, signature, result->osrEntryScratchBufferSize);
-    FunctionParser<AirIRGenerator> parser(irGenerator, function.data.data(), function.data.size(), signature, info);
+    AirIRGenerator64 irGenerator(info, procedure, result.get(), unlinkedWasmToWasmCalls, mode, functionIndex, hasExceptionHandlers, tierUp, signature, result->osrEntryScratchBufferSize);
+    FunctionParser<AirIRGenerator64> parser(irGenerator, function.data.data(), function.data.size(), signature, info);
     WASM_FAIL_IF_HELPER_FAILS(parser.parse());
 
     irGenerator.finalizeEntrypoints();
@@ -4076,7 +4082,7 @@ Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAir(Compilati
 }
 
 template <typename IntType>
-void AirIRGenerator::emitChecksForModOrDiv(bool isSignedDiv, ExpressionType left, ExpressionType right)
+void AirIRGenerator64::emitChecksForModOrDiv(bool isSignedDiv, ExpressionType left, ExpressionType right)
 {
     static_assert(sizeof(IntType) == 4 || sizeof(IntType) == 8);
 
@@ -4112,7 +4118,7 @@ void AirIRGenerator::emitChecksForModOrDiv(bool isSignedDiv, ExpressionType left
 }
 
 template <typename IntType>
-void AirIRGenerator::emitModOrDiv(bool isDiv, ExpressionType lhs, ExpressionType rhs, ExpressionType& result)
+void AirIRGenerator64::emitModOrDiv(bool isDiv, ExpressionType lhs, ExpressionType rhs, ExpressionType& result)
 {
     static_assert(sizeof(IntType) == 4 || sizeof(IntType) == 8);
 
@@ -4226,63 +4232,63 @@ void AirIRGenerator::emitModOrDiv(bool isDiv, ExpressionType lhs, ExpressionType
 #endif
 }
 
-auto AirIRGenerator::addI32DivS(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32DivS(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
 {
     emitChecksForModOrDiv<int32_t>(true, left, right);
     emitModOrDiv<int32_t>(true, left, right, result);
     return { };
 }
 
-auto AirIRGenerator::addI32RemS(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32RemS(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
 {
     emitChecksForModOrDiv<int32_t>(false, left, right);
     emitModOrDiv<int32_t>(false, left, right, result);
     return { };
 }
 
-auto AirIRGenerator::addI32DivU(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32DivU(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
 {
     emitChecksForModOrDiv<uint32_t>(false, left, right);
     emitModOrDiv<uint32_t>(true, left, right, result);
     return { };
 }
 
-auto AirIRGenerator::addI32RemU(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32RemU(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
 {
     emitChecksForModOrDiv<uint32_t>(false, left, right);
     emitModOrDiv<uint32_t>(false, left, right, result);
     return { };
 }
 
-auto AirIRGenerator::addI64DivS(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64DivS(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
 {
     emitChecksForModOrDiv<int64_t>(true, left, right);
     emitModOrDiv<int64_t>(true, left, right, result);
     return { };
 }
 
-auto AirIRGenerator::addI64RemS(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64RemS(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
 {
     emitChecksForModOrDiv<int64_t>(false, left, right);
     emitModOrDiv<int64_t>(false, left, right, result);
     return { };
 }
 
-auto AirIRGenerator::addI64DivU(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64DivU(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
 {
     emitChecksForModOrDiv<uint64_t>(false, left, right);
     emitModOrDiv<uint64_t>(true, left, right, result);
     return { };
 }
 
-auto AirIRGenerator::addI64RemU(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64RemU(ExpressionType left, ExpressionType right, ExpressionType& result) -> PartialResult
 {
     emitChecksForModOrDiv<uint64_t>(false, left, right);
     emitModOrDiv<uint64_t>(false, left, right, result);
     return { };
 }
 
-auto AirIRGenerator::addI32Ctz(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Ctz(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto* patchpoint = addPatchpoint(B3::Int32);
     patchpoint->effects = B3::Effects::none();
@@ -4294,7 +4300,7 @@ auto AirIRGenerator::addI32Ctz(ExpressionType arg, ExpressionType& result) -> Pa
     return { };
 }
 
-auto AirIRGenerator::addI64Ctz(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Ctz(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto* patchpoint = addPatchpoint(B3::Int64);
     patchpoint->effects = B3::Effects::none();
@@ -4306,7 +4312,7 @@ auto AirIRGenerator::addI64Ctz(ExpressionType arg, ExpressionType& result) -> Pa
     return { };
 }
 
-auto AirIRGenerator::addI32Popcnt(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Popcnt(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     result = g32();
 
@@ -4326,7 +4332,7 @@ auto AirIRGenerator::addI32Popcnt(ExpressionType arg, ExpressionType& result) ->
     return { };
 }
 
-auto AirIRGenerator::addI64Popcnt(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Popcnt(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     result = g64();
 
@@ -4346,7 +4352,7 @@ auto AirIRGenerator::addI64Popcnt(ExpressionType arg, ExpressionType& result) ->
     return { };
 }
 
-auto AirIRGenerator::addF64ConvertUI64(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64ConvertUI64(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto* patchpoint = addPatchpoint(B3::Double);
     patchpoint->effects = B3::Effects::none();
@@ -4366,7 +4372,7 @@ auto AirIRGenerator::addF64ConvertUI64(ExpressionType arg, ExpressionType& resul
     return { };
 }
 
-auto AirIRGenerator::addF32ConvertUI64(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32ConvertUI64(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto* patchpoint = addPatchpoint(B3::Float);
     patchpoint->effects = B3::Effects::none();
@@ -4386,7 +4392,7 @@ auto AirIRGenerator::addF32ConvertUI64(ExpressionType arg, ExpressionType& resul
     return { };
 }
 
-auto AirIRGenerator::addF64Nearest(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Nearest(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto* patchpoint = addPatchpoint(B3::Double);
     patchpoint->effects = B3::Effects::none();
@@ -4398,7 +4404,7 @@ auto AirIRGenerator::addF64Nearest(ExpressionType arg, ExpressionType& result) -
     return { };
 }
 
-auto AirIRGenerator::addF32Nearest(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Nearest(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto* patchpoint = addPatchpoint(B3::Float);
     patchpoint->effects = B3::Effects::none();
@@ -4410,7 +4416,7 @@ auto AirIRGenerator::addF32Nearest(ExpressionType arg, ExpressionType& result) -
     return { };
 }
 
-auto AirIRGenerator::addF64Trunc(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Trunc(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto* patchpoint = addPatchpoint(B3::Double);
     patchpoint->effects = B3::Effects::none();
@@ -4422,7 +4428,7 @@ auto AirIRGenerator::addF64Trunc(ExpressionType arg, ExpressionType& result) -> 
     return { };
 }
 
-auto AirIRGenerator::addF32Trunc(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Trunc(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto* patchpoint = addPatchpoint(B3::Float);
     patchpoint->effects = B3::Effects::none();
@@ -4434,7 +4440,7 @@ auto AirIRGenerator::addF32Trunc(ExpressionType arg, ExpressionType& result) -> 
     return { };
 }
 
-auto AirIRGenerator::addI32TruncSF64(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32TruncSF64(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto max = addConstant(Types::F64, bitwise_cast<uint64_t>(-static_cast<double>(std::numeric_limits<int32_t>::min())));
     auto min = addConstant(Types::F64, bitwise_cast<uint64_t>(static_cast<double>(std::numeric_limits<int32_t>::min()) - 1.0));
@@ -4462,7 +4468,7 @@ auto AirIRGenerator::addI32TruncSF64(ExpressionType arg, ExpressionType& result)
     return { };
 }
 
-auto AirIRGenerator::addI32TruncSF32(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32TruncSF32(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto max = addConstant(Types::F32, bitwise_cast<uint32_t>(-static_cast<float>(std::numeric_limits<int32_t>::min())));
     auto min = addConstant(Types::F32, bitwise_cast<uint32_t>(static_cast<float>(std::numeric_limits<int32_t>::min())));
@@ -4490,7 +4496,7 @@ auto AirIRGenerator::addI32TruncSF32(ExpressionType arg, ExpressionType& result)
 }
 
 
-auto AirIRGenerator::addI32TruncUF64(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32TruncUF64(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto max = addConstant(Types::F64, bitwise_cast<uint64_t>(static_cast<double>(std::numeric_limits<int32_t>::min()) * -2.0));
     auto min = addConstant(Types::F64, bitwise_cast<uint64_t>(-1.0));
@@ -4517,7 +4523,7 @@ auto AirIRGenerator::addI32TruncUF64(ExpressionType arg, ExpressionType& result)
     return { };
 }
 
-auto AirIRGenerator::addI32TruncUF32(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32TruncUF32(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto max = addConstant(Types::F32, bitwise_cast<uint32_t>(static_cast<float>(std::numeric_limits<int32_t>::min()) * static_cast<float>(-2.0)));
     auto min = addConstant(Types::F32, bitwise_cast<uint32_t>(static_cast<float>(-1.0)));
@@ -4544,7 +4550,7 @@ auto AirIRGenerator::addI32TruncUF32(ExpressionType arg, ExpressionType& result)
     return { };
 }
 
-auto AirIRGenerator::addI64TruncSF64(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64TruncSF64(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto max = addConstant(Types::F64, bitwise_cast<uint64_t>(-static_cast<double>(std::numeric_limits<int64_t>::min())));
     auto min = addConstant(Types::F64, bitwise_cast<uint64_t>(static_cast<double>(std::numeric_limits<int64_t>::min())));
@@ -4572,7 +4578,7 @@ auto AirIRGenerator::addI64TruncSF64(ExpressionType arg, ExpressionType& result)
     return { };
 }
 
-auto AirIRGenerator::addI64TruncUF64(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64TruncUF64(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto max = addConstant(Types::F64, bitwise_cast<uint64_t>(static_cast<double>(std::numeric_limits<int64_t>::min()) * -2.0));
     auto min = addConstant(Types::F64, bitwise_cast<uint64_t>(-1.0));
@@ -4618,7 +4624,7 @@ auto AirIRGenerator::addI64TruncUF64(ExpressionType arg, ExpressionType& result)
     return { };
 }
 
-auto AirIRGenerator::addI64TruncSF32(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64TruncSF32(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto max = addConstant(Types::F32, bitwise_cast<uint32_t>(-static_cast<float>(std::numeric_limits<int64_t>::min())));
     auto min = addConstant(Types::F32, bitwise_cast<uint32_t>(static_cast<float>(std::numeric_limits<int64_t>::min())));
@@ -4645,7 +4651,7 @@ auto AirIRGenerator::addI64TruncSF32(ExpressionType arg, ExpressionType& result)
     return { };
 }
 
-auto AirIRGenerator::addI64TruncUF32(ExpressionType arg, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64TruncUF32(ExpressionType arg, ExpressionType& result) -> PartialResult
 {
     auto max = addConstant(Types::F32, bitwise_cast<uint32_t>(static_cast<float>(std::numeric_limits<int64_t>::min()) * static_cast<float>(-2.0)));
     auto min = addConstant(Types::F32, bitwise_cast<uint32_t>(static_cast<float>(-1.0)));
@@ -4692,7 +4698,7 @@ auto AirIRGenerator::addI64TruncUF32(ExpressionType arg, ExpressionType& result)
     return { };
 }
 
-auto AirIRGenerator::addShift(Type type, B3::Air::Opcode op, ExpressionType value, ExpressionType shift, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addShift(Type type, B3::Air::Opcode op, ExpressionType value, ExpressionType shift, ExpressionType& result) -> PartialResult
 {
     ASSERT(type.isI64() || type.isI32());
     result = tmpForType(type);
@@ -4713,7 +4719,7 @@ auto AirIRGenerator::addShift(Type type, B3::Air::Opcode op, ExpressionType valu
     return { };
 }
 
-auto AirIRGenerator::addIntegerSub(B3::Air::Opcode op, ExpressionType lhs, ExpressionType rhs, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addIntegerSub(B3::Air::Opcode op, ExpressionType lhs, ExpressionType rhs, ExpressionType& result) -> PartialResult
 {
     ASSERT(op == Sub32 || op == Sub64);
 
@@ -4733,7 +4739,7 @@ auto AirIRGenerator::addIntegerSub(B3::Air::Opcode op, ExpressionType lhs, Expre
     return { };
 }
 
-auto AirIRGenerator::addFloatingPointAbs(B3::Air::Opcode op, ExpressionType value, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addFloatingPointAbs(B3::Air::Opcode op, ExpressionType value, ExpressionType& result) -> PartialResult
 {
     RELEASE_ASSERT(op == AbsFloat || op == AbsDouble);
 
@@ -4760,7 +4766,7 @@ auto AirIRGenerator::addFloatingPointAbs(B3::Air::Opcode op, ExpressionType valu
     return { };
 }
 
-auto AirIRGenerator::addFloatingPointBinOp(Type type, B3::Air::Opcode op, ExpressionType lhs, ExpressionType rhs, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addFloatingPointBinOp(Type type, B3::Air::Opcode op, ExpressionType lhs, ExpressionType rhs, ExpressionType& result) -> PartialResult
 {
     ASSERT(type.isF32() || type.isF64());
     result = tmpForType(type);
@@ -4780,54 +4786,54 @@ auto AirIRGenerator::addFloatingPointBinOp(Type type, B3::Air::Opcode op, Expres
     return { };
 }
 
-auto AirIRGenerator::addF32Ceil(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Ceil(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f32();
     append(CeilFloat, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI32Mul(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Mul(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Mul32, arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI32Sub(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Sub(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addIntegerSub(Sub32, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addF64Le(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Le(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(CompareDouble, Arg::doubleCond(MacroAssembler::DoubleLessThanOrEqualAndOrdered), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF32DemoteF64(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32DemoteF64(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f32();
     append(ConvertDoubleToFloat, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addF64Ne(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Ne(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(CompareDouble, Arg::doubleCond(MacroAssembler::DoubleNotEqualOrUnordered), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF64Lt(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Lt(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(CompareDouble, Arg::doubleCond(MacroAssembler::DoubleLessThanAndOrdered), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addFloatingPointMinOrMax(Type floatType, MinOrMax minOrMax, ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addFloatingPointMinOrMax(Type floatType, MinOrMax minOrMax, ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     ASSERT(floatType.isF32() || floatType.isF64());
     result = tmpForType(floatType);
@@ -4884,44 +4890,44 @@ auto AirIRGenerator::addFloatingPointMinOrMax(Type floatType, MinOrMax minOrMax,
     return { };
 }
 
-auto AirIRGenerator::addF32Min(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Min(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addFloatingPointMinOrMax(Types::F32, MinOrMax::Min, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addF32Max(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Max(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addFloatingPointMinOrMax(Types::F32, MinOrMax::Max, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addF64Min(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Min(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addFloatingPointMinOrMax(Types::F64, MinOrMax::Min, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addF64Max(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Max(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addFloatingPointMinOrMax(Types::F64, MinOrMax::Max, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addF64Mul(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Mul(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addFloatingPointBinOp(Types::F64, MulDouble, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addF32Div(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Div(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addFloatingPointBinOp(Types::F32, DivFloat, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addI32Clz(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Clz(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(CountLeadingZeros32, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addF32Copysign(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Copysign(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     // FIXME: We can have better codegen here for the imms and two operand forms on x86
     // https://bugs.webkit.org/show_bug.cgi?id=193999
@@ -4946,7 +4952,7 @@ auto AirIRGenerator::addF32Copysign(ExpressionType arg0, ExpressionType arg1, Ex
     return { };
 }
 
-auto AirIRGenerator::addF64ConvertUI32(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64ConvertUI32(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f64();
     auto temp = g64();
@@ -4955,117 +4961,117 @@ auto AirIRGenerator::addF64ConvertUI32(ExpressionType arg0, ExpressionType& resu
     return { };
 }
 
-auto AirIRGenerator::addF32ReinterpretI32(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32ReinterpretI32(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f32();
     append(Move32ToFloat, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI64And(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64And(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g64();
     append(And64, arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF32Ne(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Ne(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(CompareFloat, Arg::doubleCond(MacroAssembler::DoubleNotEqualOrUnordered), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF64Gt(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Gt(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(CompareDouble, Arg::doubleCond(MacroAssembler::DoubleGreaterThanAndOrdered), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF32Sqrt(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Sqrt(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f32();
     append(SqrtFloat, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addF64Ge(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Ge(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(CompareDouble, Arg::doubleCond(MacroAssembler::DoubleGreaterThanOrEqualAndOrdered), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64GtS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64GtS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare64, Arg::relCond(MacroAssembler::GreaterThan), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64GtU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64GtU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare64, Arg::relCond(MacroAssembler::Above), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64Eqz(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Eqz(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Test64, Arg::resCond(MacroAssembler::Zero), arg0, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addF64Div(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Div(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addFloatingPointBinOp(Types::F64, DivDouble, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addF32Add(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Add(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = f32();
     append(AddFloat, arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64Or(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Or(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g64();
     append(Or64, arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI32LeU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32LeU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare32, Arg::relCond(MacroAssembler::BelowOrEqual), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI32LeS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32LeS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare32, Arg::relCond(MacroAssembler::LessThanOrEqual), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64Ne(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Ne(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare64, Arg::relCond(MacroAssembler::NotEqual), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64Clz(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Clz(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = g64();
     append(CountLeadingZeros64, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addF32Neg(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Neg(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f32();
     if (isValidForm(NegateFloat, Arg::Tmp, Arg::Tmp))
@@ -5080,45 +5086,45 @@ auto AirIRGenerator::addF32Neg(ExpressionType arg0, ExpressionType& result) -> P
     return { };
 }
 
-auto AirIRGenerator::addI32And(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32And(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(And32, arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI32LtU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32LtU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare32, Arg::relCond(MacroAssembler::Below), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64Rotr(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Rotr(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addShift(Types::I64, RotateRight64, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addF64Abs(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Abs(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     return addFloatingPointAbs(AbsDouble, arg0, result);
 }
 
-auto AirIRGenerator::addI32LtS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32LtS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare32, Arg::relCond(MacroAssembler::LessThan), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI32Eq(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Eq(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare32, Arg::relCond(MacroAssembler::Equal), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF64Copysign(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Copysign(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     // FIXME: We can have better codegen here for the imms and two operand forms on x86
     // https://bugs.webkit.org/show_bug.cgi?id=193999
@@ -5141,14 +5147,14 @@ auto AirIRGenerator::addF64Copysign(ExpressionType arg0, ExpressionType arg1, Ex
     return { };
 }
 
-auto AirIRGenerator::addF32ConvertSI64(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32ConvertSI64(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f32();
     append(ConvertInt64ToFloat, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI64Rotl(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Rotl(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     if (isARM64()) {
         // ARM64 doesn't have a rotate left.
@@ -5160,47 +5166,47 @@ auto AirIRGenerator::addI64Rotl(ExpressionType arg0, ExpressionType arg1, Expres
         return addShift(Types::I64, RotateLeft64, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addF32Lt(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Lt(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(CompareFloat, Arg::doubleCond(MacroAssembler::DoubleLessThanAndOrdered), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF64ConvertSI32(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64ConvertSI32(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f64();
     append(ConvertInt32ToDouble, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addF64Eq(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Eq(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(CompareDouble, Arg::doubleCond(MacroAssembler::DoubleEqualAndOrdered), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF32Le(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Le(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(CompareFloat, Arg::doubleCond(MacroAssembler::DoubleLessThanOrEqualAndOrdered), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF32Ge(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Ge(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(CompareFloat, Arg::doubleCond(MacroAssembler::DoubleGreaterThanOrEqualAndOrdered), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI32ShrU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32ShrU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addShift(Types::I32, Urshift32, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addF32ConvertUI32(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32ConvertUI32(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f32();
     auto temp = g64();
@@ -5209,137 +5215,137 @@ auto AirIRGenerator::addF32ConvertUI32(ExpressionType arg0, ExpressionType& resu
     return { };
 }
 
-auto AirIRGenerator::addI32ShrS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32ShrS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addShift(Types::I32, Rshift32, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addI32GeU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32GeU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare32, Arg::relCond(MacroAssembler::AboveOrEqual), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF64Ceil(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Ceil(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f64();
     append(CeilDouble, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI32GeS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32GeS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare32, Arg::relCond(MacroAssembler::GreaterThanOrEqual), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI32Shl(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Shl(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addShift(Types::I32, Lshift32, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addF64Floor(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Floor(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f64();
     append(FloorDouble, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI32Xor(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Xor(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Xor32, arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF32Abs(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Abs(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     return addFloatingPointAbs(AbsFloat, arg0, result);
 }
 
-auto AirIRGenerator::addF32Mul(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Mul(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = f32();
     append(MulFloat, arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64Sub(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Sub(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addIntegerSub(Sub64, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addI32ReinterpretF32(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32ReinterpretF32(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(MoveFloatTo32, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI32Add(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Add(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Add32, arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF64Sub(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Sub(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addFloatingPointBinOp(Types::F64, SubDouble, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addI32Or(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Or(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Or32, arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64LtU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64LtU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare64, Arg::relCond(MacroAssembler::Below), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64LtS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64LtS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare64, Arg::relCond(MacroAssembler::LessThan), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF64ConvertSI64(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64ConvertSI64(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f64();
     append(ConvertInt64ToDouble, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI64Xor(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Xor(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g64();
     append(Xor64, arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64GeU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64GeU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare64, Arg::relCond(MacroAssembler::AboveOrEqual), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64Mul(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Mul(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g64();
     append(Mul64, arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF32Sub(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Sub(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = f32();
     if (isValidForm(SubFloat, Arg::Tmp, Arg::Tmp, Arg::Tmp))
@@ -5352,35 +5358,35 @@ auto AirIRGenerator::addF32Sub(ExpressionType arg0, ExpressionType arg1, Express
     return { };
 }
 
-auto AirIRGenerator::addF64PromoteF32(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64PromoteF32(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f64();
     append(ConvertFloatToDouble, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addF64Add(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Add(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = f64();
     append(AddDouble, arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64GeS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64GeS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare64, Arg::relCond(MacroAssembler::GreaterThanOrEqual), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64ExtendUI32(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64ExtendUI32(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = g64();
     append(Move32, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI32Ne(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Ne(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     RELEASE_ASSERT(arg0 && arg1);
@@ -5388,92 +5394,92 @@ auto AirIRGenerator::addI32Ne(ExpressionType arg0, ExpressionType arg1, Expressi
     return { };
 }
 
-auto AirIRGenerator::addF64ReinterpretI64(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64ReinterpretI64(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f64();
     append(Move64ToDouble, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addF32Eq(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Eq(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(CompareFloat, Arg::doubleCond(MacroAssembler::DoubleEqualAndOrdered), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64Eq(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Eq(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare64, Arg::relCond(MacroAssembler::Equal), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF32Floor(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Floor(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f32();
     append(FloorFloat, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addF32ConvertSI32(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32ConvertSI32(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f32();
     append(ConvertInt32ToFloat, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI32Eqz(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Eqz(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Test32, Arg::resCond(MacroAssembler::Zero), arg0, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI64ReinterpretF64(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64ReinterpretF64(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = g64();
     append(MoveDoubleTo64, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI64ShrS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64ShrS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addShift(Types::I64, Rshift64, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addI64ShrU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64ShrU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addShift(Types::I64, Urshift64, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addF64Sqrt(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Sqrt(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f64();
     append(SqrtDouble, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI64Shl(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Shl(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addShift(Types::I64, Lshift64, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addF32Gt(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF32Gt(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(CompareFloat, Arg::doubleCond(MacroAssembler::DoubleGreaterThanAndOrdered), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI32WrapI64(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32WrapI64(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Move32, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI32Rotl(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Rotl(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     if (isARM64()) {
         // ARM64 doesn't have a rotate left.
@@ -5485,40 +5491,40 @@ auto AirIRGenerator::addI32Rotl(ExpressionType arg0, ExpressionType arg1, Expres
         return addShift(Types::I32, RotateLeft32, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addI32Rotr(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Rotr(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     return addShift(Types::I32, RotateRight32, arg0, arg1, result);
 }
 
-auto AirIRGenerator::addI32GtU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32GtU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare32, Arg::relCond(MacroAssembler::Above), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64ExtendSI32(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64ExtendSI32(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = g64();
     append(SignExtend32ToPtr, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI32Extend8S(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Extend8S(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(SignExtend8To32, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI32Extend16S(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32Extend16S(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(SignExtend16To32, arg0, result);
     return { };
 }
 
-auto AirIRGenerator::addI64Extend8S(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Extend8S(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = g64();
     auto temp = g32();
@@ -5528,7 +5534,7 @@ auto AirIRGenerator::addI64Extend8S(ExpressionType arg0, ExpressionType& result)
     return { };
 }
 
-auto AirIRGenerator::addI64Extend16S(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Extend16S(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = g64();
     auto temp = g32();
@@ -5538,7 +5544,7 @@ auto AirIRGenerator::addI64Extend16S(ExpressionType arg0, ExpressionType& result
     return { };
 }
 
-auto AirIRGenerator::addI64Extend32S(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Extend32S(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = g64();
     auto temp = g32();
@@ -5547,14 +5553,14 @@ auto AirIRGenerator::addI64Extend32S(ExpressionType arg0, ExpressionType& result
     return { };
 }
 
-auto AirIRGenerator::addI32GtS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI32GtS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare32, Arg::relCond(MacroAssembler::GreaterThan), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addF64Neg(ExpressionType arg0, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addF64Neg(ExpressionType arg0, ExpressionType& result) -> PartialResult
 {
     result = f64();
     if (isValidForm(NegateDouble, Arg::Tmp, Arg::Tmp))
@@ -5569,21 +5575,21 @@ auto AirIRGenerator::addF64Neg(ExpressionType arg0, ExpressionType& result) -> P
     return { };
 }
 
-auto AirIRGenerator::addI64LeU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64LeU(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare64, Arg::relCond(MacroAssembler::BelowOrEqual), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64LeS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64LeS(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g32();
     append(Compare64, Arg::relCond(MacroAssembler::LessThanOrEqual), arg0, arg1, result);
     return { };
 }
 
-auto AirIRGenerator::addI64Add(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addI64Add(ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
 {
     result = g64();
     append(Add64, arg0, arg1, result);
@@ -5591,7 +5597,7 @@ auto AirIRGenerator::addI64Add(ExpressionType arg0, ExpressionType arg1, Express
 }
 
 template <size_t inlineCapacity>
-PatchpointExceptionHandle AirIRGenerator::preparePatchpointForExceptions(B3::PatchpointValue* patch, Vector<ConstrainedTmp, inlineCapacity>& args)
+PatchpointExceptionHandle AirIRGenerator64::preparePatchpointForExceptions(B3::PatchpointValue* patch, Vector<ConstrainedTmp, inlineCapacity>& args)
 {
     ++m_callSiteIndex;
     if (!m_tryCatchDepth)

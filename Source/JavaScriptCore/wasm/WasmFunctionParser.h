@@ -59,13 +59,10 @@ void splitStack(BlockSignature originalSignature, EnclosingStack& enclosingStack
     enclosingStack.shrink(offset);
 }
 
-template<typename Context>
-class FunctionParser : public Parser<void> {
-public:
-    struct ControlEntry;
-
-    using ControlType = typename Context::ControlType;
-    using ExpressionType = typename Context::ExpressionType;
+template<typename Control, typename Expression>
+struct FunctionParserTypes {
+    using ControlType = Control;
+    using ExpressionType = Expression;
 
     class TypedExpression {
     public:
@@ -91,9 +88,6 @@ public:
         Type m_type;
         ExpressionType m_value;
     };
-
-    using ControlStack = Vector<ControlEntry, 16>;
-    using ResultList = Vector<ExpressionType, 8>;
     using Stack = Vector<TypedExpression, 16, UnsafeVectorOverflow>;
 
     struct ControlEntry {
@@ -101,6 +95,22 @@ public:
         Stack elseBlockStack;
         ControlType controlData;
     };
+    using ControlStack = Vector<ControlEntry, 16>;
+
+    using ResultList = Vector<ExpressionType, 8>;
+};
+
+template<typename Context>
+class FunctionParser : public Parser<void>,
+                       public FunctionParserTypes<typename Context::ControlType, typename Context::ExpressionType> {
+public:
+    using ControlType = typename FunctionParser::ControlType;
+    using ControlEntry = typename FunctionParser::ControlEntry;
+    using ControlStack = typename FunctionParser::ControlStack;
+    using ExpressionType = typename FunctionParser::ExpressionType;
+    using TypedExpression = typename FunctionParser::TypedExpression;
+    using Stack = typename FunctionParser::Stack;
+    using ResultList = typename FunctionParser::ResultList;
 
     FunctionParser(Context&, const uint8_t* functionStart, size_t functionLength, const TypeDefinition&, const ModuleInformation&);
 
