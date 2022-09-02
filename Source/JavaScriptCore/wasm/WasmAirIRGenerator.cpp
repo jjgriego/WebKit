@@ -83,53 +83,11 @@ struct ConstrainedTmp {
     B3::ValueRep rep;
 };
 
-class TypedTmp {
-public:
-    constexpr TypedTmp()
-        : m_tmp()
-        , m_type(Types::Void)
-    {
-    }
-
-    TypedTmp(Tmp tmp, Type type)
-        : m_tmp(tmp)
-        , m_type(type)
-    { }
-
-    TypedTmp(const TypedTmp&) = default;
-    TypedTmp(TypedTmp&&) = default;
-    TypedTmp& operator=(TypedTmp&&) = default;
-    TypedTmp& operator=(const TypedTmp&) = default;
-
-    bool operator==(const TypedTmp& other) const
-    {
-        return m_tmp == other.m_tmp && m_type == other.m_type;
-    }
-    bool operator!=(const TypedTmp& other) const
-    {
-        return !(*this == other);
-    }
-
-    explicit operator bool() const { return !!tmp(); }
-
-    operator Tmp() const { return tmp(); }
-    operator Arg() const { return Arg(tmp()); }
-    Tmp tmp() const { return m_tmp; }
-    Type type() const { return m_type; }
-
-    void dump(PrintStream& out) const
-    {
-        out.print("(", m_tmp, ", ", m_type.kind, ", ", m_type.index, ")");
-    }
-
-private:
-
-    Tmp m_tmp;
-    Type m_type;
-};
-
 template<typename Derived, typename ExpressionType>
 struct AirIRGeneratorBase {
+    ////////////////////////////////////////////////////////////////////////////////
+    // Related types
+
     using ResultList = Vector<ExpressionType, 8>;
 
     struct ControlData {
@@ -232,7 +190,7 @@ struct AirIRGeneratorBase {
             return returnType->as<FunctionSignature>()->returnType(i);
         }
 
-        void convertTryToCatch(unsigned tryEndCallSiteIndex, TypedTmp exception)
+        void convertTryToCatch(unsigned tryEndCallSiteIndex, ExpressionType exception)
         {
             ASSERT(blockType() == BlockType::Try);
             controlBlockType = BlockType::Catch;
@@ -241,7 +199,7 @@ struct AirIRGeneratorBase {
             m_exception = exception;
         }
 
-        void convertTryToCatchAll(unsigned tryEndCallSiteIndex, TypedTmp exception)
+        void convertTryToCatchAll(unsigned tryEndCallSiteIndex, ExpressionType exception)
         {
             ASSERT(blockType() == BlockType::Try);
             controlBlockType = BlockType::Catch;
@@ -274,7 +232,7 @@ struct AirIRGeneratorBase {
             return m_catchKind;
         }
 
-        TypedTmp exception() const
+        ExpressionType exception() const
         {
             ASSERT(controlBlockType == BlockType::Catch);
             return m_exception;
@@ -291,7 +249,7 @@ struct AirIRGeneratorBase {
         unsigned m_tryEnd;
         unsigned m_tryCatchDepth;
         CatchKind m_catchKind;
-        TypedTmp m_exception;
+        ExpressionType m_exception;
     };
 
     using ControlType = ControlData;
@@ -309,10 +267,372 @@ struct AirIRGeneratorBase {
     using PartialResult = Expected<void, ErrorType>;
 
     static_assert(std::is_same_v<ResultList, typename ParserTypes::ResultList>);
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // Get concrete instance
+
+    Derived& self()
+    {
+        return *static_cast<Derived*>(this);
+    }
+
+    const Derived& self() const
+    {
+        return *static_cast<const Derived*>(this);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // Code generation utilities
+
+protected:
+    void emitEntryTierUpCheck();
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // Manipulating air code
+
+protected:
+    ALWAYS_INLINE void validateInst(Inst& inst)
+    {
+        if (ASSERT_ENABLED) {
+            if (!inst.isValidForm()) {
+                dataLogLn("Inst validation failed:");
+                dataLogLn(inst, "\n");
+                if (inst.origin)
+                    dataLogLn(deepDump(inst.origin), "\n");
+                CRASH();
+            }
+        }
+    }
+
+    template<typename... Arguments>
+    void append(BasicBlock* block, Kind kind, Arguments&&... arguments)
+    {
+        // FIXME: Find a way to use origin here.
+        auto& inst = block->append(kind, nullptr, Derived::extractArg(arguments)...);
+        validateInst(inst);
+    }
+
+    template<typename... Arguments>
+    void append(Kind kind, Arguments&&... arguments)
+    {
+        append(m_currentBlock, kind, std::forward<Arguments>(arguments)...);
+    }
+
+    template<typename... Arguments>
+    void appendEffectful(B3::Air::Opcode op, Arguments&&... arguments)
+    {
+        Kind kind = op;
+        kind.effects = true;
+        append(m_currentBlock, kind, std::forward<Arguments>(arguments)...);
+    }
+
+    template<typename... Arguments>
+    void appendEffectful(BasicBlock* block, B3::Air::Opcode op, Arguments&&... arguments)
+    {
+        Kind kind = op;
+        kind.effects = true;
+        append(block, kind, std::forward<Arguments>(arguments)...);
+    }
+
+    B3::PatchpointValue* addPatchpoint(B3::Type type)
+    {
+        auto* result = m_proc.add<B3::PatchpointValue>(type, B3::Origin());
+        if (UNLIKELY(shouldDumpIRAtEachPhase(B3::AirMode)))
+            m_patchpoints.add(result);
+        return result;
+    }
+
+public:
+    const Bag<B3::PatchpointValue*>& patchpoints() const
+    {
+        return m_patchpoints;
+    }
+
+    StackMaps&& takeStackmaps()
+    {
+        return WTFMove(m_stackmaps);
+    }
+
+    void addStackMap(unsigned callSiteIndex, StackMap&& stackmap)
+    {
+        m_stackmaps.add(CallSiteIndex(callSiteIndex), WTFMove(stackmap));
+    }
+
+    Vector<UnlinkedHandlerInfo>&& takeExceptionHandlers()
+    {
+        return WTFMove(m_exceptionHandlers);
+    }
+
+protected:
+    Tmp newTmp(B3::Bank bank)
+    {
+        return m_code.newTmp(bank);
+    }
+
+    ResultList tmpsForSignature(BlockSignature signature)
+    {
+        ResultList result(signature->as<FunctionSignature>()->returnCount());
+        for (unsigned i = 0; i < signature->as<FunctionSignature>()->returnCount(); ++i)
+            result[i] = self().tmpForType(signature->as<FunctionSignature>()->returnType(i));
+        return result;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // Constructors
+
+    AirIRGeneratorBase(const ModuleInformation& info, B3::Procedure& procedure, InternalFunction* compilation, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, MemoryMode mode, unsigned functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp, const TypeDefinition& originalSignature, unsigned& osrEntryScratchBufferSize)
+        : m_info(info)
+        , m_mode(mode)
+        , m_functionIndex(functionIndex)
+        , m_tierUp(tierUp)
+        , m_proc(procedure)
+        , m_code(m_proc.code())
+        , m_unlinkedWasmToWasmCalls(unlinkedWasmToWasmCalls)
+        , m_hasExceptionHandlers(hasExceptionHandlers)
+        , m_numImportFunctions(info.importFunctionCount())
+        , m_osrEntryScratchBufferSize(osrEntryScratchBufferSize)
+    {
+        m_currentBlock = m_code.addBlock();
+        m_rootBlock = m_currentBlock;
+
+        // FIXME we don't really need to pin registers here if there's no memory. It makes wasm -> wasm thunks simpler for now. https://bugs.webkit.org/show_bug.cgi?id=166623
+        const PinnedRegisterInfo& pinnedRegs = PinnedRegisterInfo::get();
+
+        m_memoryBaseGPR = pinnedRegs.baseMemoryPointer;
+        m_code.pinRegister(m_memoryBaseGPR);
+
+        m_wasmContextInstanceGPR = pinnedRegs.wasmContextInstancePointer;
+        if (!Context::useFastTLS())
+            m_code.pinRegister(m_wasmContextInstanceGPR);
+
+        if (mode == MemoryMode::BoundsChecking) {
+            m_boundsCheckingSizeGPR = pinnedRegs.boundsCheckingSizeRegister;
+            m_code.pinRegister(m_boundsCheckingSizeGPR);
+        }
+
+        m_prologueWasmContextGPR = Context::useFastTLS() ? wasmCallingConvention().prologueScratchGPRs[1] : m_wasmContextInstanceGPR;
+
+        m_prologueGenerator = createSharedTask<B3::Air::PrologueGeneratorFunction>([=, this] (CCallHelpers& jit, B3::Air::Code& code) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            code.emitDefaultPrologue(jit);
+
+            {
+                GPRReg calleeGPR = wasmCallingConvention().prologueScratchGPRs[0];
+                auto moveLocation = jit.moveWithPatch(MacroAssembler::TrustedImmPtr(nullptr), calleeGPR);
+                jit.addLinkTask([compilation, moveLocation] (LinkBuffer& linkBuffer) {
+                    compilation->calleeMoveLocations.append(linkBuffer.locationOf<WasmEntryPtrTag>(moveLocation));
+                });
+                jit.emitPutToCallFrameHeader(calleeGPR, CallFrameSlot::callee);
+                jit.emitPutToCallFrameHeader(nullptr, CallFrameSlot::codeBlock);
+            }
+
+            {
+                const Checked<int32_t> wasmFrameSize = m_code.frameSize();
+                const unsigned minimumParentCheckSize = WTF::roundUpToMultipleOf(stackAlignmentBytes(), 1024);
+                const unsigned extraFrameSize = WTF::roundUpToMultipleOf(stackAlignmentBytes(), std::max<uint32_t>(
+                    // This allows us to elide stack checks for functions that are terminal nodes in the call
+                    // tree, (e.g they don't make any calls) and have a small enough frame size. This works by
+                    // having any such terminal node have its parent caller include some extra size in its
+                    // own check for it. The goal here is twofold:
+                    // 1. Emit less code.
+                    // 2. Try to speed things up by skipping stack checks.
+                    minimumParentCheckSize,
+                    // This allows us to elide stack checks in the Wasm -> Embedder call IC stub. Since these will
+                    // spill all arguments to the stack, we ensure that a stack check here covers the
+                    // stack that such a stub would use.
+                    Checked<uint32_t>(m_maxNumJSCallArguments) * sizeof(Register) + jsCallingConvention().headerSizeInBytes
+                ));
+                const int32_t checkSize = m_makesCalls ? (wasmFrameSize + extraFrameSize).value() : wasmFrameSize.value();
+                bool needUnderflowCheck = static_cast<unsigned>(checkSize) > Options::reservedZoneSize();
+                bool needsOverflowCheck = m_makesCalls || wasmFrameSize >= static_cast<int32_t>(minimumParentCheckSize) || needUnderflowCheck;
+                bool mayHaveExceptionHandlers = !m_hasExceptionHandlers || m_hasExceptionHandlers.value();
+
+                if ((needsOverflowCheck || m_usesInstanceValue || mayHaveExceptionHandlers) && Context::useFastTLS())
+                    jit.loadWasmContextInstance(m_prologueWasmContextGPR);
+
+                // We need to setup JSWebAssemblyInstance in |this| slot first.
+                if (mayHaveExceptionHandlers) {
+                    GPRReg scratch = wasmCallingConvention().prologueScratchGPRs[0];
+                    jit.loadPtr(CCallHelpers::Address(m_prologueWasmContextGPR, Instance::offsetOfOwner()), scratch);
+                    jit.store64(scratch, CCallHelpers::Address(GPRInfo::callFrameRegister, CallFrameSlot::thisArgument * sizeof(Register)));
+                }
+
+                // This allows leaf functions to not do stack checks if their frame size is within
+                // certain limits since their caller would have already done the check.
+                if (needsOverflowCheck) {
+                    if (mayHaveExceptionHandlers)
+                        jit.store32(CCallHelpers::TrustedImm32(PatchpointExceptionHandle::s_invalidCallSiteIndex), CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+
+                    GPRReg scratch = wasmCallingConvention().prologueScratchGPRs[0];
+                    jit.addPtr(CCallHelpers::TrustedImm32(-checkSize), GPRInfo::callFrameRegister, scratch);
+                    MacroAssembler::JumpList overflow;
+                    if (UNLIKELY(needUnderflowCheck))
+                        overflow.append(jit.branchPtr(CCallHelpers::Above, scratch, GPRInfo::callFrameRegister));
+                    overflow.append(jit.branchPtr(CCallHelpers::Below, scratch, CCallHelpers::Address(m_prologueWasmContextGPR, Instance::offsetOfCachedStackLimit())));
+                    jit.addLinkTask([overflow] (LinkBuffer& linkBuffer) {
+                        linkBuffer.link(overflow, CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(throwStackOverflowFromWasmThunkGenerator).code()));
+                    });
+                }
+
+            }
+        });
+
+        if (Context::useFastTLS()) {
+            m_instanceValue = self().gPtr();
+            // FIXME: Would be nice to only do this if we use instance value.
+            append(Move, Tmp(m_prologueWasmContextGPR), m_instanceValue);
+        } else
+            m_instanceValue = { Tmp(m_prologueWasmContextGPR), Types::I64 };
+
+        append(EntrySwitch);
+        m_mainEntrypointStart = m_code.addBlock();
+        m_currentBlock = m_mainEntrypointStart;
+
+        const TypeDefinition& signature = originalSignature.expand();
+        ASSERT(!m_locals.size());
+        m_locals.grow(signature.as<FunctionSignature>()->argumentCount());
+        for (unsigned i = 0; i < signature.as<FunctionSignature>()->argumentCount(); ++i) {
+            Type type = signature.as<FunctionSignature>()->argumentType(i);
+            m_locals[i] = self().tmpForType(type);
+        }
+
+        CallInformation wasmCallInfo = wasmCallingConvention().callInformationFor(signature, CallRole::Callee);
+
+        for (unsigned i = 0; i < wasmCallInfo.params.size(); ++i) {
+            B3::ValueRep location = wasmCallInfo.params[i];
+            Arg arg = location.isReg() ? Arg(Tmp(location.reg())) : Arg::addr(Tmp(GPRInfo::callFrameRegister), location.offsetFromFP());
+            switch (signature.as<FunctionSignature>()->argumentType(i).kind) {
+            case TypeKind::I32:
+                append(Move32, arg, m_locals[i]);
+                break;
+            case TypeKind::I64:
+            case TypeKind::Externref:
+            case TypeKind::Funcref:
+            case TypeKind::Ref:
+            case TypeKind::RefNull:
+                append(Move, arg, m_locals[i]);
+                break;
+            case TypeKind::F32:
+                append(MoveFloat, arg, m_locals[i]);
+                break;
+            case TypeKind::F64:
+                append(MoveDouble, arg, m_locals[i]);
+                break;
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        }
+
+        emitEntryTierUpCheck();
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // data members
+
+    FunctionParser<Derived>* m_parser { nullptr };
+    const ModuleInformation& m_info;
+    const MemoryMode m_mode { MemoryMode::BoundsChecking };
+    const unsigned m_functionIndex { UINT_MAX };
+    TierUpCount* m_tierUp { nullptr };
+
+    B3::Procedure& m_proc;
+    Code& m_code;
+    Vector<uint32_t> m_outerLoops;
+    BasicBlock* m_currentBlock { nullptr };
+    BasicBlock* m_rootBlock { nullptr };
+    BasicBlock* m_mainEntrypointStart { nullptr };
+    Vector<ExpressionType> m_locals;
+    Vector<UnlinkedWasmToWasmCall>& m_unlinkedWasmToWasmCalls; // List each call site and the function index whose address it should be patched with.
+
+    GPRReg m_memoryBaseGPR { InvalidGPRReg };
+    GPRReg m_boundsCheckingSizeGPR { InvalidGPRReg };
+    GPRReg m_wasmContextInstanceGPR { InvalidGPRReg };
+    GPRReg m_prologueWasmContextGPR { InvalidGPRReg };
+    bool m_makesCalls { false };
+    std::optional<bool> m_hasExceptionHandlers;
+
+    HashMap<BlockSignature, B3::Type> m_tupleMap;
+    // This is only filled if we are dumping IR.
+    Bag<B3::PatchpointValue*> m_patchpoints;
+
+    ExpressionType m_instanceValue; // Always use the accessor below to ensure the instance value is materialized when used.
+    bool m_usesInstanceValue { false };
+    ExpressionType instanceValue()
+    {
+        m_usesInstanceValue = true;
+        return m_instanceValue;
+    }
+
+    uint32_t m_maxNumJSCallArguments { 0 };
+    unsigned m_numImportFunctions;
+
+    B3::PatchpointSpecial* m_patchpointSpecial { nullptr };
+
+    RefPtr<B3::Air::PrologueGenerator> m_prologueGenerator;
+
+    Vector<BasicBlock*> m_catchEntrypoints;
+
+    Checked<unsigned> m_tryCatchDepth { 0 };
+    Checked<unsigned> m_callSiteIndex { 0 };
+    StackMaps m_stackmaps;
+    Vector<UnlinkedHandlerInfo> m_exceptionHandlers;
+
+    Vector<std::pair<BasicBlock*, Vector<ExpressionType>>> m_loopEntryVariableData;
+    unsigned& m_osrEntryScratchBufferSize;
+};
+
+////////////////////////////////////////////////////////////////////////////////
+// 64-bit AirIRGenerator
+////////////////////////////////////////////////////////////////////////////////
+
+class TypedTmp {
+public:
+    constexpr TypedTmp()
+        : m_tmp()
+        , m_type(Types::Void)
+    {
+    }
+
+    TypedTmp(Tmp tmp, Type type)
+        : m_tmp(tmp)
+        , m_type(type)
+    {
+    }
+
+    TypedTmp(const TypedTmp&) = default;
+    TypedTmp(TypedTmp&&) = default;
+    TypedTmp& operator=(TypedTmp&&) = default;
+    TypedTmp& operator=(const TypedTmp&) = default;
+
+    bool operator==(const TypedTmp& other) const
+    {
+        return m_tmp == other.m_tmp && m_type == other.m_type;
+    }
+    bool operator!=(const TypedTmp& other) const
+    {
+        return !(*this == other);
+    }
+
+    explicit operator bool() const { return !!tmp(); }
+
+    operator Tmp() const { return tmp(); }
+    operator Arg() const { return Arg(tmp()); }
+    Tmp tmp() const { return m_tmp; }
+    Type type() const { return m_type; }
+
+    void dump(PrintStream& out) const
+    {
+        out.print("(", m_tmp, ", ", m_type.kind, ", ", m_type.index, ")");
+    }
+
+private:
+    Tmp m_tmp;
+    Type m_type;
 };
 
 class AirIRGenerator64 : public AirIRGeneratorBase<AirIRGenerator64, TypedTmp> {
 public:
+    friend AirIRGeneratorBase<AirIRGenerator64, TypedTmp>;
     using ExpressionType = TypedTmp;
 
     static ExpressionType emptyExpression() { return { }; };
@@ -448,82 +768,11 @@ public:
     template <size_t inlineCapacity>
     PatchpointExceptionHandle preparePatchpointForExceptions(B3::PatchpointValue*, Vector<ConstrainedTmp, inlineCapacity>& args);
 
-    const Bag<B3::PatchpointValue*>& patchpoints() const
-    {
-        return m_patchpoints;
-    }
-
-    void addStackMap(unsigned callSiteIndex, StackMap&& stackmap)
-    {
-        m_stackmaps.add(CallSiteIndex(callSiteIndex), WTFMove(stackmap));
-    }
-
-    StackMaps&& takeStackmaps()
-    {
-        return WTFMove(m_stackmaps);
-    }
-
-    Vector<UnlinkedHandlerInfo>&& takeExceptionHandlers()
-    {
-        return WTFMove(m_exceptionHandlers);
-    }
-
 private:
     B3::Type toB3ResultType(BlockSignature returnType);
-    ALWAYS_INLINE void validateInst(Inst& inst)
-    {
-        if (ASSERT_ENABLED) {
-            if (!inst.isValidForm()) {
-                dataLogLn("Inst validation failed:");
-                dataLogLn(inst, "\n");
-                if (inst.origin)
-                    dataLogLn(deepDump(inst.origin), "\n");
-                CRASH();
-            }
-        }
-    }
-
-    static Arg extractArg(const TypedTmp& tmp) { return tmp.tmp(); }
-    static Arg extractArg(const Tmp& tmp) { return Arg(tmp); }
-    static Arg extractArg(const Arg& arg) { return arg; }
-
-    template<typename... Arguments>
-    void append(BasicBlock* block, Kind kind, Arguments&&... arguments)
-    {
-        // FIXME: Find a way to use origin here.
-        auto& inst = block->append(kind, nullptr, extractArg(arguments)...);
-        validateInst(inst);
-    }
-
-    template<typename... Arguments>
-    void append(Kind kind, Arguments&&... arguments)
-    {
-        append(m_currentBlock, kind, std::forward<Arguments>(arguments)...);
-    }
-
-    template<typename... Arguments>
-    void appendEffectful(B3::Air::Opcode op, Arguments&&... arguments)
-    {
-        Kind kind = op;
-        kind.effects = true;
-        append(m_currentBlock, kind, std::forward<Arguments>(arguments)...);
-    }
-
-    template<typename... Arguments>
-    void appendEffectful(BasicBlock* block, B3::Air::Opcode op, Arguments&&... arguments)
-    {
-        Kind kind = op;
-        kind.effects = true;
-        append(block, kind, std::forward<Arguments>(arguments)...);
-    }
-
-    Tmp newTmp(B3::Bank bank)
-    {
-        return m_code.newTmp(bank);
-    }
-
     TypedTmp g32() { return { newTmp(B3::GP), Types::I32 }; }
     TypedTmp g64() { return { newTmp(B3::GP), Types::I64 }; }
+    decltype(auto) gPtr() { return g64(); }
     TypedTmp gExternref() { return { newTmp(B3::GP), Types::Externref }; }
     TypedTmp gFuncref() { return { newTmp(B3::GP), Types::Funcref }; }
     TypedTmp gRef(Type type) { return { newTmp(B3::GP), type }; }
@@ -555,21 +804,9 @@ private:
         }
     }
 
-    ResultList tmpsForSignature(BlockSignature signature)
-    {
-        ResultList result(signature->as<FunctionSignature>()->returnCount());
-        for (unsigned i = 0; i < signature->as<FunctionSignature>()->returnCount(); ++i)
-            result[i] = tmpForType(signature->as<FunctionSignature>()->returnType(i));
-        return result;
-    }
-
-    B3::PatchpointValue* addPatchpoint(B3::Type type)
-    {
-        auto* result = m_proc.add<B3::PatchpointValue>(type, B3::Origin());
-        if (UNLIKELY(shouldDumpIRAtEachPhase(B3::AirMode)))
-            m_patchpoints.add(result);
-        return result;
-    }
+    static Arg extractArg(const TypedTmp& tmp) { return tmp.tmp(); }
+    static Arg extractArg(const Tmp& tmp) { return Arg(tmp); }
+    static Arg extractArg(const Arg& arg) { return arg; }
 
     template <typename ...Args>
     void emitPatchpoint(B3::PatchpointValue* patch, Tmp result, Args... theArgs)
@@ -807,10 +1044,9 @@ private:
 
     void emitThrowException(CCallHelpers&, ExceptionType);
 
-    void emitEntryTierUpCheck();
     void emitLoopTierUpCheck(uint32_t loopIndex, const Vector<TypedTmp>& liveValues);
 
-    void emitWriteBarrierForJSWrapper();
+        void emitWriteBarrierForJSWrapper();
     ExpressionType emitCheckAndPreparePointer(ExpressionType pointer, uint32_t offset, uint32_t sizeOfOp);
     ExpressionType emitLoadOp(LoadOpType, ExpressionType pointer, uint32_t offset);
     void emitStoreOp(StoreOpType, ExpressionType pointer, ExpressionType value, uint32_t offset);
@@ -865,55 +1101,6 @@ private:
 #endif
     }
 
-    FunctionParser<AirIRGenerator64>* m_parser { nullptr };
-    const ModuleInformation& m_info;
-    const MemoryMode m_mode { MemoryMode::BoundsChecking };
-    const unsigned m_functionIndex { UINT_MAX };
-    TierUpCount* m_tierUp { nullptr };
-
-    B3::Procedure& m_proc;
-    Code& m_code;
-    Vector<uint32_t> m_outerLoops;
-    BasicBlock* m_currentBlock { nullptr };
-    BasicBlock* m_rootBlock { nullptr };
-    BasicBlock* m_mainEntrypointStart { nullptr };
-    Vector<TypedTmp> m_locals;
-    Vector<UnlinkedWasmToWasmCall>& m_unlinkedWasmToWasmCalls; // List each call site and the function index whose address it should be patched with.
-    GPRReg m_memoryBaseGPR { InvalidGPRReg };
-    GPRReg m_boundsCheckingSizeGPR { InvalidGPRReg };
-    GPRReg m_wasmContextInstanceGPR { InvalidGPRReg };
-    GPRReg m_prologueWasmContextGPR { InvalidGPRReg };
-    bool m_makesCalls { false };
-    std::optional<bool> m_hasExceptionHandlers;
-
-    HashMap<BlockSignature, B3::Type> m_tupleMap;
-    // This is only filled if we are dumping IR.
-    Bag<B3::PatchpointValue*> m_patchpoints;
-
-    TypedTmp m_instanceValue; // Always use the accessor below to ensure the instance value is materialized when used.
-    bool m_usesInstanceValue { false };
-    TypedTmp instanceValue()
-    {
-        m_usesInstanceValue = true;
-        return m_instanceValue;
-    }
-
-    uint32_t m_maxNumJSCallArguments { 0 };
-    unsigned m_numImportFunctions;
-
-    B3::PatchpointSpecial* m_patchpointSpecial { nullptr };
-
-    RefPtr<B3::Air::PrologueGenerator> m_prologueGenerator;
-
-    Vector<BasicBlock*> m_catchEntrypoints;
-
-    Checked<unsigned> m_tryCatchDepth { 0 };
-    Checked<unsigned> m_callSiteIndex { 0 };
-    StackMaps m_stackmaps;
-    Vector<UnlinkedHandlerInfo> m_exceptionHandlers;
-
-    Vector<std::pair<BasicBlock*, Vector<TypedTmp>>> m_loopEntryVariableData;
-    unsigned& m_osrEntryScratchBufferSize;
 };
 
 // Memory accesses in WebAssembly have unsigned 32-bit offsets, whereas they have signed 32-bit offsets in B3.
@@ -960,149 +1147,8 @@ void AirIRGenerator64::restoreWasmContextInstance(BasicBlock* block, TypedTmp in
 }
 
 AirIRGenerator64::AirIRGenerator64(const ModuleInformation& info, B3::Procedure& procedure, InternalFunction* compilation, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, MemoryMode mode, unsigned functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp, const TypeDefinition& originalSignature, unsigned& osrEntryScratchBufferSize)
-    : m_info(info)
-    , m_mode(mode)
-    , m_functionIndex(functionIndex)
-    , m_tierUp(tierUp)
-    , m_proc(procedure)
-    , m_code(m_proc.code())
-    , m_unlinkedWasmToWasmCalls(unlinkedWasmToWasmCalls)
-    , m_hasExceptionHandlers(hasExceptionHandlers)
-    , m_numImportFunctions(info.importFunctionCount())
-    , m_osrEntryScratchBufferSize(osrEntryScratchBufferSize)
+    : AirIRGeneratorBase(info, procedure, compilation, unlinkedWasmToWasmCalls, mode, functionIndex, hasExceptionHandlers, tierUp, originalSignature, osrEntryScratchBufferSize)
 {
-    m_currentBlock = m_code.addBlock();
-    m_rootBlock = m_currentBlock;
-
-    // FIXME we don't really need to pin registers here if there's no memory. It makes wasm -> wasm thunks simpler for now. https://bugs.webkit.org/show_bug.cgi?id=166623
-    const PinnedRegisterInfo& pinnedRegs = PinnedRegisterInfo::get();
-
-    m_memoryBaseGPR = pinnedRegs.baseMemoryPointer;
-    m_code.pinRegister(m_memoryBaseGPR);
-
-    m_wasmContextInstanceGPR = pinnedRegs.wasmContextInstancePointer;
-    if (!Context::useFastTLS())
-        m_code.pinRegister(m_wasmContextInstanceGPR);
-
-    if (mode == MemoryMode::BoundsChecking) {
-        m_boundsCheckingSizeGPR = pinnedRegs.boundsCheckingSizeRegister;
-        m_code.pinRegister(m_boundsCheckingSizeGPR);
-    }
-
-    m_prologueWasmContextGPR = Context::useFastTLS() ? wasmCallingConvention().prologueScratchGPRs[1] : m_wasmContextInstanceGPR;
-
-    m_prologueGenerator = createSharedTask<B3::Air::PrologueGeneratorFunction>([=, this] (CCallHelpers& jit, B3::Air::Code& code) {
-        AllowMacroScratchRegisterUsage allowScratch(jit);
-        code.emitDefaultPrologue(jit);
-
-        {
-            GPRReg calleeGPR = wasmCallingConvention().prologueScratchGPRs[0];
-            auto moveLocation = jit.moveWithPatch(MacroAssembler::TrustedImmPtr(nullptr), calleeGPR);
-            jit.addLinkTask([compilation, moveLocation] (LinkBuffer& linkBuffer) {
-                compilation->calleeMoveLocations.append(linkBuffer.locationOf<WasmEntryPtrTag>(moveLocation));
-            });
-            jit.emitPutToCallFrameHeader(calleeGPR, CallFrameSlot::callee);
-            jit.emitPutToCallFrameHeader(nullptr, CallFrameSlot::codeBlock);
-        }
-
-        {
-            const Checked<int32_t> wasmFrameSize = m_code.frameSize();
-            const unsigned minimumParentCheckSize = WTF::roundUpToMultipleOf(stackAlignmentBytes(), 1024);
-            const unsigned extraFrameSize = WTF::roundUpToMultipleOf(stackAlignmentBytes(), std::max<uint32_t>(
-                // This allows us to elide stack checks for functions that are terminal nodes in the call
-                // tree, (e.g they don't make any calls) and have a small enough frame size. This works by
-                // having any such terminal node have its parent caller include some extra size in its
-                // own check for it. The goal here is twofold:
-                // 1. Emit less code.
-                // 2. Try to speed things up by skipping stack checks.
-                minimumParentCheckSize,
-                // This allows us to elide stack checks in the Wasm -> Embedder call IC stub. Since these will
-                // spill all arguments to the stack, we ensure that a stack check here covers the
-                // stack that such a stub would use.
-                Checked<uint32_t>(m_maxNumJSCallArguments) * sizeof(Register) + jsCallingConvention().headerSizeInBytes
-            ));
-            const int32_t checkSize = m_makesCalls ? (wasmFrameSize + extraFrameSize).value() : wasmFrameSize.value();
-            bool needUnderflowCheck = static_cast<unsigned>(checkSize) > Options::reservedZoneSize();
-            bool needsOverflowCheck = m_makesCalls || wasmFrameSize >= static_cast<int32_t>(minimumParentCheckSize) || needUnderflowCheck;
-            bool mayHaveExceptionHandlers = !m_hasExceptionHandlers || m_hasExceptionHandlers.value();
-
-            if ((needsOverflowCheck || m_usesInstanceValue || mayHaveExceptionHandlers) && Context::useFastTLS())
-                jit.loadWasmContextInstance(m_prologueWasmContextGPR);
-
-            // We need to setup JSWebAssemblyInstance in |this| slot first.
-            if (mayHaveExceptionHandlers) {
-                GPRReg scratch = wasmCallingConvention().prologueScratchGPRs[0];
-                jit.loadPtr(CCallHelpers::Address(m_prologueWasmContextGPR, Instance::offsetOfOwner()), scratch);
-                jit.store64(scratch, CCallHelpers::Address(GPRInfo::callFrameRegister, CallFrameSlot::thisArgument * sizeof(Register)));
-            }
-
-            // This allows leaf functions to not do stack checks if their frame size is within
-            // certain limits since their caller would have already done the check.
-            if (needsOverflowCheck) {
-                if (mayHaveExceptionHandlers)
-                    jit.store32(CCallHelpers::TrustedImm32(PatchpointExceptionHandle::s_invalidCallSiteIndex), CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
-
-                GPRReg scratch = wasmCallingConvention().prologueScratchGPRs[0];
-                jit.addPtr(CCallHelpers::TrustedImm32(-checkSize), GPRInfo::callFrameRegister, scratch);
-                MacroAssembler::JumpList overflow;
-                if (UNLIKELY(needUnderflowCheck))
-                    overflow.append(jit.branchPtr(CCallHelpers::Above, scratch, GPRInfo::callFrameRegister));
-                overflow.append(jit.branchPtr(CCallHelpers::Below, scratch, CCallHelpers::Address(m_prologueWasmContextGPR, Instance::offsetOfCachedStackLimit())));
-                jit.addLinkTask([overflow] (LinkBuffer& linkBuffer) {
-                    linkBuffer.link(overflow, CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(throwStackOverflowFromWasmThunkGenerator).code()));
-                });
-            }
-
-        }
-    });
-
-    if (Context::useFastTLS()) {
-        m_instanceValue = g64();
-        // FIXME: Would be nice to only do this if we use instance value.
-        append(Move, Tmp(m_prologueWasmContextGPR), m_instanceValue);
-    } else
-        m_instanceValue = { Tmp(m_prologueWasmContextGPR), Types::I64 };
-
-    append(EntrySwitch);
-    m_mainEntrypointStart = m_code.addBlock();
-    m_currentBlock = m_mainEntrypointStart;
-
-    const TypeDefinition& signature = originalSignature.expand();
-    ASSERT(!m_locals.size());
-    m_locals.grow(signature.as<FunctionSignature>()->argumentCount());
-    for (unsigned i = 0; i < signature.as<FunctionSignature>()->argumentCount(); ++i) {
-        Type type = signature.as<FunctionSignature>()->argumentType(i);
-        m_locals[i] = tmpForType(type);
-    }
-
-    CallInformation wasmCallInfo = wasmCallingConvention().callInformationFor(signature, CallRole::Callee);
-
-    for (unsigned i = 0; i < wasmCallInfo.params.size(); ++i) {
-        B3::ValueRep location = wasmCallInfo.params[i];
-        Arg arg = location.isReg() ? Arg(Tmp(location.reg())) : Arg::addr(Tmp(GPRInfo::callFrameRegister), location.offsetFromFP());
-        switch (signature.as<FunctionSignature>()->argumentType(i).kind) {
-        case TypeKind::I32:
-            append(Move32, arg, m_locals[i]);
-            break;
-        case TypeKind::I64:
-        case TypeKind::Externref:
-        case TypeKind::Funcref:
-        case TypeKind::Ref:
-        case TypeKind::RefNull:
-            append(Move, arg, m_locals[i]);
-            break;
-        case TypeKind::F32:
-            append(MoveFloat, arg, m_locals[i]);
-            break;
-        case TypeKind::F64:
-            append(MoveDouble, arg, m_locals[i]);
-            break;
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-    }
-
-    emitEntryTierUpCheck();
 }
 
 void AirIRGenerator64::finalizeEntrypoints()
@@ -3099,12 +3145,13 @@ auto AirIRGenerator64::addSelect(ExpressionType condition, ExpressionType nonZer
     return { };
 }
 
-void AirIRGenerator64::emitEntryTierUpCheck()
+template <typename Derived, typename ExpressionType>
+void AirIRGeneratorBase<Derived, ExpressionType>::emitEntryTierUpCheck()
 {
     if (!m_tierUp)
         return;
 
-    auto countdownPtr = g64();
+    auto countdownPtr = self().gPtr();
     append(Move, Arg::bigImm(bitwise_cast<uintptr_t>(&m_tierUp->m_counter)), countdownPtr);
 
     auto* patch = addPatchpoint(B3::Void);
@@ -3140,7 +3187,7 @@ void AirIRGenerator64::emitEntryTierUpCheck()
         });
     });
 
-    emitPatchpoint(patch, Tmp(), countdownPtr);
+    self().emitPatchpoint(patch, Tmp(), countdownPtr);
 }
 
 void AirIRGenerator64::emitLoopTierUpCheck(uint32_t loopIndex, const Vector<TypedTmp>& liveValues)
@@ -3155,7 +3202,7 @@ void AirIRGenerator64::emitLoopTierUpCheck(uint32_t loopIndex, const Vector<Type
     m_tierUp->osrEntryTriggers().append(TierUpCount::TriggerReason::DontTrigger);
     m_tierUp->outerLoops().append(outerLoopIndex);
 
-    auto countdownPtr = g64();
+    auto countdownPtr = gPtr();
     append(Move, Arg::bigImm(bitwise_cast<uintptr_t>(&m_tierUp->m_counter)), countdownPtr);
 
     auto* patch = addPatchpoint(B3::Void);
@@ -3172,7 +3219,7 @@ void AirIRGenerator64::emitLoopTierUpCheck(uint32_t loopIndex, const Vector<Type
 
     Vector<ConstrainedTmp> patchArgs;
     patchArgs.append(countdownPtr);
-    for (const TypedTmp& tmp : liveValues)
+    for (const auto& tmp : liveValues)
         patchArgs.append(ConstrainedTmp(tmp.tmp(), B3::ValueRep::ColdAny));
 
     TierUpCount::TriggerReason* forceEntryTrigger = &(m_tierUp->osrEntryTriggers().last());
