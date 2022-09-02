@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2022 Igalia SL. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,42 +24,12 @@
  */
 
 #include "config.h"
-#include "WasmAirIRGenerator.h"
+#include "WasmAirIRGeneratorBase.h"
 
-#if ENABLE(WEBASSEMBLY_B3JIT)
+#if USE(JSVALUE32_64) && ENABLE(WEBASSEMBLY_B3JIT)
 
-#include "AirCode.h"
-#include "AirGenerate.h"
-#include "AirHelpers.h"
-#include "AirOpcodeUtils.h"
-#include "AllowMacroScratchRegisterUsageIf.h"
-#include "B3CheckSpecial.h"
-#include "B3CheckValue.h"
-#include "B3Commutativity.h"
-#include "B3PatchpointSpecial.h"
-#include "B3Procedure.h"
-#include "B3ProcedureInlines.h"
-#include "B3StackmapGenerationParams.h"
-#include "BinarySwitch.h"
-#include "JSCJSValueInlines.h"
-#include "JSWebAssemblyInstance.h"
-#include "ScratchRegisterAllocator.h"
-#include "WasmBranchHints.h"
-#include "WasmCallingConvention.h"
-#include "WasmContextInlines.h"
-#include "WasmExceptionType.h"
-#include "WasmFunctionParser.h"
-#include "WasmIRGeneratorHelpers.h"
-#include "WasmInstance.h"
-#include "WasmMemory.h"
-#include "WasmOSREntryData.h"
-#include "WasmOpcodeOrigin.h"
-#include "WasmOperations.h"
-#include "WasmThunks.h"
-#include "WasmTypeDefinitionInlines.h"
-#include <limits>
-#include <wtf/Box.h>
-#include <wtf/StdLibExtras.h>
+namespace JSC { namespace Wasm {
 
+}} // namespace JSC::Wasm
 
-#endif // ENABLE(WEBASSEMBLY_B3JIT)
+#endif
