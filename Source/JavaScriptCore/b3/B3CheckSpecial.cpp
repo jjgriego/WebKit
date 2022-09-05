@@ -157,6 +157,8 @@ std::optional<unsigned> CheckSpecial::shouldTryAliasingDef(Inst& inst)
     return std::nullopt;
 }
 
+#if !CPU(ARM_THUMB2)
+
 CCallHelpers::Jump CheckSpecial::generate(Inst& inst, CCallHelpers& jit, GenerationContext& context)
 {
     using namespace Air;
@@ -248,6 +250,15 @@ CCallHelpers::Jump CheckSpecial::generate(Inst& inst, CCallHelpers& jit, Generat
 
     return CCallHelpers::Jump(); // As far as Air thinks, we are not a terminal.
 }
+
+#else
+
+CCallHelpers::Jump CheckSpecial::generate(Inst& inst, CCallHelpers& jit, GenerationContext& context)
+{
+    UNREACHABLE_FOR_PLATFORM();
+}
+
+#endif // CPU(ARM_THUMB2)
 
 void CheckSpecial::dumpImpl(PrintStream& out) const
 {
