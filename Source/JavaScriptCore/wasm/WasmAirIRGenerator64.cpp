@@ -3526,57 +3526,6 @@ auto AirIRGenerator64::origin() -> B3::Origin
     return B3::Origin();
 }
 
-Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAir(CompilationContext& compilationContext, const FunctionData& function, const TypeDefinition& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, const ModuleInformation& info, MemoryMode mode, uint32_t functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp)
-{
-    auto result = makeUnique<InternalFunction>();
-
-    compilationContext.wasmEntrypointJIT = makeUnique<CCallHelpers>();
-
-    compilationContext.procedure = makeUnique<B3::Procedure>();
-    auto& procedure = *compilationContext.procedure;
-    Code& code = procedure.code();
-
-    procedure.setOriginPrinter([] (PrintStream& out, B3::Origin origin) {
-        if (origin.data())
-            out.print("Wasm: ", OpcodeOrigin(origin));
-    });
-    
-    // This means we cannot use either StackmapGenerationParams::usedRegisters() or
-    // StackmapGenerationParams::unavailableRegisters(). In exchange for this concession, we
-    // don't strictly need to run Air::reportUsedRegisters(), which saves a bit of CPU time at
-    // optLevel=1.
-    procedure.setNeedsUsedRegisters(false);
-    
-    procedure.setOptLevel(Options::webAssemblyBBQAirOptimizationLevel());
-
-    AirIRGenerator64 irGenerator(info, procedure, result.get(), unlinkedWasmToWasmCalls, mode, functionIndex, hasExceptionHandlers, tierUp, signature, result->osrEntryScratchBufferSize);
-    FunctionParser<AirIRGenerator64> parser(irGenerator, function.data.data(), function.data.size(), signature, info);
-    WASM_FAIL_IF_HELPER_FAILS(parser.parse());
-
-    irGenerator.finalizeEntrypoints();
-
-    for (BasicBlock* block : code) {
-        for (size_t i = 0; i < block->numSuccessors(); ++i)
-            block->successorBlock(i)->addPredecessor(block);
-    }
-
-    if (UNLIKELY(shouldDumpIRAtEachPhase(B3::AirMode))) {
-        dataLogLn("Generated patchpoints");
-        for (B3::PatchpointValue** patch : irGenerator.patchpoints())
-            dataLogLn(deepDump(procedure, *patch));
-    }
-
-    B3::Air::prepareForGeneration(code);
-    B3::Air::generate(code, *compilationContext.wasmEntrypointJIT);
-
-    compilationContext.wasmEntrypointByproducts = procedure.releaseByproducts();
-    result->entrypoint.calleeSaveRegisters = code.calleeSaveRegisterAtOffsetList();
-    result->stackmaps = irGenerator.takeStackmaps();
-    result->exceptionHandlers = irGenerator.takeExceptionHandlers();
-
-    return result;
-}
-
 template <typename IntType>
 void AirIRGenerator64::emitChecksForModOrDiv(bool isSignedDiv, ExpressionType left, ExpressionType right)
 {
@@ -5110,8 +5059,11 @@ PatchpointExceptionHandle AirIRGenerator64::preparePatchpointForExceptions(B3::P
     return { m_hasExceptionHandlers, m_callSiteIndex, numLiveValues };
 }
 
+Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAir(CompilationContext& compilationContext, const FunctionData& function, const TypeDefinition& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, const ModuleInformation& info, MemoryMode mode, uint32_t functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp)
+{
+    return parseAndCompileAirImpl<AirIRGenerator64>(compilationContext, function, signature, unlinkedWasmToWasmCalls, info, mode, functionIndex, hasExceptionHandlers, tierUp);
+}
 
-
-}} // namespace JSC::Wasm
+} } // namespace JSC::Wasm
 
 #endif // USE(JSVALUE64)

@@ -454,7 +454,7 @@ protected:
                 if (mayHaveExceptionHandlers) {
                     GPRReg scratch = wasmCallingConvention().prologueScratchGPRs[0];
                     jit.loadPtr(CCallHelpers::Address(m_prologueWasmContextGPR, Instance::offsetOfOwner()), scratch);
-                    jit.store64(scratch, CCallHelpers::Address(GPRInfo::callFrameRegister, CallFrameSlot::thisArgument * sizeof(Register)));
+                    jit.storePtr(scratch, CCallHelpers::Address(GPRInfo::callFrameRegister, CallFrameSlot::thisArgument * sizeof(Register)));
                 }
 
                 // This allows leaf functions to not do stack checks if their frame size is within
@@ -579,7 +579,69 @@ protected:
 
     Vector<std::pair<BasicBlock*, Vector<ExpressionType>>> m_loopEntryVariableData;
     unsigned& m_osrEntryScratchBufferSize;
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // parameters for shared code
+
+public:
+    static constexpr bool generatesB3OriginData = true;
 };
+
+
+
+template<typename Generator>
+Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAirImpl(CompilationContext& compilationContext, const FunctionData& function, const TypeDefinition& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, const ModuleInformation& info, MemoryMode mode, uint32_t functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp)
+{
+    auto result = makeUnique<InternalFunction>();
+
+    compilationContext.wasmEntrypointJIT = makeUnique<CCallHelpers>();
+
+    compilationContext.procedure = makeUnique<B3::Procedure>();
+    auto& procedure = *compilationContext.procedure;
+    Code& code = procedure.code();
+
+    if constexpr (Generator::generatesB3OriginData) {
+        procedure.setOriginPrinter([](PrintStream& out, B3::Origin origin) {
+            if (origin.data())
+                out.print("Wasm: ", OpcodeOrigin(origin));
+        });
+    }
+    
+    // This means we cannot use either StackmapGenerationParams::usedRegisters() or
+    // StackmapGenerationParams::unavailableRegisters(). In exchange for this concession, we
+    // don't strictly need to run Air::reportUsedRegisters(), which saves a bit of CPU time at
+    // optLevel=1.
+    procedure.setNeedsUsedRegisters(false);
+    
+    procedure.setOptLevel(Options::webAssemblyBBQAirOptimizationLevel());
+
+    Generator irGenerator(info, procedure, result.get(), unlinkedWasmToWasmCalls, mode, functionIndex, hasExceptionHandlers, tierUp, signature, result->osrEntryScratchBufferSize);
+    FunctionParser<Generator> parser(irGenerator, function.data.data(), function.data.size(), signature, info);
+    WASM_FAIL_IF_HELPER_FAILS(parser.parse());
+
+    irGenerator.finalizeEntrypoints();
+
+    for (BasicBlock* block : code) {
+        for (size_t i = 0; i < block->numSuccessors(); ++i)
+            block->successorBlock(i)->addPredecessor(block);
+    }
+
+    if (UNLIKELY(shouldDumpIRAtEachPhase(B3::AirMode))) {
+        dataLogLn("Generated patchpoints");
+        for (B3::PatchpointValue** patch : irGenerator.patchpoints())
+            dataLogLn(deepDump(procedure, *patch));
+    }
+
+    B3::Air::prepareForGeneration(code);
+    B3::Air::generate(code, *compilationContext.wasmEntrypointJIT);
+
+    compilationContext.wasmEntrypointByproducts = procedure.releaseByproducts();
+    result->entrypoint.calleeSaveRegisters = code.calleeSaveRegisterAtOffsetList();
+    result->stackmaps = irGenerator.takeStackmaps();
+    result->exceptionHandlers = irGenerator.takeExceptionHandlers();
+
+    return result;
+}
 
 } } // namespace JSC::Wasm
 

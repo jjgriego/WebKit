@@ -78,6 +78,8 @@ void dumpProcedure(void* ptr)
     proc->dump(WTF::dataFile());
 }
 
+#if USE(JSVALUE64)
+
 namespace JSC { namespace Wasm {
 
 using namespace B3;
@@ -3321,14 +3323,6 @@ Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileB3(Compilatio
     return result;
 }
 
-void computePCToCodeOriginMap(CompilationContext& context, LinkBuffer& linkBuffer)
-{
-    if (context.procedure && context.procedure->needsPCToOriginMap()) {
-        B3::PCToOriginMap originMap = context.procedure->releasePCToOriginMap();
-        context.pcToCodeOriginMap = Box<PCToCodeOriginMap>::create(PCToCodeOriginMapBuilder(PCToCodeOriginMapBuilder::WasmCodeOriginMap, WTFMove(originMap)), linkBuffer);
-    }
-}
-
 // Custom wasm ops. These are the ones too messy to do in wasm.json.
 
 void B3IRGenerator::emitChecksForModOrDiv(B3::Opcode operation, Value* left, Value* right)
@@ -3829,5 +3823,31 @@ auto B3IRGenerator::addI64TruncUF32(ExpressionType argVar, ExpressionType& resul
 } } // namespace JSC::Wasm
 
 #include "WasmB3IRGeneratorInlines.h"
+
+#endif // USE(JSVALUE64)
+
+namespace JSC { namespace Wasm {
+
+using namespace B3;
+
+#if !USE(JSVALUE64)
+// On 32-bit platforms, we stub out the entire B3 generator
+
+Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileB3(CompilationContext&, const FunctionData&, const TypeDefinition&, Vector<UnlinkedWasmToWasmCall>&, const ModuleInformation&, MemoryMode, CompilationMode, uint32_t, std::optional<bool>, uint32_t, TierUpCount*)
+{
+    UNREACHABLE_FOR_PLATFORM();
+}
+
+#endif
+
+void computePCToCodeOriginMap(CompilationContext& context, LinkBuffer& linkBuffer)
+{
+    if (context.procedure && context.procedure->needsPCToOriginMap()) {
+        B3::PCToOriginMap originMap = context.procedure->releasePCToOriginMap();
+        context.pcToCodeOriginMap = Box<PCToCodeOriginMap>::create(PCToCodeOriginMapBuilder(PCToCodeOriginMapBuilder::WasmCodeOriginMap, WTFMove(originMap)), linkBuffer);
+    }
+}
+
+}} // namespace JSC::Wasm
 
 #endif // ENABLE(WEBASSEMBLY_B3JIT)

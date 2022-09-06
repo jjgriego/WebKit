@@ -30,6 +30,78 @@
 
 namespace JSC { namespace Wasm {
 
+// This inline namespace is mostly to ensure that the canonical
+// namespace of identifiers in this file is *obviously* different from
+// those in the 64-bit AirIRGenerator
+inline namespace Air32 {
+
+namespace {
+
+static bool typeNeedsGPPair(Type type) {
+    switch (type.kind) {
+    case TypeKind::I64:
+    case TypeKind::Funcref:
+    case TypeKind::Externref:
+    case TypeKind::RefNull:
+    case TypeKind::Ref:
+        return true;
+    default:
+        return false;
+    }
+}
+
+}
+
+struct TypedTmp {
+    constexpr TypedTmp()
+        : m_tmps{Tmp { }, Tmp { }}
+        , m_type(Types::Void)
+    {
+    }
+
+    constexpr TypedTmp(std::array<Tmp, 2> tmps, Type type)
+        : m_tmps(tmps)
+        , m_type(type)
+    {
+    }
+
+    constexpr TypedTmp(Tmp tmp, Type type)
+        : TypedTmp({tmp, { }}, type)
+    {
+    }
+
+    static TypedTmp word(Tmp tmp, Type type)
+    {
+        ASSERT(!typeNeedsGPPair(type));
+        return {
+            {tmp, Tmp { }},
+            type
+        };
+    }
+
+    bool operator==(const TypedTmp& other) const
+    {
+        return m_tmps[0] == other.m_tmps[0]
+            && m_tmps[1] == other.m_tmps[1]
+            && m_type == other.m_type;
+    }
+
+    bool operator!=(const TypedTmp& other) const
+    {
+        return !(*this == other);
+    }
+
+    std::array<Tmp, 2> m_tmps;
+    Type m_type;
+};
+
+} // inline namespace Air32
+
+Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAir(CompilationContext& compilationContext, const FunctionData& function, const TypeDefinition& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, const ModuleInformation& info, MemoryMode mode, uint32_t functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp)
+{
+    CRASH();
+}
+
 }} // namespace JSC::Wasm
 
 #endif
