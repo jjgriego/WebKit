@@ -384,6 +384,86 @@ protected:
     template<typename ResultTmpType, size_t inlineSize>
     void emitPatchpoint(BasicBlock* basicBlock, B3::PatchpointValue* patch, const Vector<ResultTmpType, 8>& results, Vector<ConstrainedTmp, inlineSize>&& args);
 
+    template<typename Branch, typename Generator>
+    void emitCheck(const Branch& makeBranch, const Generator& generator)
+    {
+        // We fail along the truthy edge of 'branch'.
+        Inst branch = makeBranch();
+
+        // FIXME: Make a hashmap of these.
+        B3::CheckSpecial::Key key(branch);
+        B3::CheckSpecial* special = static_cast<B3::CheckSpecial*>(m_code.addSpecial(makeUnique<B3::CheckSpecial>(key)));
+
+        // FIXME: Remove the need for dummy values
+        // https://bugs.webkit.org/show_bug.cgi?id=194040
+        B3::Value* dummyPredicate = m_proc.addConstant(B3::Origin(), B3::Int32, 42);
+        B3::CheckValue* checkValue = m_proc.add<B3::CheckValue>(B3::Check, B3::Origin(), dummyPredicate);
+        checkValue->setGenerator(generator);
+
+        Inst inst(Patch, checkValue, Arg::special(special));
+        inst.args.appendVector(branch.args);
+        m_currentBlock->append(WTFMove(inst));
+    }
+
+    template <typename Func, typename ...Args>
+    void emitCCall(Func func, ExpressionType result, Args... args)
+    {
+        emitCCall(m_currentBlock, func, result, std::forward<Args>(args)...);
+    }
+    template <typename Func, typename ...Args>
+    void emitCCall(BasicBlock* block, Func func, ExpressionType result, Args... theArgs)
+    {
+        B3::Type resultType = B3::Void;
+        if (result) {
+            switch (result.type().kind) {
+            case TypeKind::I32:
+                resultType = B3::Int32;
+                break;
+            case TypeKind::I64:
+            case TypeKind::Externref:
+            case TypeKind::Funcref:
+            case TypeKind::Ref:
+            case TypeKind::RefNull:
+                resultType = B3::Int64;
+                break;
+            case TypeKind::F32:
+                resultType = B3::Float;
+                break;
+            case TypeKind::F64:
+                resultType = B3::Double;
+                break;
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        }
+
+        auto makeDummyValue = [&] (auto tmp) {
+            // FIXME: This is less than ideal to create dummy values just to satisfy Air's
+            // validation. We should abstrcat CCall enough so we're not reliant on arguments
+            // to the B3::CCallValue.
+            // https://bugs.webkit.org/show_bug.cgi?id=194040
+            return m_proc.addConstant(B3::Origin(), toB3Type(tmp.type()), 0);
+        };
+
+        B3::Value* dummyFunc = m_proc.addConstant(B3::Origin(), B3::Int64, bitwise_cast<uintptr_t>(func));
+        B3::Value* origin = m_proc.add<B3::CCallValue>(resultType, B3::Origin(), B3::Effects::none(), dummyFunc, makeDummyValue(theArgs)...);
+
+        Inst inst(CCall, origin);
+
+        auto callee = self().gPtr();
+        append(block, Move, Arg::immPtr(tagCFunctionPtr<void*, OperationPtrTag>(func)), callee);
+        inst.args.append(callee);
+
+        if (result)
+            self().appendCCallArg(inst, result);
+
+        for (auto tmp : Vector<ExpressionType, sizeof...(Args)>::from(theArgs...))
+            self().appendCCallArg(inst, tmp);
+
+        block->append(WTFMove(inst));
+    }
+
+
 public:
     void setParser(FunctionParser<Derived>* parser)
     {

@@ -211,87 +211,6 @@ private:
 
     void emitZeroInitialize(ExpressionType t);
 
-    template <typename Branch, typename Generator>
-    void emitCheck(const Branch& makeBranch, const Generator& generator)
-    {
-        // We fail along the truthy edge of 'branch'.
-        Inst branch = makeBranch();
-
-        // FIXME: Make a hashmap of these.
-        B3::CheckSpecial::Key key(branch);
-        B3::CheckSpecial* special = static_cast<B3::CheckSpecial*>(m_code.addSpecial(makeUnique<B3::CheckSpecial>(key)));
-
-        // FIXME: Remove the need for dummy values
-        // https://bugs.webkit.org/show_bug.cgi?id=194040
-        B3::Value* dummyPredicate = m_proc.addConstant(B3::Origin(), B3::Int32, 42);
-        B3::CheckValue* checkValue = m_proc.add<B3::CheckValue>(B3::Check, B3::Origin(), dummyPredicate);
-        checkValue->setGenerator(generator);
-
-        Inst inst(Patch, checkValue, Arg::special(special));
-        inst.args.appendVector(branch.args);
-        m_currentBlock->append(WTFMove(inst));
-    }
-
-    template <typename Func, typename ...Args>
-    void emitCCall(Func func, TypedTmp result, Args... args)
-    {
-        emitCCall(m_currentBlock, func, result, std::forward<Args>(args)...);
-    }
-    template <typename Func, typename ...Args>
-    void emitCCall(BasicBlock* block, Func func, TypedTmp result, Args... theArgs)
-    {
-        B3::Type resultType = B3::Void;
-        if (result) {
-            switch (result.type().kind) {
-            case TypeKind::I32:
-                resultType = B3::Int32;
-                break;
-            case TypeKind::I64:
-            case TypeKind::Externref:
-            case TypeKind::Funcref:
-            case TypeKind::Ref:
-            case TypeKind::RefNull:
-                resultType = B3::Int64;
-                break;
-            case TypeKind::F32:
-                resultType = B3::Float;
-                break;
-            case TypeKind::F64:
-                resultType = B3::Double;
-                break;
-            default:
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-        }
-
-        auto makeDummyValue = [&] (Tmp tmp) {
-            // FIXME: This is less than ideal to create dummy values just to satisfy Air's
-            // validation. We should abstrcat CCall enough so we're not reliant on arguments
-            // to the B3::CCallValue.
-            // https://bugs.webkit.org/show_bug.cgi?id=194040
-            if (tmp.isGP())
-                return m_proc.addConstant(B3::Origin(), B3::Int64, 0);
-            return m_proc.addConstant(B3::Origin(), B3::Double, 0);
-        };
-
-        B3::Value* dummyFunc = m_proc.addConstant(B3::Origin(), B3::Int64, bitwise_cast<uintptr_t>(func));
-        B3::Value* origin = m_proc.add<B3::CCallValue>(resultType, B3::Origin(), B3::Effects::none(), dummyFunc, makeDummyValue(theArgs)...);
-
-        Inst inst(CCall, origin);
-
-        Tmp callee = g64();
-        append(block, Move, Arg::immPtr(tagCFunctionPtr<void*, OperationPtrTag>(func)), callee);
-        inst.args.append(callee);
-
-        if (result)
-            inst.args.append(result.tmp());
-
-        for (Tmp tmp : Vector<Tmp, sizeof...(Args)>::from(theArgs.tmp()...))
-            inst.args.append(tmp);
-
-        block->append(WTFMove(inst));
-    }
-
     static B3::Air::Opcode moveOpForValueType(Type type)
     {
         switch (type.kind) {
@@ -324,9 +243,20 @@ private:
         }
     }
 
+    void appendCCallArg(B3::Air::Inst& inst, const TypedTmp& tmp) {
+        inst.args.append(tmp.tmp());
+    }
+
     void emitLoad(Tmp base, size_t offset, const TypedTmp& result)
     {
         emitLoad(moveOpForValueType(result.type()), toB3Type(result.type()), base, offset, result.tmp());
+    }
+
+    void emitMove(const TypedTmp& src, const TypedTmp& dst) {
+        if (src == dst)
+            return;
+        ASSERT(isSubtype(src.type(), dst.type()));
+        append(moveOpForValueType(src.type()), src, dst);
     }
 
     void emitThrowException(CCallHelpers&, ExceptionType);

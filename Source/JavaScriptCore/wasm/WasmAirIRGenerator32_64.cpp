@@ -84,8 +84,29 @@ struct TypedTmp {
         return !(*this == other);
     }
 
+    Type type() const { return m_type; }
+
     bool isGPPair() const {
         return static_cast<bool>(m_tmps[1]);
+    }
+
+    operator Tmp() const { return tmp(); }
+    operator Arg() const { return Arg(tmp()); }
+
+    Tmp tmp() const {
+        ASSERT(!isGPPair());
+        return m_tmps[0];
+    }
+
+    Tmp lo() const {
+        ASSERT(isGPPair());
+        return m_tmps[0];
+    }
+
+    Tmp hi() const
+    {
+        ASSERT(isGPPair());
+        return m_tmps[1];
     }
 
     void dump(PrintStream& out) const
@@ -130,11 +151,16 @@ private:
     TypedTmp f64() { return TypedTmp({ newTmp(B3::FP), { } }, Types::F64 ); }
 
     // TODO(jgriego) these are a mega-kludge and should be fixed
-    static Arg extractArg(const TypedTmp& tmp) { CRASH(); }
+    static Arg extractArg(const TypedTmp& tmp) { return tmp.tmp(); }
     static Arg extractArg(const Tmp& tmp) { return Arg(tmp); }
     static Arg extractArg(const Arg& arg) { return arg; }
 
     void emitZeroInitialize(ExpressionType value);
+    static B3::Air::Opcode moveOpForValueType(Type type);
+    void emitLoad(Tmp base, size_t offset, const TypedTmp& result);
+    void emitStore(const TypedTmp& value, Tmp base, size_t offset);
+    void emitMove(const TypedTmp& src, const TypedTmp& dst);
+    void appendCCallArg(B3::Air::Inst& inst, const TypedTmp& tmp);
 
 public:
     // kludge while we add everything
@@ -247,13 +273,118 @@ public:
     PartialResult addIntegerSub(B3::Air::Opcode, ExpressionType lhs, ExpressionType rhs, ExpressionType& result){ CRASH(); }
     PartialResult addFloatingPointAbs(B3::Air::Opcode, ExpressionType value, ExpressionType& result){ CRASH(); }
     PartialResult addFloatingPointBinOp(Type, B3::Air::Opcode, ExpressionType lhs, ExpressionType rhs, ExpressionType& result){ CRASH(); }
-
-    void emitLoad(Tmp base, size_t offset, const TypedTmp& result){ CRASH(); }
 };
+
+B3::Air::Opcode AirIRGenerator32_64::moveOpForValueType(Type type)
+{
+    switch (type.kind) {
+    case TypeKind::I32:
+    case TypeKind::I64:
+    case TypeKind::Externref:
+    case TypeKind::Funcref:
+    case TypeKind::Ref:
+    case TypeKind::RefNull:
+        return Move;
+    case TypeKind::F32:
+        return MoveFloat;
+    case TypeKind::F64:
+        return MoveDouble;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
 
 void AirIRGenerator32_64::emitZeroInitialize(ExpressionType value)
 {
-    CRASH(); // TODO(jgriego)
+    const auto type = value.type();
+    switch (type.kind) {
+    case TypeKind::Externref:
+    case TypeKind::Funcref:
+    case TypeKind::Ref:
+    case TypeKind::RefNull: {
+        auto const immValue = JSValue::encode(jsNull());
+        append(Move, Arg::bigImmLo32(immValue), value.lo());
+        append(Move, Arg::bigImmHi32(immValue), value.hi());
+        break;
+    }
+    case TypeKind::I32:
+    case TypeKind::I64: {
+        append(Move, Arg::imm(0), value);
+        break;
+    }
+    case TypeKind::F32:
+    case TypeKind::F64: {
+        auto temp = gPtr();
+        // IEEE 754 "0" is just int32/64 zero.
+        append(Move, Arg::imm(0), temp);
+        append(type.isF32() ? Move32ToFloat : Move64ToDouble, temp, value);
+        break;
+    }
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+}
+
+void AirIRGenerator32_64::emitLoad(Tmp base, size_t offset, const TypedTmp& result)
+{
+    auto const largestOffsetUsed = result.isGPPair() ? offset + 4 : offset;
+    if (!Arg::isValidAddrForm(largestOffsetUsed, B3::widthForType(toB3Type(result.type())))) {
+        auto address = gPtr();
+        append(Move, Arg::bigImm(offset), address);
+        append(Add32, base, address, address);
+        base = address.tmp();
+        offset = 0;
+    }
+
+    if (result.isGPPair()) {
+        append(Move, Arg::addr(base, offset), result.lo());
+        append(Move, Arg::addr(base, offset + 4), result.lo());
+    } else {
+        append(moveOpForValueType(result.type()), Arg::addr(base, offset), result);
+    }
+}
+
+void AirIRGenerator32_64::emitStore(const TypedTmp& value, Tmp base, size_t offset)
+{
+    auto const largestOffsetUsed = value.isGPPair() ? offset + 4 : offset;
+    if (!Arg::isValidAddrForm(largestOffsetUsed, B3::widthForType(toB3Type(value.type())))) {
+        auto address = gPtr();
+        append(Move, Arg::bigImm(offset), address);
+        append(Add32, base, address, address);
+        base = address.tmp();
+        offset = 0;
+    }
+
+    if (value.isGPPair()) {
+        append(Move, value.lo(), Arg::addr(base, offset));
+        append(Move, value.hi(), Arg::addr(base, offset + 4));
+    } else {
+        append(moveOpForValueType(value.type()), value, Arg::addr(base, offset));
+    }
+}
+
+void AirIRGenerator32_64::emitMove(const TypedTmp& src, const TypedTmp& dst)
+{
+    if (src == dst)
+        return;
+    ASSERT(isSubtype(src.type(), dst.type()));
+    if (src.isGPPair()) {
+        append(Move, src.lo(), dst.lo());
+        append(Move, src.hi(), dst.hi());
+    } else {
+        append(moveOpForValueType(src.type()), src, dst);
+    }
+}
+
+void AirIRGenerator32_64::appendCCallArg(B3::Air::Inst& inst, const TypedTmp& tmp)
+{
+    if (tmp.isGPPair()) {
+        inst.args.append(tmp.lo());
+        inst.args.append(tmp.hi());
+    } else {
+        inst.args.append(tmp.tmp());
+    }
 }
 
 Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAir(CompilationContext& compilationContext, const FunctionData& function, const TypeDefinition& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, const ModuleInformation& info, MemoryMode mode, uint32_t functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp)
