@@ -86,24 +86,8 @@ public:
 
     static ExpressionType emptyExpression() { return { }; };
 
-    template <typename ...Args>
-    NEVER_INLINE UnexpectedResult WARN_UNUSED_RETURN fail(Args... args) const
-    {
-        using namespace FailureHelper; // See ADL comment in WasmParser.h.
-        return UnexpectedResult(makeString("WebAssembly.Module failed compiling: "_s, makeString(args)...));
-    }
-
-#define WASM_COMPILE_FAIL_IF(condition, ...) do { \
-        if (UNLIKELY(condition))                  \
-            return fail(__VA_ARGS__);             \
-    } while (0)
-
     AirIRGenerator64(const ModuleInformation&, B3::Procedure&, InternalFunction*, Vector<UnlinkedWasmToWasmCall>&, MemoryMode, unsigned functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount*, const TypeDefinition&, unsigned& osrEntryScratchBufferSize);
 
-    void finalizeEntrypoints();
-
-    PartialResult WARN_UNUSED_RETURN addArguments(const TypeDefinition&);
-    PartialResult WARN_UNUSED_RETURN addLocal(Type, uint32_t);
     ExpressionType addConstant(Type, uint64_t);
     ExpressionType addConstant(BasicBlock*, Type, uint64_t);
     ExpressionType addBottom(BasicBlock*, Type);
@@ -170,7 +154,6 @@ public:
     PartialResult WARN_UNUSED_RETURN addSelect(ExpressionType condition, ExpressionType nonZero, ExpressionType zero, ExpressionType& result);
 
     // Control flow
-    ControlData WARN_UNUSED_RETURN addTopLevel(BlockSignature);
     PartialResult WARN_UNUSED_RETURN addBlock(BlockSignature, Stack& enclosingStack, ControlType& newBlock, Stack& newStack);
     PartialResult WARN_UNUSED_RETURN addLoop(BlockSignature, Stack& enclosingStack, ControlType& block, Stack& newStack, uint32_t loopIndex);
     PartialResult WARN_UNUSED_RETURN addIf(ExpressionType condition, BlockSignature, Stack& enclosingStack, ControlType& result, Stack& newStack);
@@ -193,7 +176,6 @@ public:
     PartialResult WARN_UNUSED_RETURN endBlock(ControlEntry&, Stack& expressionStack);
     PartialResult WARN_UNUSED_RETURN addEndToUnreachable(ControlEntry&, const Stack& expressionStack = { });
 
-    PartialResult WARN_UNUSED_RETURN endTopLevel(BlockSignature, const Stack&) { return { }; }
 
     // Calls
     PartialResult WARN_UNUSED_RETURN addCall(uint32_t calleeIndex, const TypeDefinition&, Vector<ExpressionType>& args, ResultList& results);
@@ -207,11 +189,6 @@ public:
     PartialResult addIntegerSub(B3::Air::Opcode, ExpressionType lhs, ExpressionType rhs, ExpressionType& result);
     PartialResult addFloatingPointAbs(B3::Air::Opcode, ExpressionType value, ExpressionType& result);
     PartialResult addFloatingPointBinOp(Type, B3::Air::Opcode, ExpressionType lhs, ExpressionType rhs, ExpressionType& result);
-
-    void dump(const ControlStack&, const Stack* expressionStack);
-    void setParser(FunctionParser<AirIRGenerator64>* parser) { m_parser = parser; };
-    void didFinishParsingLocals() { }
-    void didPopValueFromStack() { }
 
     Tmp emitCatchImpl(CatchKind, ControlType&, unsigned exceptionIndex = 0);
     template <size_t inlineCapacity>
@@ -228,34 +205,11 @@ private:
     TypedTmp f32() { return { newTmp(B3::FP), Types::F32 }; }
     TypedTmp f64() { return { newTmp(B3::FP), Types::F64 }; }
 
-    TypedTmp tmpForType(Type type)
-    {
-        switch (type.kind) {
-        case TypeKind::I32:
-            return g32();
-        case TypeKind::I64:
-            return g64();
-        case TypeKind::Funcref:
-            return gFuncref();
-        case TypeKind::Ref:
-        case TypeKind::RefNull:
-            return gRef(type);
-        case TypeKind::Externref:
-            return gExternref();
-        case TypeKind::F32:
-            return f32();
-        case TypeKind::F64:
-            return f64();
-        case TypeKind::Void:
-            return { };
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-    }
-
     static Arg extractArg(const TypedTmp& tmp) { return tmp.tmp(); }
     static Arg extractArg(const Tmp& tmp) { return Arg(tmp); }
     static Arg extractArg(const Arg& arg) { return arg; }
+
+    void emitZeroInitialize(ExpressionType t);
 
     template <typename ...Args>
     void emitPatchpoint(B3::PatchpointValue* patch, Tmp result, Args... theArgs)
@@ -600,56 +554,6 @@ AirIRGenerator64::AirIRGenerator64(const ModuleInformation& info, B3::Procedure&
 {
 }
 
-void AirIRGenerator64::finalizeEntrypoints()
-{
-    unsigned numEntrypoints = Checked<unsigned>(1) + m_catchEntrypoints.size() + m_loopEntryVariableData.size();
-    m_proc.setNumEntrypoints(numEntrypoints);
-    m_code.setPrologueForEntrypoint(0, Ref<B3::Air::PrologueGenerator>(*m_prologueGenerator));
-    for (unsigned i = 1 + m_catchEntrypoints.size(); i < numEntrypoints; ++i)
-        m_code.setPrologueForEntrypoint(i, Ref<B3::Air::PrologueGenerator>(*m_prologueGenerator));
-
-    if (m_catchEntrypoints.size()) {
-        Ref<B3::Air::PrologueGenerator> catchPrologueGenerator = createSharedTask<B3::Air::PrologueGeneratorFunction>([this] (CCallHelpers& jit, B3::Air::Code& code) {
-            AllowMacroScratchRegisterUsage allowScratch(jit);
-            emitCatchPrologueShared(code, jit);
-
-            if (Context::useFastTLS()) {
-                // Shared prologue expects this in this register when entering the function using fast TLS.
-                jit.loadWasmContextInstance(m_prologueWasmContextGPR);
-            }
-        });
-
-        for (unsigned i = 0; i < m_catchEntrypoints.size(); ++i)
-            m_code.setPrologueForEntrypoint(1 + i, catchPrologueGenerator.copyRef());
-    }
-
-    BasicBlock::SuccessorList successors;
-    successors.append(m_mainEntrypointStart);
-    successors.appendVector(m_catchEntrypoints);
-
-    for (auto& pair : m_loopEntryVariableData) {
-        BasicBlock* loopBody = pair.first;
-        BasicBlock* entry = m_code.addBlock();
-        successors.append(entry);
-        m_currentBlock = entry;
-
-        auto& temps = pair.second;
-        m_osrEntryScratchBufferSize = std::max(m_osrEntryScratchBufferSize, static_cast<unsigned>(temps.size()));
-        Tmp basePtr = Tmp(GPRInfo::argumentGPR0);
-
-        for (size_t i = 0; i < temps.size(); ++i) {
-            size_t offset = static_cast<size_t>(i) * sizeof(uint64_t);
-            emitLoad(basePtr, offset, temps[i]);
-        }
-
-        append(Jump);
-        entry->setSuccessors(loopBody);
-    }
-
-    RELEASE_ASSERT(numEntrypoints == successors.size());
-    m_rootBlock->successors() = successors;
-}
-
 B3::Type AirIRGenerator64::toB3ResultType(BlockSignature returnType)
 {
     if (returnType->as<FunctionSignature>()->returnsVoid())
@@ -738,41 +642,32 @@ void AirIRGenerator64::forEachLiveValue(Function function)
     }
 }
 
-auto AirIRGenerator64::addLocal(Type type, uint32_t count) -> PartialResult
+void AirIRGenerator64::emitZeroInitialize(ExpressionType value)
 {
-    size_t newSize = m_locals.size() + count;
-    ASSERT(!(CheckedUint32(count) + m_locals.size()).hasOverflowed());
-    ASSERT(newSize <= maxFunctionLocals);
-    WASM_COMPILE_FAIL_IF(!m_locals.tryReserveCapacity(newSize), "can't allocate memory for ", newSize, " locals");
-
-    for (uint32_t i = 0; i < count; ++i) {
-        auto local = tmpForType(type);
-        m_locals.uncheckedAppend(local);
-        switch (type.kind) {
-        case TypeKind::Externref:
-        case TypeKind::Funcref:
-        case TypeKind::Ref:
-        case TypeKind::RefNull:
-            append(Move, Arg::imm(JSValue::encode(jsNull())), local);
-            break;
-        case TypeKind::I32:
-        case TypeKind::I64: {
-            append(Xor64, local, local);
-            break;
-        }
-        case TypeKind::F32:
-        case TypeKind::F64: {
-            auto temp = g64();
-            // IEEE 754 "0" is just int32/64 zero.
-            append(Xor64, temp, temp);
-            append(type.isF32() ? Move32ToFloat : Move64ToDouble, temp, local);
-            break;
-        }
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-        }
+    auto const type = value.type();
+    switch (type.kind) {
+    case TypeKind::Externref:
+    case TypeKind::Funcref:
+    case TypeKind::Ref:
+    case TypeKind::RefNull:
+        append(Move, Arg::imm(JSValue::encode(jsNull())), value);
+        break;
+    case TypeKind::I32:
+    case TypeKind::I64: {
+        append(Xor64, value, value);
+        break;
     }
-    return { };
+    case TypeKind::F32:
+    case TypeKind::F64: {
+        auto temp = g64();
+        // IEEE 754 "0" is just int32/64 zero.
+        append(Xor64, temp, temp);
+        append(type.isF32() ? Move32ToFloat : Move64ToDouble, temp, value);
+        break;
+    }
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
 }
 
 auto AirIRGenerator64::addConstant(Type type, uint64_t value) -> ExpressionType
@@ -811,12 +706,6 @@ auto AirIRGenerator64::addBottom(BasicBlock* block, Type type) -> ExpressionType
 {
     append(block, B3::Air::Oops);
     return addConstant(type, 0);
-}
-
-auto AirIRGenerator64::addArguments(const TypeDefinition& signature) -> PartialResult
-{
-    RELEASE_ASSERT(m_locals.size() == signature.as<FunctionSignature>()->argumentCount()); // We handle arguments in the prologue
-    return { };
 }
 
 auto AirIRGenerator64::addRefIsNull(ExpressionType value, ExpressionType& result) -> PartialResult
@@ -2594,51 +2483,6 @@ auto AirIRGenerator64::addSelect(ExpressionType condition, ExpressionType nonZer
     return { };
 }
 
-template <typename Derived, typename ExpressionType>
-void AirIRGeneratorBase<Derived, ExpressionType>::emitEntryTierUpCheck()
-{
-    if (!m_tierUp)
-        return;
-
-    auto countdownPtr = self().gPtr();
-    append(Move, Arg::bigImm(bitwise_cast<uintptr_t>(&m_tierUp->m_counter)), countdownPtr);
-
-    auto* patch = addPatchpoint(B3::Void);
-    B3::Effects effects = B3::Effects::none();
-    effects.reads = B3::HeapRange::top();
-    effects.writes = B3::HeapRange::top();
-    patch->effects = effects;
-    patch->clobber(RegisterSet::macroScratchRegisters());
-
-    patch->setGenerator([=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-        AllowMacroScratchRegisterUsage allowScratch(jit);
-
-        CCallHelpers::Jump tierUp = jit.branchAdd32(CCallHelpers::PositiveOrZero, CCallHelpers::TrustedImm32(TierUpCount::functionEntryIncrement()), CCallHelpers::Address(params[0].gpr()));
-        CCallHelpers::Label tierUpResume = jit.label();
-
-        params.addLatePath([=, this] (CCallHelpers& jit) {
-            tierUp.link(&jit);
-
-            const unsigned extraPaddingBytes = 0;
-            RegisterSet registersToSpill = { };
-            registersToSpill.add(GPRInfo::argumentGPR1);
-            unsigned numberOfStackBytesUsedForRegisterPreservation = ScratchRegisterAllocator::preserveRegistersToStackForCall(jit, registersToSpill, extraPaddingBytes);
-
-            jit.move(MacroAssembler::TrustedImm32(m_functionIndex), GPRInfo::argumentGPR1);
-            MacroAssembler::Call call = jit.nearCall();
-
-            ScratchRegisterAllocator::restoreRegistersFromStackForCall(jit, registersToSpill, RegisterSet(), numberOfStackBytesUsedForRegisterPreservation, extraPaddingBytes);
-            jit.jump(tierUpResume);
-
-            jit.addLinkTask([=] (LinkBuffer& linkBuffer) {
-                MacroAssembler::repatchNearCall(linkBuffer.locationOfNearCall<NoPtrTag>(call), CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(triggerOMGEntryTierUpThunkGenerator).code()));
-            });
-        });
-    });
-
-    self().emitPatchpoint(patch, Tmp(), countdownPtr);
-}
-
 void AirIRGenerator64::emitLoopTierUpCheck(uint32_t loopIndex, const Vector<TypedTmp>& liveValues)
 {
     uint32_t outerLoopIndex = this->outerLoopIndex();
@@ -2701,11 +2545,6 @@ void AirIRGenerator64::emitLoopTierUpCheck(uint32_t loopIndex, const Vector<Type
     });
 
     emitPatchpoint(m_currentBlock, patch, ResultList { }, WTFMove(patchArgs));
-}
-
-AirIRGenerator64::ControlData AirIRGenerator64::addTopLevel(BlockSignature signature)
-{
-    return ControlData(B3::Origin(), signature, tmpsForSignature(signature), BlockType::TopLevel, m_code.addBlock());
 }
 
 auto AirIRGenerator64::addLoop(BlockSignature signature, Stack& enclosingStack, ControlType& block, Stack& newStack, uint32_t loopIndex) -> PartialResult
@@ -3494,29 +3333,6 @@ void AirIRGenerator64::unifyValuesWithBlock(const Stack& resultStack, const Resu
 
     for (size_t i = 0; i < result.size(); ++i)
         unify(result[result.size() - 1 - i], resultStack[resultStack.size() - 1 - i]);
-}
-
-static void dumpExpressionStack(const CommaPrinter& comma, const AirIRGenerator64::Stack& expressionStack)
-{
-    dataLog(comma, "ExpressionStack:");
-    for (const auto& expression : expressionStack)
-        dataLog(comma, expression.value());
-}
-
-void AirIRGenerator64::dump(const ControlStack& controlStack, const Stack* stack)
-{
-    dataLogLn("Processing Graph:");
-    dataLog(m_code);
-    dataLogLn("With current block:", *m_currentBlock);
-    dataLogLn("Control stack:");
-    for (size_t i = controlStack.size(); i--;) {
-        dataLog("  ", controlStack[i].controlData, ": ");
-        CommaPrinter comma(", ", "");
-        dumpExpressionStack(comma, *stack);
-        stack = &controlStack[i].enclosedExpressionStack;
-        dataLogLn();
-    }
-    dataLogLn("\n");
 }
 
 auto AirIRGenerator64::origin() -> B3::Origin

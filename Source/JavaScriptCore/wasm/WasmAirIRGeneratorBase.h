@@ -282,6 +282,22 @@ struct AirIRGeneratorBase {
     }
 
     ////////////////////////////////////////////////////////////////////////////////
+    // Failure reporting
+
+#define WASM_COMPILE_FAIL_IF(condition, ...) \
+    do {                                     \
+        if (UNLIKELY(condition))             \
+            return self().fail(__VA_ARGS__); \
+    } while (0)
+
+    template<typename... Args>
+    NEVER_INLINE UnexpectedResult WARN_UNUSED_RETURN fail(Args... args) const
+    {
+        using namespace FailureHelper; // See ADL comment in WasmParser.h.
+        return UnexpectedResult(makeString("WebAssembly.Module failed compiling: "_s, makeString(args)...));
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
     // Code generation utilities
 
 protected:
@@ -343,6 +359,12 @@ protected:
     }
 
 public:
+
+    void setParser(FunctionParser<Derived>* parser)
+    {
+        m_parser = parser;
+    };
+
     const Bag<B3::PatchpointValue*>& patchpoints() const
     {
         return m_patchpoints;
@@ -363,6 +385,8 @@ public:
         return WTFMove(m_exceptionHandlers);
     }
 
+    void finalizeEntrypoints();
+
 protected:
     Tmp newTmp(B3::Bank bank)
     {
@@ -378,152 +402,93 @@ protected:
     }
 
     ////////////////////////////////////////////////////////////////////////////////
-    // Constructors
+    // Constructor
 
-    AirIRGeneratorBase(const ModuleInformation& info, B3::Procedure& procedure, InternalFunction* compilation, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, MemoryMode mode, unsigned functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp, const TypeDefinition& originalSignature, unsigned& osrEntryScratchBufferSize)
-        : m_info(info)
-        , m_mode(mode)
-        , m_functionIndex(functionIndex)
-        , m_tierUp(tierUp)
-        , m_proc(procedure)
-        , m_code(m_proc.code())
-        , m_unlinkedWasmToWasmCalls(unlinkedWasmToWasmCalls)
-        , m_hasExceptionHandlers(hasExceptionHandlers)
-        , m_numImportFunctions(info.importFunctionCount())
-        , m_osrEntryScratchBufferSize(osrEntryScratchBufferSize)
+    AirIRGeneratorBase(const ModuleInformation& info, B3::Procedure& procedure, InternalFunction* compilation, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, MemoryMode mode, unsigned functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp, const TypeDefinition& originalSignature, unsigned& osrEntryScratchBufferSize);
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // manipualte ExpressionType
+
+    ExpressionType tmpForType(Type type)
     {
-        m_currentBlock = m_code.addBlock();
-        m_rootBlock = m_currentBlock;
-
-        // FIXME we don't really need to pin registers here if there's no memory. It makes wasm -> wasm thunks simpler for now. https://bugs.webkit.org/show_bug.cgi?id=166623
-        const PinnedRegisterInfo& pinnedRegs = PinnedRegisterInfo::get();
-
-        m_memoryBaseGPR = pinnedRegs.baseMemoryPointer;
-        m_code.pinRegister(m_memoryBaseGPR);
-
-        m_wasmContextInstanceGPR = pinnedRegs.wasmContextInstancePointer;
-        if (!Context::useFastTLS())
-            m_code.pinRegister(m_wasmContextInstanceGPR);
-
-        if (mode == MemoryMode::BoundsChecking) {
-            m_boundsCheckingSizeGPR = pinnedRegs.boundsCheckingSizeRegister;
-            m_code.pinRegister(m_boundsCheckingSizeGPR);
+        switch (type.kind) {
+        case TypeKind::I32:
+            return self().g32();
+        case TypeKind::I64:
+            return self().g64();
+        case TypeKind::Funcref:
+            return self().gFuncref();
+        case TypeKind::Ref:
+        case TypeKind::RefNull:
+            return self().gRef(type);
+        case TypeKind::Externref:
+            return self().gExternref();
+        case TypeKind::F32:
+            return self().f32();
+        case TypeKind::F64:
+            return self().f64();
+        case TypeKind::Void:
+            return {};
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
         }
+    }
 
-        m_prologueWasmContextGPR = Context::useFastTLS() ? wasmCallingConvention().prologueScratchGPRs[1] : m_wasmContextInstanceGPR;
+    ////////////////////////////////////////////////////////////////////////////////
+    // interface to parser
+public:
 
-        m_prologueGenerator = createSharedTask<B3::Air::PrologueGeneratorFunction>([=, this] (CCallHelpers& jit, B3::Air::Code& code) {
-            AllowMacroScratchRegisterUsage allowScratch(jit);
-            code.emitDefaultPrologue(jit);
+    PartialResult addLocal(Type type, uint32_t count)
+    {
+        size_t newSize = m_locals.size() + count;
+        ASSERT(!(CheckedUint32(count) + m_locals.size()).hasOverflowed());
+        ASSERT(newSize <= maxFunctionLocals);
+        WASM_COMPILE_FAIL_IF(!m_locals.tryReserveCapacity(newSize), "can't allocate memory for ", newSize, " locals");
 
-            {
-                GPRReg calleeGPR = wasmCallingConvention().prologueScratchGPRs[0];
-                auto moveLocation = jit.moveWithPatch(MacroAssembler::TrustedImmPtr(nullptr), calleeGPR);
-                jit.addLinkTask([compilation, moveLocation] (LinkBuffer& linkBuffer) {
-                    compilation->calleeMoveLocations.append(linkBuffer.locationOf<WasmEntryPtrTag>(moveLocation));
-                });
-                jit.emitPutToCallFrameHeader(calleeGPR, CallFrameSlot::callee);
-                jit.emitPutToCallFrameHeader(nullptr, CallFrameSlot::codeBlock);
-            }
-
-            {
-                const Checked<int32_t> wasmFrameSize = m_code.frameSize();
-                const unsigned minimumParentCheckSize = WTF::roundUpToMultipleOf(stackAlignmentBytes(), 1024);
-                const unsigned extraFrameSize = WTF::roundUpToMultipleOf(stackAlignmentBytes(), std::max<uint32_t>(
-                    // This allows us to elide stack checks for functions that are terminal nodes in the call
-                    // tree, (e.g they don't make any calls) and have a small enough frame size. This works by
-                    // having any such terminal node have its parent caller include some extra size in its
-                    // own check for it. The goal here is twofold:
-                    // 1. Emit less code.
-                    // 2. Try to speed things up by skipping stack checks.
-                    minimumParentCheckSize,
-                    // This allows us to elide stack checks in the Wasm -> Embedder call IC stub. Since these will
-                    // spill all arguments to the stack, we ensure that a stack check here covers the
-                    // stack that such a stub would use.
-                    Checked<uint32_t>(m_maxNumJSCallArguments) * sizeof(Register) + jsCallingConvention().headerSizeInBytes
-                ));
-                const int32_t checkSize = m_makesCalls ? (wasmFrameSize + extraFrameSize).value() : wasmFrameSize.value();
-                bool needUnderflowCheck = static_cast<unsigned>(checkSize) > Options::reservedZoneSize();
-                bool needsOverflowCheck = m_makesCalls || wasmFrameSize >= static_cast<int32_t>(minimumParentCheckSize) || needUnderflowCheck;
-                bool mayHaveExceptionHandlers = !m_hasExceptionHandlers || m_hasExceptionHandlers.value();
-
-                if ((needsOverflowCheck || m_usesInstanceValue || mayHaveExceptionHandlers) && Context::useFastTLS())
-                    jit.loadWasmContextInstance(m_prologueWasmContextGPR);
-
-                // We need to setup JSWebAssemblyInstance in |this| slot first.
-                if (mayHaveExceptionHandlers) {
-                    GPRReg scratch = wasmCallingConvention().prologueScratchGPRs[0];
-                    jit.loadPtr(CCallHelpers::Address(m_prologueWasmContextGPR, Instance::offsetOfOwner()), scratch);
-                    jit.storePtr(scratch, CCallHelpers::Address(GPRInfo::callFrameRegister, CallFrameSlot::thisArgument * sizeof(Register)));
-                }
-
-                // This allows leaf functions to not do stack checks if their frame size is within
-                // certain limits since their caller would have already done the check.
-                if (needsOverflowCheck) {
-                    if (mayHaveExceptionHandlers)
-                        jit.store32(CCallHelpers::TrustedImm32(PatchpointExceptionHandle::s_invalidCallSiteIndex), CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
-
-                    GPRReg scratch = wasmCallingConvention().prologueScratchGPRs[0];
-                    jit.addPtr(CCallHelpers::TrustedImm32(-checkSize), GPRInfo::callFrameRegister, scratch);
-                    MacroAssembler::JumpList overflow;
-                    if (UNLIKELY(needUnderflowCheck))
-                        overflow.append(jit.branchPtr(CCallHelpers::Above, scratch, GPRInfo::callFrameRegister));
-                    overflow.append(jit.branchPtr(CCallHelpers::Below, scratch, CCallHelpers::Address(m_prologueWasmContextGPR, Instance::offsetOfCachedStackLimit())));
-                    jit.addLinkTask([overflow] (LinkBuffer& linkBuffer) {
-                        linkBuffer.link(overflow, CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(throwStackOverflowFromWasmThunkGenerator).code()));
-                    });
-                }
-
-            }
-        });
-
-        if (Context::useFastTLS()) {
-            m_instanceValue = self().gPtr();
-            // FIXME: Would be nice to only do this if we use instance value.
-            append(Move, Tmp(m_prologueWasmContextGPR), m_instanceValue);
-        } else
-            m_instanceValue = { Tmp(m_prologueWasmContextGPR), Types::I64 };
-
-        append(EntrySwitch);
-        m_mainEntrypointStart = m_code.addBlock();
-        m_currentBlock = m_mainEntrypointStart;
-
-        const TypeDefinition& signature = originalSignature.expand();
-        ASSERT(!m_locals.size());
-        m_locals.grow(signature.as<FunctionSignature>()->argumentCount());
-        for (unsigned i = 0; i < signature.as<FunctionSignature>()->argumentCount(); ++i) {
-            Type type = signature.as<FunctionSignature>()->argumentType(i);
-            m_locals[i] = self().tmpForType(type);
+        for (uint32_t i = 0; i < count; ++i) {
+            auto local = self().tmpForType(type);
+            m_locals.uncheckedAppend(local);
+            self().emitZeroInitialize(local);
         }
+        return { };
+    }
 
-        CallInformation wasmCallInfo = wasmCallingConvention().callInformationFor(signature, CallRole::Callee);
+    PartialResult addArguments(const TypeDefinition& signature)
+    {
+        RELEASE_ASSERT(m_locals.size() == signature.as<FunctionSignature>()->argumentCount()); // We handle arguments in the prologue
+        return {};
+    }
 
-        for (unsigned i = 0; i < wasmCallInfo.params.size(); ++i) {
-            B3::ValueRep location = wasmCallInfo.params[i];
-            Arg arg = location.isReg() ? Arg(Tmp(location.reg())) : Arg::addr(Tmp(GPRInfo::callFrameRegister), location.offsetFromFP());
-            switch (signature.as<FunctionSignature>()->argumentType(i).kind) {
-            case TypeKind::I32:
-                append(Move32, arg, m_locals[i]);
-                break;
-            case TypeKind::I64:
-            case TypeKind::Externref:
-            case TypeKind::Funcref:
-            case TypeKind::Ref:
-            case TypeKind::RefNull:
-                append(Move, arg, m_locals[i]);
-                break;
-            case TypeKind::F32:
-                append(MoveFloat, arg, m_locals[i]);
-                break;
-            case TypeKind::F64:
-                append(MoveDouble, arg, m_locals[i]);
-                break;
-            default:
-                RELEASE_ASSERT_NOT_REACHED();
-            }
+    void didFinishParsingLocals() {}
+    void didPopValueFromStack() {}
+
+    ControlData addTopLevel(BlockSignature);
+    PartialResult WARN_UNUSED_RETURN endTopLevel(BlockSignature, const Stack&) { return {}; }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // debug utilities
+
+    void dump(const ControlStack& controlStack, const Stack* stack)
+    {
+        dataLogLn("Processing Graph:");
+        dataLog(m_code);
+        dataLogLn("With current block:", *m_currentBlock);
+        dataLogLn("Control stack:");
+        for (size_t i = controlStack.size(); i--;) {
+            dataLog("  ", controlStack[i].controlData, ": ");
+            CommaPrinter comma(", ", "");
+            dumpExpressionStack(comma, *stack);
+            stack = &controlStack[i].enclosedExpressionStack;
+            dataLogLn();
         }
+        dataLogLn("\n");
+    }
 
-        emitEntryTierUpCheck();
+    static void dumpExpressionStack(const CommaPrinter& comma, const Stack& expressionStack)
+    {
+        dataLog(comma, "ExpressionStack:");
+        for (const auto& expression : expressionStack)
+            dataLog(comma, expression.value());
     }
 
     ////////////////////////////////////////////////////////////////////////////////
@@ -588,6 +553,152 @@ public:
 };
 
 
+template <typename Derived, typename ExpressionType>
+AirIRGeneratorBase<Derived,ExpressionType>::AirIRGeneratorBase(const ModuleInformation& info, B3::Procedure& procedure, InternalFunction* compilation, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, MemoryMode mode, unsigned functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp, const TypeDefinition& originalSignature, unsigned& osrEntryScratchBufferSize)
+    : m_info(info)
+    , m_mode(mode)
+    , m_functionIndex(functionIndex)
+    , m_tierUp(tierUp)
+    , m_proc(procedure)
+    , m_code(m_proc.code())
+    , m_unlinkedWasmToWasmCalls(unlinkedWasmToWasmCalls)
+    , m_hasExceptionHandlers(hasExceptionHandlers)
+    , m_numImportFunctions(info.importFunctionCount())
+    , m_osrEntryScratchBufferSize(osrEntryScratchBufferSize)
+{
+    m_currentBlock = m_code.addBlock();
+    m_rootBlock = m_currentBlock;
+
+    // FIXME we don't really need to pin registers here if there's no memory. It makes wasm -> wasm thunks simpler for now. https://bugs.webkit.org/show_bug.cgi?id=166623
+    const PinnedRegisterInfo& pinnedRegs = PinnedRegisterInfo::get();
+
+    m_memoryBaseGPR = pinnedRegs.baseMemoryPointer;
+    m_code.pinRegister(m_memoryBaseGPR);
+
+    m_wasmContextInstanceGPR = pinnedRegs.wasmContextInstancePointer;
+    if (!Context::useFastTLS())
+        m_code.pinRegister(m_wasmContextInstanceGPR);
+
+    if (mode == MemoryMode::BoundsChecking) {
+        m_boundsCheckingSizeGPR = pinnedRegs.boundsCheckingSizeRegister;
+        m_code.pinRegister(m_boundsCheckingSizeGPR);
+    }
+
+    m_prologueWasmContextGPR = Context::useFastTLS() ? wasmCallingConvention().prologueScratchGPRs[1] : m_wasmContextInstanceGPR;
+
+    m_prologueGenerator = createSharedTask<B3::Air::PrologueGeneratorFunction>([=, this] (CCallHelpers& jit, B3::Air::Code& code) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        code.emitDefaultPrologue(jit);
+
+        {
+            GPRReg calleeGPR = wasmCallingConvention().prologueScratchGPRs[0];
+            auto moveLocation = jit.moveWithPatch(MacroAssembler::TrustedImmPtr(nullptr), calleeGPR);
+            jit.addLinkTask([compilation, moveLocation] (LinkBuffer& linkBuffer) {
+                compilation->calleeMoveLocations.append(linkBuffer.locationOf<WasmEntryPtrTag>(moveLocation));
+            });
+            jit.emitPutToCallFrameHeader(calleeGPR, CallFrameSlot::callee);
+            jit.emitPutToCallFrameHeader(nullptr, CallFrameSlot::codeBlock);
+        }
+
+        {
+            const Checked<int32_t> wasmFrameSize = m_code.frameSize();
+            const unsigned minimumParentCheckSize = WTF::roundUpToMultipleOf(stackAlignmentBytes(), 1024);
+            const unsigned extraFrameSize = WTF::roundUpToMultipleOf(stackAlignmentBytes(), std::max<uint32_t>(
+                // This allows us to elide stack checks for functions that are terminal nodes in the call
+                // tree, (e.g they don't make any calls) and have a small enough frame size. This works by
+                // having any such terminal node have its parent caller include some extra size in its
+                // own check for it. The goal here is twofold:
+                // 1. Emit less code.
+                // 2. Try to speed things up by skipping stack checks.
+                minimumParentCheckSize,
+                // This allows us to elide stack checks in the Wasm -> Embedder call IC stub. Since these will
+                // spill all arguments to the stack, we ensure that a stack check here covers the
+                // stack that such a stub would use.
+                Checked<uint32_t>(m_maxNumJSCallArguments) * sizeof(Register) + jsCallingConvention().headerSizeInBytes
+            ));
+            const int32_t checkSize = m_makesCalls ? (wasmFrameSize + extraFrameSize).value() : wasmFrameSize.value();
+            bool needUnderflowCheck = static_cast<unsigned>(checkSize) > Options::reservedZoneSize();
+            bool needsOverflowCheck = m_makesCalls || wasmFrameSize >= static_cast<int32_t>(minimumParentCheckSize) || needUnderflowCheck;
+            bool mayHaveExceptionHandlers = !m_hasExceptionHandlers || m_hasExceptionHandlers.value();
+
+            if ((needsOverflowCheck || m_usesInstanceValue || mayHaveExceptionHandlers) && Context::useFastTLS())
+                jit.loadWasmContextInstance(m_prologueWasmContextGPR);
+
+            // We need to setup JSWebAssemblyInstance in |this| slot first.
+            if (mayHaveExceptionHandlers) {
+                GPRReg scratch = wasmCallingConvention().prologueScratchGPRs[0];
+                jit.loadPtr(CCallHelpers::Address(m_prologueWasmContextGPR, Instance::offsetOfOwner()), scratch);
+                jit.storePtr(scratch, CCallHelpers::Address(GPRInfo::callFrameRegister, CallFrameSlot::thisArgument * sizeof(Register)));
+            }
+
+            // This allows leaf functions to not do stack checks if their frame size is within
+            // certain limits since their caller would have already done the check.
+            if (needsOverflowCheck) {
+                if (mayHaveExceptionHandlers)
+                    jit.store32(CCallHelpers::TrustedImm32(PatchpointExceptionHandle::s_invalidCallSiteIndex), CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+
+                GPRReg scratch = wasmCallingConvention().prologueScratchGPRs[0];
+                jit.addPtr(CCallHelpers::TrustedImm32(-checkSize), GPRInfo::callFrameRegister, scratch);
+                MacroAssembler::JumpList overflow;
+                if (UNLIKELY(needUnderflowCheck))
+                    overflow.append(jit.branchPtr(CCallHelpers::Above, scratch, GPRInfo::callFrameRegister));
+                overflow.append(jit.branchPtr(CCallHelpers::Below, scratch, CCallHelpers::Address(m_prologueWasmContextGPR, Instance::offsetOfCachedStackLimit())));
+                jit.addLinkTask([overflow] (LinkBuffer& linkBuffer) {
+                    linkBuffer.link(overflow, CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(throwStackOverflowFromWasmThunkGenerator).code()));
+                });
+            }
+
+        }
+    });
+
+    if (Context::useFastTLS()) {
+        m_instanceValue = self().gPtr();
+        // FIXME: Would be nice to only do this if we use instance value.
+        append(Move, Tmp(m_prologueWasmContextGPR), m_instanceValue);
+    } else
+        m_instanceValue = { Tmp(m_prologueWasmContextGPR), Types::IPtr };
+
+    append(EntrySwitch);
+    m_mainEntrypointStart = m_code.addBlock();
+    m_currentBlock = m_mainEntrypointStart;
+
+    const TypeDefinition& signature = originalSignature.expand();
+    ASSERT(!m_locals.size());
+    m_locals.grow(signature.as<FunctionSignature>()->argumentCount());
+    for (unsigned i = 0; i < signature.as<FunctionSignature>()->argumentCount(); ++i) {
+        Type type = signature.as<FunctionSignature>()->argumentType(i);
+        m_locals[i] = self().tmpForType(type);
+    }
+
+    CallInformation wasmCallInfo = wasmCallingConvention().callInformationFor(signature, CallRole::Callee);
+
+    for (unsigned i = 0; i < wasmCallInfo.params.size(); ++i) {
+        B3::ValueRep location = wasmCallInfo.params[i];
+        Arg arg = location.isReg() ? Arg(Tmp(location.reg())) : Arg::addr(Tmp(GPRInfo::callFrameRegister), location.offsetFromFP());
+        switch (signature.as<FunctionSignature>()->argumentType(i).kind) {
+        case TypeKind::I32:
+            append(Move32, arg, m_locals[i]);
+            break;
+        case TypeKind::I64:
+        case TypeKind::Externref:
+        case TypeKind::Funcref:
+        case TypeKind::Ref:
+        case TypeKind::RefNull:
+            append(Move, arg, m_locals[i]);
+            break;
+        case TypeKind::F32:
+            append(MoveFloat, arg, m_locals[i]);
+            break;
+        case TypeKind::F64:
+            append(MoveDouble, arg, m_locals[i]);
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+
+    emitEntryTierUpCheck();
+}
 
 template<typename Generator>
 Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAirImpl(CompilationContext& compilationContext, const FunctionData& function, const TypeDefinition& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, const ModuleInformation& info, MemoryMode mode, uint32_t functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp)
@@ -642,6 +753,110 @@ Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAirImpl(Compi
 
     return result;
 }
+
+template <typename Derived, typename ExpressionType>
+void AirIRGeneratorBase<Derived, ExpressionType>::finalizeEntrypoints()
+{
+    unsigned numEntrypoints = Checked<unsigned>(1) + m_catchEntrypoints.size() + m_loopEntryVariableData.size();
+    m_proc.setNumEntrypoints(numEntrypoints);
+    m_code.setPrologueForEntrypoint(0, Ref<B3::Air::PrologueGenerator>(*m_prologueGenerator));
+    for (unsigned i = 1 + m_catchEntrypoints.size(); i < numEntrypoints; ++i)
+        m_code.setPrologueForEntrypoint(i, Ref<B3::Air::PrologueGenerator>(*m_prologueGenerator));
+
+    if (m_catchEntrypoints.size()) {
+        Ref<B3::Air::PrologueGenerator> catchPrologueGenerator = createSharedTask<B3::Air::PrologueGeneratorFunction>([this] (CCallHelpers& jit, B3::Air::Code& code) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            emitCatchPrologueShared(code, jit);
+
+            if (Context::useFastTLS()) {
+                // Shared prologue expects this in this register when entering the function using fast TLS.
+                jit.loadWasmContextInstance(m_prologueWasmContextGPR);
+            }
+        });
+
+        for (unsigned i = 0; i < m_catchEntrypoints.size(); ++i)
+            m_code.setPrologueForEntrypoint(1 + i, catchPrologueGenerator.copyRef());
+    }
+
+    BasicBlock::SuccessorList successors;
+    successors.append(m_mainEntrypointStart);
+    successors.appendVector(m_catchEntrypoints);
+
+    for (auto& pair : m_loopEntryVariableData) {
+        BasicBlock* loopBody = pair.first;
+        BasicBlock* entry = m_code.addBlock();
+        successors.append(entry);
+        m_currentBlock = entry;
+
+        auto& temps = pair.second;
+        m_osrEntryScratchBufferSize = std::max(m_osrEntryScratchBufferSize, static_cast<unsigned>(temps.size()));
+        Tmp basePtr = Tmp(GPRInfo::argumentGPR0);
+
+        for (size_t i = 0; i < temps.size(); ++i) {
+            size_t offset = static_cast<size_t>(i) * sizeof(uint64_t);
+            self().emitLoad(basePtr, offset, temps[i]);
+        }
+
+        append(Jump);
+        entry->setSuccessors(loopBody);
+    }
+
+    RELEASE_ASSERT(numEntrypoints == successors.size());
+    m_rootBlock->successors() = successors;
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addTopLevel(BlockSignature signature) -> ControlData
+{
+    return ControlData(B3::Origin(), signature, tmpsForSignature(signature), BlockType::TopLevel, m_code.addBlock());
+}
+
+template <typename Derived, typename ExpressionType>
+void AirIRGeneratorBase<Derived, ExpressionType>::emitEntryTierUpCheck()
+{
+    if (!m_tierUp)
+        return;
+
+    auto countdownPtr = self().gPtr();
+    append(Move, Arg::bigImm(bitwise_cast<uintptr_t>(&m_tierUp->m_counter)), countdownPtr);
+
+    auto* patch = addPatchpoint(B3::Void);
+    B3::Effects effects = B3::Effects::none();
+    effects.reads = B3::HeapRange::top();
+    effects.writes = B3::HeapRange::top();
+    patch->effects = effects;
+    patch->clobber(RegisterSet::macroScratchRegisters());
+
+    patch->setGenerator([=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+
+        CCallHelpers::Jump tierUp = jit.branchAdd32(CCallHelpers::PositiveOrZero, CCallHelpers::TrustedImm32(TierUpCount::functionEntryIncrement()), CCallHelpers::Address(params[0].gpr()));
+        CCallHelpers::Label tierUpResume = jit.label();
+
+        params.addLatePath([=, this] (CCallHelpers& jit) {
+            tierUp.link(&jit);
+
+            const unsigned extraPaddingBytes = 0;
+            RegisterSet registersToSpill = { };
+            registersToSpill.add(GPRInfo::argumentGPR1);
+            unsigned numberOfStackBytesUsedForRegisterPreservation = ScratchRegisterAllocator::preserveRegistersToStackForCall(jit, registersToSpill, extraPaddingBytes);
+
+            jit.move(MacroAssembler::TrustedImm32(m_functionIndex), GPRInfo::argumentGPR1);
+            MacroAssembler::Call call = jit.nearCall();
+
+            ScratchRegisterAllocator::restoreRegistersFromStackForCall(jit, registersToSpill, RegisterSet(), numberOfStackBytesUsedForRegisterPreservation, extraPaddingBytes);
+            jit.jump(tierUpResume);
+
+            jit.addLinkTask([=] (LinkBuffer& linkBuffer) {
+                MacroAssembler::repatchNearCall(linkBuffer.locationOfNearCall<NoPtrTag>(call), CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(triggerOMGEntryTierUpThunkGenerator).code()));
+            });
+        });
+    });
+
+    self().emitPatchpoint(patch, Tmp(), countdownPtr);
+}
+
+
 
 } } // namespace JSC::Wasm
 

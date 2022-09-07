@@ -265,6 +265,11 @@ namespace Types
 #define CREATE_CONSTANT(name, id, ...) constexpr Type name = Type{TypeKind::name, Nullable::Yes, 0u};
 FOR_EACH_WASM_TYPE(CREATE_CONSTANT)
 #undef CREATE_CONSTANT
+#if USE(JSVALUE64)
+constexpr Type IPtr = I64;
+#elif USE(JSVALUE32_64)
+constexpr Type IPtr = I32;
+#endif
 } // namespace Types
 
 #define CREATE_CASE(name, id, ...) case id: return true;
