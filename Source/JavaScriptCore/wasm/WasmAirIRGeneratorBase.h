@@ -358,8 +358,33 @@ protected:
         return result;
     }
 
-public:
+    template<typename... Args>
+    void emitPatchpoint(B3::PatchpointValue* patch, Tmp result, Args... theArgs)
+    {
+        emitPatchpoint(m_currentBlock, patch, result, std::forward<Args>(theArgs)...);
+    }
 
+    template<typename... Args>
+    void emitPatchpoint(BasicBlock* basicBlock, B3::PatchpointValue* patch, Tmp result, Args... theArgs)
+    {
+        emitPatchpoint(basicBlock, patch, Vector<Tmp, 8> { result }, Vector<ConstrainedTmp, sizeof...(Args)>::from(theArgs...));
+    }
+
+    void emitPatchpoint(BasicBlock* basicBlock, B3::PatchpointValue* patch, Tmp result)
+    {
+        emitPatchpoint(basicBlock, patch, Vector<Tmp, 8> { result }, Vector<ConstrainedTmp>());
+    }
+
+    template<size_t inlineSize>
+    void emitPatchpoint(BasicBlock* basicBlock, B3::PatchpointValue* patch, Tmp result, Vector<ConstrainedTmp, inlineSize>&& args)
+    {
+        emitPatchpoint(basicBlock, patch, Vector<Tmp, 8> { result }, WTFMove(args));
+    }
+
+    template<typename ResultTmpType, size_t inlineSize>
+    void emitPatchpoint(BasicBlock* basicBlock, B3::PatchpointValue* patch, const Vector<ResultTmpType, 8>& results, Vector<ConstrainedTmp, inlineSize>&& args);
+
+public:
     void setParser(FunctionParser<Derived>* parser)
     {
         m_parser = parser;
@@ -855,6 +880,101 @@ void AirIRGeneratorBase<Derived, ExpressionType>::emitEntryTierUpCheck()
 
     self().emitPatchpoint(patch, Tmp(), countdownPtr);
 }
+
+template <typename Derived, typename ExpressionType>
+template <typename ResultTmpType, size_t inlineSize>
+void AirIRGeneratorBase<Derived, ExpressionType>::emitPatchpoint(BasicBlock* basicBlock, B3::PatchpointValue* patch, const Vector<ResultTmpType, 8>& results, Vector<ConstrainedTmp, inlineSize>&& args)
+{
+    if (!m_patchpointSpecial)
+        m_patchpointSpecial = static_cast<B3::PatchpointSpecial*>(m_code.addSpecial(makeUnique<B3::PatchpointSpecial>()));
+
+    auto toTmp = [&] (ResultTmpType tmp) {
+        if constexpr (std::is_same_v<ResultTmpType, Tmp>)
+            return tmp;
+        else
+            return tmp.tmp();
+    };
+
+    Inst inst(Patch, patch, Arg::special(m_patchpointSpecial));
+    Vector<Inst, 1> resultMovs;
+    switch (patch->type().kind()) {
+    case B3::Void:
+        break;
+    default: {
+        ASSERT(results.size());
+        for (unsigned i = 0; i < results.size(); ++i) {
+            switch (patch->resultConstraints[i].kind()) {
+            case B3::ValueRep::StackArgument: {
+                Arg arg = Arg::callArg(patch->resultConstraints[i].offsetFromSP());
+                inst.args.append(arg);
+                resultMovs.append(Inst(B3::Air::moveForType(m_proc.typeAtOffset(patch->type(), i)), nullptr, arg, toTmp(results[i])));
+                break;
+            }
+            case B3::ValueRep::Register: {
+                inst.args.append(Tmp(patch->resultConstraints[i].reg()));
+                resultMovs.append(Inst(B3::Air::relaxedMoveForType(m_proc.typeAtOffset(patch->type(), i)), nullptr, Tmp(patch->resultConstraints[i].reg()), toTmp(results[i])));
+                break;
+            }
+            case B3::ValueRep::SomeRegister: {
+                inst.args.append(toTmp(results[i]));
+                break;
+            }
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        }
+    }
+    }
+
+    for (unsigned i = 0; i < args.size(); ++i) {
+        ConstrainedTmp& tmp = args[i];
+        // FIXME: This is less than ideal to create dummy values just to satisfy Air's
+        // validation. We should abstract Patch enough so ValueRep's don't need to be
+        // backed by Values.
+        // https://bugs.webkit.org/show_bug.cgi?id=194040
+        B3::Value* dummyValue = m_proc.addConstant(B3::Origin(), tmp.tmp.isGP() ? B3::Int64 : B3::Double, 0);
+        patch->append(dummyValue, tmp.rep);
+        switch (tmp.rep.kind()) {
+        // B3::Value propagates (Late)ColdAny information and later Air will allocate appropriate stack.
+        case B3::ValueRep::ColdAny: 
+        case B3::ValueRep::LateColdAny:
+        case B3::ValueRep::SomeRegister:
+            inst.args.append(tmp.tmp);
+            break;
+        case B3::ValueRep::Register:
+            patch->earlyClobbered().clear(tmp.rep.reg());
+            append(basicBlock, tmp.tmp.isGP() ? Move : MoveDouble, tmp.tmp, tmp.rep.reg());
+            inst.args.append(Tmp(tmp.rep.reg()));
+            break;
+        case B3::ValueRep::StackArgument: {
+            Arg arg = Arg::callArg(tmp.rep.offsetFromSP());
+            append(basicBlock, tmp.tmp.isGP() ? Move : MoveDouble, tmp.tmp, arg);
+            ASSERT(arg.canRepresent(patch->child(i)->type()));
+            inst.args.append(arg);
+            break;
+        }
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+
+    for (auto valueRep : patch->resultConstraints) {
+        if (valueRep.isReg())
+            patch->lateClobbered().clear(valueRep.reg());
+    }
+    for (unsigned i = patch->numGPScratchRegisters; i--;)
+        inst.args.append(newTmp(B3::GP));
+    for (unsigned i = patch->numFPScratchRegisters; i--;)
+        inst.args.append(newTmp(B3::FP));
+
+    validateInst(inst);
+    basicBlock->append(WTFMove(inst));
+    for (Inst result : resultMovs) {
+        validateInst(result);
+        basicBlock->append(WTFMove(result));
+    }
+}
+
 
 
 

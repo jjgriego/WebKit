@@ -63,20 +63,13 @@ struct TypedTmp {
         : m_tmps(tmps)
         , m_type(type)
     {
+        ASSERT(typeNeedsGPPair(type));
     }
 
     constexpr TypedTmp(Tmp tmp, Type type)
         : TypedTmp({tmp, { }}, type)
     {
-    }
-
-    static TypedTmp word(Tmp tmp, Type type)
-    {
         ASSERT(!typeNeedsGPPair(type));
-        return {
-            {tmp, Tmp { }},
-            type
-        };
     }
 
     bool operator==(const TypedTmp& other) const
@@ -256,11 +249,6 @@ public:
     PartialResult addFloatingPointBinOp(Type, B3::Air::Opcode, ExpressionType lhs, ExpressionType rhs, ExpressionType& result){ CRASH(); }
 
     void emitLoad(Tmp base, size_t offset, const TypedTmp& result){ CRASH(); }
-
-    template <typename ... Args>
-    void emitPatchpoint(Args&& ...) {
-        CRASH();
-    }
 };
 
 void AirIRGenerator32_64::emitZeroInitialize(ExpressionType value)
