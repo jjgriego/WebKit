@@ -95,10 +95,6 @@ public:
     // References
     PartialResult WARN_UNUSED_RETURN addRefIsNull(ExpressionType value, ExpressionType& result);
 
-    // Locals
-    PartialResult WARN_UNUSED_RETURN getLocal(uint32_t index, ExpressionType& result);
-    PartialResult WARN_UNUSED_RETURN setLocal(uint32_t index, ExpressionType value);
-
     // Globals
     PartialResult WARN_UNUSED_RETURN getGlobal(uint32_t index, ExpressionType& result);
     PartialResult WARN_UNUSED_RETURN setGlobal(uint32_t index, ExpressionType value);
@@ -520,14 +516,6 @@ auto AirIRGenerator64::addRefIsNull(ExpressionType value, ExpressionType& result
     return { };
 }
 
-auto AirIRGenerator64::getLocal(uint32_t index, ExpressionType& result) -> PartialResult
-{
-    ASSERT(m_locals[index].tmp());
-    result = tmpForType(m_locals[index].type());
-    append(moveOpForValueType(m_locals[index].type()), m_locals[index].tmp(), result);
-    return { };
-}
-
 auto AirIRGenerator64::addUnreachable() -> PartialResult
 {
     B3::PatchpointValue* unreachable = addPatchpoint(B3::Void);
@@ -649,13 +637,6 @@ auto AirIRGenerator64::addMemoryInit(unsigned dataSegmentIndex, ExpressionType d
 auto AirIRGenerator64::addDataDrop(unsigned dataSegmentIndex) -> PartialResult
 {
     emitCCall(&operationWasmDataDrop, TypedTmp(), instanceValue(), addConstant(Types::I32, dataSegmentIndex));
-    return { };
-}
-
-auto AirIRGenerator64::setLocal(uint32_t index, ExpressionType value) -> PartialResult
-{
-    ASSERT(m_locals[index].tmp());
-    append(moveOpForValueType(m_locals[index].type()), value, m_locals[index].tmp());
     return { };
 }
 

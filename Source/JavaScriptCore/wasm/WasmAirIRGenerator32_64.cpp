@@ -197,10 +197,6 @@ public:
     // References
     PartialResult WARN_UNUSED_RETURN addRefIsNull(ExpressionType value, ExpressionType& result);
 
-    // Locals
-    PartialResult WARN_UNUSED_RETURN getLocal(uint32_t index, ExpressionType& result){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN setLocal(uint32_t index, ExpressionType value){ CRASH(); }
-
     // Globals
     PartialResult WARN_UNUSED_RETURN getGlobal(uint32_t index, ExpressionType& result){ CRASH(); }
     PartialResult WARN_UNUSED_RETURN setGlobal(uint32_t index, ExpressionType value){ CRASH(); }

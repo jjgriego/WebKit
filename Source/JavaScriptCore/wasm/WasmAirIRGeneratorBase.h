@@ -584,6 +584,10 @@ public:
     PartialResult WARN_UNUSED_RETURN addTableFill(unsigned, ExpressionType offset, ExpressionType fill, ExpressionType count);
     PartialResult WARN_UNUSED_RETURN addTableCopy(unsigned, unsigned, ExpressionType dstOffset, ExpressionType srcOffset, ExpressionType length);
 
+    // Locals
+    PartialResult WARN_UNUSED_RETURN getLocal(uint32_t index, ExpressionType& result);
+    PartialResult WARN_UNUSED_RETURN setLocal(uint32_t index, ExpressionType value);
+
     ////////////////////////////////////////////////////////////////////////////////
     // debug utilities
 
@@ -1235,6 +1239,25 @@ auto AirIRGeneratorBase<Derived, ExpressionType>::addTableSet(unsigned tableInde
 
     emitCheck([&] { return Inst(BranchTest32, nullptr, Arg::resCond(MacroAssembler::Zero), shouldThrow, shouldThrow); }, [=, this](CCallHelpers& jit, const B3::StackmapGenerationParams&) { this->emitThrowException(jit, ExceptionType::OutOfBoundsTableAccess); });
 
+    return {};
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::getLocal(uint32_t index, ExpressionType& result) -> PartialResult
+{
+    auto local = m_locals[index];
+    ASSERT(local);
+    result = self().tmpForType(local.type());
+    self().emitMove(local, result);
+    return {};
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::setLocal(uint32_t index, ExpressionType value) -> PartialResult
+{
+    auto local = m_locals[index];
+    ASSERT(local);
+    self().emitMove(value, local);
     return {};
 }
 
