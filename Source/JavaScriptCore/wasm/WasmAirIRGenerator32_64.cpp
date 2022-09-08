@@ -195,8 +195,7 @@ public:
     static ExpressionType emptyExpression() { return {}; }
 
     // References
-    PartialResult WARN_UNUSED_RETURN addRefIsNull(ExpressionType value, ExpressionType& result){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addRefFunc(uint32_t index, ExpressionType& result){ CRASH(); }
+    PartialResult WARN_UNUSED_RETURN addRefIsNull(ExpressionType value, ExpressionType& result);
 
     // Locals
     PartialResult WARN_UNUSED_RETURN getLocal(uint32_t index, ExpressionType& result){ CRASH(); }
@@ -402,6 +401,18 @@ void AirIRGenerator32_64::appendCCallArg(B3::Air::Inst& inst, const TypedTmp& tm
     } else {
         inst.args.append(tmp.tmp());
     }
+}
+
+auto AirIRGenerator32_64::addRefIsNull(ExpressionType value, ExpressionType& result) -> PartialResult
+{
+    ASSERT(value.tmp());
+    result = tmpForType(Types::I32);
+    auto tmp = g32();
+
+    append(Move, Arg::bigImm(JSValue::NullTag), tmp);
+    append(Compare32, Arg::relCond(MacroAssembler::Equal), value.hi(), tmp, result);
+
+    return {};
 }
 
 Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAir(CompilationContext& compilationContext, const FunctionData& function, const TypeDefinition& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, const ModuleInformation& info, MemoryMode mode, uint32_t functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp)

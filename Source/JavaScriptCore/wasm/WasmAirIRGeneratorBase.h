@@ -571,6 +571,9 @@ public:
     ControlData addTopLevel(BlockSignature);
     PartialResult WARN_UNUSED_RETURN endTopLevel(BlockSignature, const Stack&) { return {}; }
 
+    // References
+    //                               addRefIsNull (in derived classes)
+    PartialResult WARN_UNUSED_RETURN addRefFunc(uint32_t index, ExpressionType& result);
     // Tables
     PartialResult WARN_UNUSED_RETURN addTableGet(unsigned, ExpressionType index, ExpressionType& result);
     PartialResult WARN_UNUSED_RETURN addTableSet(unsigned, ExpressionType index, ExpressionType value);
@@ -1075,6 +1078,20 @@ void AirIRGeneratorBase<Derived, ExpressionType>::emitThrowException(CCallHelper
     jit.addLinkTask([jumpToExceptionStub](LinkBuffer& linkBuffer) {
         linkBuffer.link(jumpToExceptionStub, CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(throwExceptionFromWasmThunkGenerator).code()));
     });
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addRefFunc(uint32_t index, ExpressionType& result) -> PartialResult
+{
+    // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
+    if (Options::useWebAssemblyTypedFunctionReferences()) {
+        TypeIndex typeIndex = m_info.typeIndexFromFunctionIndexSpace(index);
+        result = tmpForType(Type { TypeKind::Ref, Nullable::No, typeIndex });
+    } else
+        result = tmpForType(Types::Funcref);
+    emitCCall(&operationWasmRefFunc, result, instanceValue(), self().addConstant(Types::I32, index));
+
+    return {};
 }
 
 template <typename Derived, typename ExpressionType>

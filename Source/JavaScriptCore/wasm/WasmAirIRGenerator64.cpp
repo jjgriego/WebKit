@@ -94,7 +94,6 @@ public:
 
     // References
     PartialResult WARN_UNUSED_RETURN addRefIsNull(ExpressionType value, ExpressionType& result);
-    PartialResult WARN_UNUSED_RETURN addRefFunc(uint32_t index, ExpressionType& result);
 
     // Locals
     PartialResult WARN_UNUSED_RETURN getLocal(uint32_t index, ExpressionType& result);
@@ -521,18 +520,6 @@ auto AirIRGenerator64::addRefIsNull(ExpressionType value, ExpressionType& result
     return { };
 }
 
-auto AirIRGenerator64::addRefFunc(uint32_t index, ExpressionType& result) -> PartialResult
-{
-    // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
-    if (Options::useWebAssemblyTypedFunctionReferences()) {
-        TypeIndex typeIndex = m_info.typeIndexFromFunctionIndexSpace(index);
-        result = tmpForType(Type { TypeKind::Ref, Nullable::No, typeIndex });
-    } else
-        result = tmpForType(Types::Funcref);
-    emitCCall(&operationWasmRefFunc, result, instanceValue(), addConstant(Types::I32, index));
-
-    return { };
-}
 auto AirIRGenerator64::getLocal(uint32_t index, ExpressionType& result) -> PartialResult
 {
     ASSERT(m_locals[index].tmp());
