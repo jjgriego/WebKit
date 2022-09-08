@@ -93,6 +93,11 @@ struct TypedTmp {
     operator Tmp() const { return tmp(); }
     operator Arg() const { return Arg(tmp()); }
 
+    explicit operator bool() const
+    {
+        return static_cast<bool>(m_tmps[0]);
+    }
+
     Tmp tmp() const {
         ASSERT(!isGPPair());
         return m_tmps[0];
@@ -156,6 +161,9 @@ private:
     static Arg extractArg(const Arg& arg) { return arg; }
 
     void emitZeroInitialize(ExpressionType value);
+    template <typename Taken>
+    void emitCheckI64Zero(ExpressionType value, Taken&& taken);
+
     static B3::Air::Opcode moveOpForValueType(Type type);
     void emitLoad(Tmp base, size_t offset, const TypedTmp& result);
     void emitStore(const TypedTmp& value, Tmp base, size_t offset);
@@ -189,16 +197,6 @@ public:
     // References
     PartialResult WARN_UNUSED_RETURN addRefIsNull(ExpressionType value, ExpressionType& result){ CRASH(); }
     PartialResult WARN_UNUSED_RETURN addRefFunc(uint32_t index, ExpressionType& result){ CRASH(); }
-
-    // Tables
-    PartialResult WARN_UNUSED_RETURN addTableGet(unsigned, ExpressionType index, ExpressionType& result){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addTableSet(unsigned, ExpressionType index, ExpressionType value){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addTableInit(unsigned, unsigned, ExpressionType dstOffset, ExpressionType srcOffset, ExpressionType length){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addElemDrop(unsigned){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addTableSize(unsigned, ExpressionType& result){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addTableGrow(unsigned, ExpressionType fill, ExpressionType delta, ExpressionType& result){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addTableFill(unsigned, ExpressionType offset, ExpressionType fill, ExpressionType count){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addTableCopy(unsigned, unsigned, ExpressionType dstOffset, ExpressionType srcOffset, ExpressionType length){ CRASH(); }
 
     // Locals
     PartialResult WARN_UNUSED_RETURN getLocal(uint32_t index, ExpressionType& result){ CRASH(); }
@@ -324,6 +322,25 @@ void AirIRGenerator32_64::emitZeroInitialize(ExpressionType value)
         RELEASE_ASSERT_NOT_REACHED();
     }
 
+}
+
+template<typename Taken>
+void AirIRGenerator32_64::emitCheckI64Zero(ExpressionType value, Taken&& taken)
+{
+    BasicBlock* continuation = nullptr;
+    emitCheck([&] {
+        BasicBlock* checkLo = m_code.addBlock();
+        continuation = m_code.addBlock();
+        append(BranchTest32, Arg::resCond(MacroAssembler::NonZero), value.hi(), value.hi());
+        m_currentBlock->setSuccessors(continuation, checkLo);
+        m_currentBlock = checkLo;
+        return Inst(BranchTest32, nullptr, Arg::resCond(MacroAssembler::Zero), value.lo(), value.lo());
+    }, std::forward<Taken>(taken));
+
+    ASSERT(continuation);
+    append(Jump);
+    m_currentBlock->setSuccessors(continuation);
+    m_currentBlock = continuation;
 }
 
 void AirIRGenerator32_64::emitLoad(Tmp base, size_t offset, const TypedTmp& result)

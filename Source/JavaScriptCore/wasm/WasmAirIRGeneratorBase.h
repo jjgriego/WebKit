@@ -463,6 +463,7 @@ protected:
         block->append(WTFMove(inst));
     }
 
+    void emitThrowException(CCallHelpers& jit, ExceptionType type);
 
 public:
     void setParser(FunctionParser<Derived>* parser)
@@ -569,6 +570,16 @@ public:
 
     ControlData addTopLevel(BlockSignature);
     PartialResult WARN_UNUSED_RETURN endTopLevel(BlockSignature, const Stack&) { return {}; }
+
+    // Tables
+    PartialResult WARN_UNUSED_RETURN addTableGet(unsigned, ExpressionType index, ExpressionType& result);
+    PartialResult WARN_UNUSED_RETURN addTableSet(unsigned, ExpressionType index, ExpressionType value);
+    PartialResult WARN_UNUSED_RETURN addTableInit(unsigned, unsigned, ExpressionType dstOffset, ExpressionType srcOffset, ExpressionType length);
+    PartialResult WARN_UNUSED_RETURN addElemDrop(unsigned);
+    PartialResult WARN_UNUSED_RETURN addTableSize(unsigned, ExpressionType& result);
+    PartialResult WARN_UNUSED_RETURN addTableGrow(unsigned, ExpressionType fill, ExpressionType delta, ExpressionType& result);
+    PartialResult WARN_UNUSED_RETURN addTableFill(unsigned, ExpressionType offset, ExpressionType fill, ExpressionType count);
+    PartialResult WARN_UNUSED_RETURN addTableCopy(unsigned, unsigned, ExpressionType dstOffset, ExpressionType srcOffset, ExpressionType length);
 
     ////////////////////////////////////////////////////////////////////////////////
     // debug utilities
@@ -1055,7 +1066,160 @@ void AirIRGeneratorBase<Derived, ExpressionType>::emitPatchpoint(BasicBlock* bas
     }
 }
 
+template <typename Derived, typename ExpressionType>
+void AirIRGeneratorBase<Derived, ExpressionType>::emitThrowException(CCallHelpers& jit, ExceptionType type)
+{
+    jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(type)), GPRInfo::argumentGPR1);
+    auto jumpToExceptionStub = jit.jump();
 
+    jit.addLinkTask([jumpToExceptionStub](LinkBuffer& linkBuffer) {
+        linkBuffer.link(jumpToExceptionStub, CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(throwExceptionFromWasmThunkGenerator).code()));
+    });
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addTableInit(unsigned elementIndex, unsigned tableIndex, ExpressionType dstOffset, ExpressionType srcOffset, ExpressionType length) -> PartialResult
+{
+    ASSERT(dstOffset.tmp());
+    ASSERT(dstOffset.type().isI32());
+
+    ASSERT(srcOffset.tmp());
+    ASSERT(srcOffset.type().isI32());
+
+    ASSERT(length.tmp());
+    ASSERT(length.type().isI32());
+
+    auto result = tmpForType(Types::I32);
+    emitCCall(
+        &operationWasmTableInit, result, instanceValue(),
+        self().addConstant(Types::I32, elementIndex),
+        self().addConstant(Types::I32, tableIndex),
+        dstOffset, srcOffset, length);
+
+    emitCheck([&] {
+        return Inst(BranchTest32, nullptr, Arg::resCond(MacroAssembler::Zero), result, result);
+    }, [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+        this->emitThrowException(jit, ExceptionType::OutOfBoundsTableAccess);
+    });
+
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addElemDrop(unsigned elementIndex) -> PartialResult
+{
+    emitCCall(&operationWasmElemDrop, ExpressionType(), instanceValue(), self().addConstant(Types::I32, elementIndex));
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addTableSize(unsigned tableIndex, ExpressionType& result) -> PartialResult
+{
+    // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
+    result = tmpForType(Types::I32);
+
+    emitCCall(&operationGetWasmTableSize, result, instanceValue(), self().addConstant(Types::I32, tableIndex));
+
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addTableGrow(unsigned tableIndex, ExpressionType fill, ExpressionType delta, ExpressionType& result) -> PartialResult
+{
+    ASSERT(fill.tmp());
+    ASSERT(isSubtype(fill.type(), m_info.tables[tableIndex].wasmType()));
+    ASSERT(delta.tmp());
+    ASSERT(delta.type().isI32());
+    result = tmpForType(Types::I32);
+
+    emitCCall(&operationWasmTableGrow, result, instanceValue(), self().addConstant(Types::I32, tableIndex), fill, delta);
+
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addTableFill(unsigned tableIndex, ExpressionType offset, ExpressionType fill, ExpressionType count) -> PartialResult
+{
+    ASSERT(fill.tmp());
+    ASSERT(isSubtype(fill.type(), m_info.tables[tableIndex].wasmType()));
+    ASSERT(offset.tmp());
+    ASSERT(offset.type().isI32());
+    ASSERT(count.tmp());
+    ASSERT(count.type().isI32());
+
+    auto result = tmpForType(Types::I32);
+    emitCCall(&operationWasmTableFill, result, instanceValue(), self().addConstant(Types::I32, tableIndex), offset, fill, count);
+
+    emitCheck([&] {
+        return Inst(BranchTest32, nullptr, Arg::resCond(MacroAssembler::Zero), result, result);
+    }, [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+        this->emitThrowException(jit, ExceptionType::OutOfBoundsTableAccess);
+    });
+
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addTableCopy(unsigned dstTableIndex, unsigned srcTableIndex, ExpressionType dstOffset, ExpressionType srcOffset, ExpressionType length) -> PartialResult
+{
+    ASSERT(dstOffset.tmp());
+    ASSERT(dstOffset.type().isI32());
+
+    ASSERT(srcOffset.tmp());
+    ASSERT(srcOffset.type().isI32());
+
+    ASSERT(length.tmp());
+    ASSERT(length.type().isI32());
+
+    auto result = self().tmpForType(Types::I32);
+    emitCCall(
+        &operationWasmTableCopy, result, instanceValue(),
+        self().addConstant(Types::I32, dstTableIndex),
+        self().addConstant(Types::I32, srcTableIndex),
+        dstOffset, srcOffset, length);
+
+    emitCheck([&] {
+        return Inst(BranchTest32, nullptr, Arg::resCond(MacroAssembler::Zero), result, result);
+    }, [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+        this->emitThrowException(jit, ExceptionType::OutOfBoundsTableAccess);
+    });
+
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addTableGet(unsigned tableIndex, ExpressionType index, ExpressionType& result) -> PartialResult
+{
+    // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
+    ASSERT(index.tmp());
+
+    ASSERT(index.type().isI32());
+    result = self().tmpForType(m_info.tables[tableIndex].wasmType());
+
+    emitCCall(&operationGetWasmTableElement, result, instanceValue(), self().addConstant(Types::I32, tableIndex), index);
+
+    self().emitCheckI64Zero(result, [=, this](CCallHelpers &jit, const B3::StackmapGenerationParams &) {
+        this->emitThrowException(jit, ExceptionType::OutOfBoundsTableAccess);
+    });
+
+    return {};
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addTableSet(unsigned tableIndex, ExpressionType index, ExpressionType value) -> PartialResult
+{
+    // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
+    ASSERT(index.tmp());
+    ASSERT(index.type().isI32());
+    ASSERT(value.tmp());
+
+    auto shouldThrow = self().g32();
+    emitCCall(&operationSetWasmTableElement, shouldThrow, instanceValue(), self().addConstant(Types::I32, tableIndex), index, value);
+
+    emitCheck([&] { return Inst(BranchTest32, nullptr, Arg::resCond(MacroAssembler::Zero), shouldThrow, shouldThrow); }, [=, this](CCallHelpers& jit, const B3::StackmapGenerationParams&) { this->emitThrowException(jit, ExceptionType::OutOfBoundsTableAccess); });
+
+    return {};
+}
 
 
 } } // namespace JSC::Wasm
