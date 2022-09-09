@@ -177,6 +177,10 @@ private:
     ExpressionType emitCheckAndPreparePointer(ExpressionType pointer, uint32_t offset, uint32_t sizeOfOp);
     ExpressionType emitLoadOp(LoadOpType, ExpressionType pointer, uint32_t offset);
     void emitStoreOp(StoreOpType, ExpressionType pointer, ExpressionType value, uint32_t offset);
+    Tmp emitCatchImpl(CatchKind, ControlType&, unsigned exceptionIndex = 0);
+
+    template<size_t inlineCapacity>
+    PatchpointExceptionHandle preparePatchpointForExceptions(B3::PatchpointValue*, Vector<ConstrainedTmp, inlineCapacity>& args);
 
 public:
     // kludge while we add everything
@@ -234,29 +238,9 @@ public:
     PartialResult WARN_UNUSED_RETURN addSelect(ExpressionType condition, ExpressionType nonZero, ExpressionType zero, ExpressionType& result){ CRASH(); }
 
     // Control flow
-    ControlData WARN_UNUSED_RETURN addTopLevel(BlockSignature){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addBlock(BlockSignature, Stack& enclosingStack, ControlType& newBlock, Stack& newStack){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addLoop(BlockSignature, Stack& enclosingStack, ControlType& block, Stack& newStack, uint32_t loopIndex){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addIf(ExpressionType condition, BlockSignature, Stack& enclosingStack, ControlType& result, Stack& newStack){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addElse(ControlData&, const Stack&){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addElseToUnreachable(ControlData&){ CRASH(); }
-
-    PartialResult WARN_UNUSED_RETURN addTry(BlockSignature, Stack& enclosingStack, ControlType& result, Stack& newStack){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addCatch(unsigned exceptionIndex, const TypeDefinition&, Stack&, ControlType&, ResultList&){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addCatchToUnreachable(unsigned exceptionIndex, const TypeDefinition&, ControlType&, ResultList&){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addCatchAll(Stack&, ControlType&){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addCatchAllToUnreachable(ControlType&){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addDelegate(ControlType&, ControlType&){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addDelegateToUnreachable(ControlType&, ControlType&){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addThrow(unsigned exceptionIndex, Vector<ExpressionType>& args, Stack&){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addRethrow(unsigned, ControlType&){ CRASH(); }
-
-    PartialResult WARN_UNUSED_RETURN addReturn(const ControlData&, const Stack& returnValues){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addBranch(ControlData&, ExpressionType condition, const Stack& returnValues){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addSwitch(ExpressionType condition, const Vector<ControlData*>& targets, ControlData& defaultTargets, const Stack& expressionStack){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN endBlock(ControlEntry&, Stack& expressionStack){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addEndToUnreachable(ControlEntry&, const Stack& expressionStack = { }){ CRASH(); }
-
+    PartialResult WARN_UNUSED_RETURN addReturn(const ControlData&, const Stack& returnValues);
+    PartialResult WARN_UNUSED_RETURN addThrow(unsigned exceptionIndex, Vector<ExpressionType>& args, Stack&);
+    PartialResult WARN_UNUSED_RETURN addRethrow(unsigned, ControlType&);
 
     // Calls
     PartialResult WARN_UNUSED_RETURN addCall(uint32_t calleeIndex, const TypeDefinition&, Vector<ExpressionType>& args, ResultList& results){ CRASH(); }
@@ -708,6 +692,202 @@ auto AirIRGenerator32_64::store(StoreOpType op, ExpressionType pointer, Expressi
 
     return {};
 }
+
+template<size_t inlineCapacity>
+PatchpointExceptionHandle AirIRGenerator32_64::preparePatchpointForExceptions(B3::PatchpointValue* patch, Vector<ConstrainedTmp, inlineCapacity>& args)
+{
+    ++m_callSiteIndex;
+    if (!m_tryCatchDepth)
+        return { m_hasExceptionHandlers };
+
+    unsigned numLiveValues = 0;
+    forEachLiveValue([&](TypedTmp tmp) {
+        ++numLiveValues;
+        if (tmp.isGPPair()) {
+            ++numLiveValues;
+            args.append(ConstrainedTmp(tmp.lo(), B3::ValueRep::LateColdAny));
+            args.append(ConstrainedTmp(tmp.hi(), B3::ValueRep::LateColdAny));
+            return;
+        }
+        args.append(ConstrainedTmp(tmp.tmp(), B3::ValueRep::LateColdAny));
+    });
+
+    patch->effects.exitsSideways = true;
+
+    return { m_hasExceptionHandlers, m_callSiteIndex, numLiveValues };
+}
+
+Tmp AirIRGenerator32_64::emitCatchImpl(CatchKind kind, ControlType& data, unsigned exceptionIndex)
+{
+    m_currentBlock = m_code.addBlock();
+    m_catchEntrypoints.append(m_currentBlock);
+
+    if (ControlType::isTry(data)) {
+        if (kind == CatchKind::Catch)
+            data.convertTryToCatch(++m_callSiteIndex, g64());
+        else
+            data.convertTryToCatchAll(++m_callSiteIndex, g64());
+    }
+    // We convert from "try" to "catch" ControlType above. This doesn't
+    // happen if ControlType is already a "catch". This can happen when
+    // we have multiple catches like "try {} catch(A){} catch(B){}...CatchAll(E){}".
+    // We just convert the first ControlType to a catch, then the others will
+    // use its fields.
+    ASSERT(ControlType::isAnyCatch(data));
+
+    HandlerType handlerType = kind == CatchKind::Catch ? HandlerType::Catch : HandlerType::CatchAll;
+    m_exceptionHandlers.append({ handlerType, data.tryStart(), data.tryEnd(), 0, m_tryCatchDepth, exceptionIndex });
+
+    restoreWebAssemblyGlobalState(RestoreCachedStackLimit::Yes, m_info.memory, instanceValue(), m_currentBlock);
+
+    unsigned indexInBuffer = 0;
+    auto loadFromScratchBuffer = [&] (TypedTmp result) {
+        Tmp bufferPtr = Tmp(GPRInfo::argumentGPR0);
+        if (result.isGPPair()) {
+            emitLoad(bufferPtr, sizeof(uint64_t) * indexInBuffer++, TypedTmp(result.lo(), Types::I32));
+            emitLoad(bufferPtr, sizeof(uint64_t) * indexInBuffer++, TypedTmp(result.hi(), Types::I32));
+            return;
+        }
+        emitLoad(bufferPtr, sizeof(uint64_t) * indexInBuffer++, result);
+        return;
+    };
+    forEachLiveValue([&] (TypedTmp tmp) {
+        // We set our current ControlEntry's exception below after the patchpoint, it's
+        // not in the incoming buffer of live values.
+        if (tmp != data.exception())
+            loadFromScratchBuffer(tmp);
+    });
+
+    Vector<B3::Type> resultTypes {B3::pointerType(), B3::Int32, B3::Int32};
+    B3::PatchpointValue* patch = addPatchpoint(m_proc.addTuple(WTFMove(resultTypes)));
+    patch->effects.exitsSideways = true;
+    patch->clobber(RegisterSet::macroScratchRegisters());
+    RegisterSet clobberLate = RegisterSet::volatileRegistersForCCall();
+    clobberLate.add(GPRInfo::argumentGPR0);
+    clobberLate.add(GPRInfo::argumentGPR1);
+    patch->clobberLate(clobberLate);
+    patch->resultConstraints.append(B3::ValueRep::reg(GPRInfo::returnValueGPR));
+    patch->resultConstraints.append(B3::ValueRep::SomeRegister);
+    patch->resultConstraints.append(B3::ValueRep::SomeRegister); // result Tag
+    patch->setGenerator([=] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        // Returning one EncodedJSValue on the stack
+        constexpr int32_t resultSpace = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(static_cast<int32_t>(sizeof(EncodedJSValue)));
+        jit.subPtr(CCallHelpers::TrustedImm32(resultSpace), MacroAssembler::stackPointerRegister);
+        jit.move(params[3].gpr(), GPRInfo::argumentGPR0);
+        jit.move(MacroAssembler::stackPointerRegister, GPRInfo::argumentGPR1);
+        CCallHelpers::Call call = jit.call(OperationPtrTag);
+        jit.addLinkTask([call] (LinkBuffer& linkBuffer) {
+            linkBuffer.link<OperationPtrTag>(call, operationWasmRetrieveAndClearExceptionIfCatchable);
+        });
+        jit.load32(CCallHelpers::Address(MacroAssembler::stackPointerRegister, TagOffset), params[2].gpr());
+        jit.loadPtr(CCallHelpers::Address(MacroAssembler::stackPointerRegister, PayloadOffset), params[1].gpr());
+        jit.addPtr(CCallHelpers::TrustedImm32(resultSpace), MacroAssembler::stackPointerRegister);
+    });
+    TypedTmp buffer = TypedTmp(Tmp(GPRInfo::returnValueGPR), is64Bit() ? Types::I64 : Types::I32);
+    TypedTmp exceptionLo = TypedTmp(data.exception().lo(), Types::I32);
+    TypedTmp exceptionHi = TypedTmp(data.exception().hi(), Types::I32);
+    emitPatchpoint(m_currentBlock, patch, Vector<TypedTmp, 8>::from(buffer, exceptionLo, exceptionHi), Vector<ConstrainedTmp, 1>::from(instanceValue()));
+    return buffer;
+}
+
+auto AirIRGenerator32_64::addReturn(const ControlData& data, const Stack& returnValues) -> PartialResult
+{
+    CallInformation wasmCallInfo = wasmCallingConvention().callInformationFor(*data.signature(), CallRole::Callee);
+    if (!wasmCallInfo.results.size()) {
+        append(RetVoid);
+        return { };
+    }
+
+    B3::PatchpointValue* patch = addPatchpoint(B3::Void);
+    patch->setGenerator([] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        auto calleeSaves = params.code().calleeSaveRegisterAtOffsetList();
+        jit.emitRestore(calleeSaves);
+        jit.emitFunctionEpilogue();
+        jit.ret();
+    });
+    patch->effects.terminal = true;
+
+    ASSERT(returnValues.size() >= wasmCallInfo.results.size());
+    unsigned offset = returnValues.size() - wasmCallInfo.results.size();
+    Vector<ConstrainedTmp, 8> returnConstraints;
+    for (unsigned i = 0; i < wasmCallInfo.results.size(); ++i) {
+        B3::ValueRep rep = wasmCallInfo.results[i];
+        TypedTmp tmp = returnValues[offset + i];
+
+        if (rep.isStack()) {
+            append(moveForType(toB3Type(tmp.type())), tmp, Arg::addr(Tmp(GPRInfo::callFrameRegister), rep.offsetFromFP()));
+            continue;
+        }
+
+        ASSERT(rep.isReg());
+        if (tmp.isGPPair()) {
+            JSValueRegs jsr = wasmCallInfo.results[i].jsr();
+            returnConstraints.append(ConstrainedTmp(tmp.lo(), B3::ValueRep { jsr.payloadGPR() }));
+            returnConstraints.append(ConstrainedTmp(tmp.hi(), B3::ValueRep { jsr.tagGPR() }));
+        } else
+            returnConstraints.append(ConstrainedTmp(tmp, rep));
+    }
+
+    emitPatchpoint(m_currentBlock, patch, ResultList { }, WTFMove(returnConstraints));
+    return { };
+}
+
+auto AirIRGenerator32_64::addThrow(unsigned exceptionIndex, Vector<ExpressionType>& args, Stack&) -> PartialResult
+{
+    B3::PatchpointValue* patch = addPatchpoint(B3::Void);
+    patch->effects.terminal = true;
+    patch->clobber(RegisterSet::volatileRegistersForJSCall());
+
+    Vector<ConstrainedTmp, 8> patchArgs;
+    patchArgs.append(ConstrainedTmp(instanceValue(), B3::ValueRep::reg(GPRInfo::argumentGPR0)));
+    patchArgs.append(ConstrainedTmp(Tmp(GPRInfo::callFrameRegister), B3::ValueRep::reg(GPRInfo::argumentGPR1)));
+    for (unsigned i = 0; i < args.size(); ++i) {
+        if (args[i].isGPPair()) {
+            patchArgs.append(ConstrainedTmp(args[i].lo(), B3::ValueRep::stackArgument(i * sizeof(EncodedJSValue) + PayloadOffset)));
+            patchArgs.append(ConstrainedTmp(args[i].hi(), B3::ValueRep::stackArgument(i * sizeof(EncodedJSValue) + TagOffset)));
+            continue;
+        }
+        patchArgs.append(ConstrainedTmp(args[i], B3::ValueRep::stackArgument(i * sizeof(EncodedJSValue))));
+    }
+
+    PatchpointExceptionHandle handle = preparePatchpointForExceptions(patch, patchArgs);
+
+    patch->setGenerator([this, exceptionIndex, handle] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        handle.generate(jit, params, this);
+        emitThrowImpl(jit, exceptionIndex);
+    });
+
+    emitPatchpoint(m_currentBlock, patch, Tmp(), WTFMove(patchArgs));
+
+    return { };
+}
+
+auto AirIRGenerator32_64::addRethrow(unsigned, ControlType& data) -> PartialResult
+{
+    B3::PatchpointValue* patch = addPatchpoint(B3::Void);
+    patch->clobber(RegisterSet::volatileRegistersForJSCall());
+    patch->effects.terminal = true;
+
+    Vector<ConstrainedTmp, 3> patchArgs;
+    patchArgs.append(ConstrainedTmp(instanceValue(), B3::ValueRep::reg(GPRInfo::argumentGPR0)));
+    patchArgs.append(ConstrainedTmp(Tmp(GPRInfo::callFrameRegister), B3::ValueRep::reg(GPRInfo::argumentGPR1)));
+    patchArgs.append(ConstrainedTmp(data.exception().lo(), B3::ValueRep::reg(GPRInfo::argumentGPR2)));
+    patchArgs.append(ConstrainedTmp(data.exception().hi(), B3::ValueRep::reg(GPRInfo::argumentGPR3)));
+
+    PatchpointExceptionHandle handle = preparePatchpointForExceptions(patch, patchArgs);
+    patch->setGenerator([this, handle] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        handle.generate(jit, params, this);
+        emitRethrowImpl(jit);
+    });
+
+    emitPatchpoint(m_currentBlock, patch, Tmp(), WTFMove(patchArgs));
+
+    return { };
+}
+
 
 Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAir(CompilationContext& compilationContext, const FunctionData& function, const TypeDefinition& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, const ModuleInformation& info, MemoryMode mode, uint32_t functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp)
 {

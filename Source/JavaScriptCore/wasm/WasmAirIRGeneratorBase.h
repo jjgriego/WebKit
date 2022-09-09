@@ -240,6 +240,7 @@ struct AirIRGeneratorBase {
 
     private:
         friend Derived;
+        friend AirIRGeneratorBase;
         BlockType controlBlockType;
         BasicBlock* continuation;
         BasicBlock* special;
@@ -302,6 +303,7 @@ struct AirIRGeneratorBase {
 
 protected:
     void emitEntryTierUpCheck();
+    void emitLoopTierUpCheck(uint32_t loopIndex, const Vector<ExpressionType>& liveValues);
 
     ////////////////////////////////////////////////////////////////////////////////
     // Manipulating air code
@@ -471,6 +473,37 @@ protected:
     enum class RestoreCachedStackLimit { No, Yes };
     void restoreWebAssemblyGlobalState(RestoreCachedStackLimit, const MemoryInformation&, ExpressionType instance, BasicBlock*);
 
+    template<typename Function>
+    void forEachLiveValue(Function&& function)
+    {
+        for (const auto& local : m_locals)
+            function(local);
+        for (unsigned controlIndex = 0; controlIndex < m_parser->controlStack().size(); ++controlIndex) {
+            ControlData& data = m_parser->controlStack()[controlIndex].controlData;
+            Stack& expressionStack = m_parser->controlStack()[controlIndex].enclosedExpressionStack;
+            for (const auto& tmp : expressionStack)
+                function(tmp.value());
+            if (ControlType::isAnyCatch(data))
+                function(data.exception());
+        }
+    }
+
+    B3::Origin origin()
+    {
+        // FIXME: We should implement a way to give Inst's an origin, and pipe that
+        // information into the sampling profiler: https://bugs.webkit.org/show_bug.cgi?id=234182
+        return B3::Origin();
+    }
+
+    void unifyValuesWithBlock(const Stack& resultStack, const ResultList& stack);
+
+    uint32_t outerLoopIndex() const
+    {
+        if (m_outerLoops.isEmpty())
+            return UINT32_MAX;
+        return m_outerLoops.last();
+    }
+
 public:
     void setParser(FunctionParser<Derived>* parser)
     {
@@ -577,6 +610,9 @@ public:
     ControlData addTopLevel(BlockSignature);
     PartialResult WARN_UNUSED_RETURN endTopLevel(BlockSignature, const Stack&) { return {}; }
 
+
+    ExpressionType addBottom(BasicBlock*, Type);
+
     // References
     //                               addRefIsNull (in derived classes)
     PartialResult WARN_UNUSED_RETURN addRefFunc(uint32_t index, ExpressionType& result);
@@ -600,6 +636,30 @@ public:
     PartialResult WARN_UNUSED_RETURN addMemoryCopy(ExpressionType dstAddress, ExpressionType srcAddress, ExpressionType count);
     PartialResult WARN_UNUSED_RETURN addMemoryInit(unsigned, ExpressionType dstAddress, ExpressionType srcAddress, ExpressionType length);
     PartialResult WARN_UNUSED_RETURN addDataDrop(unsigned);
+
+    // Control flow
+    //                               addReturn (in derived classes)
+    PartialResult WARN_UNUSED_RETURN addBlock(BlockSignature, Stack& enclosingStack, ControlType& newBlock, Stack& newStack);
+    PartialResult WARN_UNUSED_RETURN addLoop(BlockSignature, Stack& enclosingStack, ControlType& block, Stack& newStack, uint32_t loopIndex);
+    PartialResult WARN_UNUSED_RETURN addIf(ExpressionType condition, BlockSignature, Stack& enclosingStack, ControlType& result, Stack& newStack);
+    PartialResult WARN_UNUSED_RETURN addElse(ControlData&, const Stack&);
+    PartialResult WARN_UNUSED_RETURN addElseToUnreachable(ControlData&);
+
+    PartialResult WARN_UNUSED_RETURN addTry(BlockSignature, Stack& enclosingStack, ControlType& result, Stack& newStack);
+    PartialResult WARN_UNUSED_RETURN addCatch(unsigned exceptionIndex, const TypeDefinition&, Stack&, ControlType&, ResultList&);
+    PartialResult WARN_UNUSED_RETURN addCatchToUnreachable(unsigned exceptionIndex, const TypeDefinition&, ControlType&, ResultList&);
+    PartialResult WARN_UNUSED_RETURN addCatchAll(Stack&, ControlType&);
+    PartialResult WARN_UNUSED_RETURN addCatchAllToUnreachable(ControlType&);
+    PartialResult WARN_UNUSED_RETURN addDelegate(ControlType&, ControlType&);
+    PartialResult WARN_UNUSED_RETURN addDelegateToUnreachable(ControlType&, ControlType&);
+    //                               addThrow
+    //                               addRethrow (in derived classes)
+
+    PartialResult WARN_UNUSED_RETURN addBranch(ControlData&, ExpressionType condition, const Stack& returnValues);
+    PartialResult WARN_UNUSED_RETURN addSwitch(ExpressionType condition, const Vector<ControlData*>& targets, ControlData& defaultTargets, const Stack& expressionStack);
+    PartialResult WARN_UNUSED_RETURN endBlock(ControlEntry&, Stack& expressionStack);
+    PartialResult WARN_UNUSED_RETURN addEndToUnreachable(ControlEntry&, const Stack& expressionStack = { });
+
 
     ////////////////////////////////////////////////////////////////////////////////
     // debug utilities
@@ -994,6 +1054,72 @@ void AirIRGeneratorBase<Derived, ExpressionType>::emitEntryTierUpCheck()
 }
 
 template <typename Derived, typename ExpressionType>
+void AirIRGeneratorBase<Derived, ExpressionType>::emitLoopTierUpCheck(uint32_t loopIndex, const Vector<ExpressionType>& liveValues)
+{
+    uint32_t outerLoopIndex = this->outerLoopIndex();
+    m_outerLoops.append(loopIndex);
+
+    if (!m_tierUp)
+        return;
+
+    ASSERT(m_tierUp->osrEntryTriggers().size() == loopIndex);
+    m_tierUp->osrEntryTriggers().append(TierUpCount::TriggerReason::DontTrigger);
+    m_tierUp->outerLoops().append(outerLoopIndex);
+
+    auto countdownPtr = self().gPtr();
+    append(Move, Arg::bigImm(bitwise_cast<uintptr_t>(&m_tierUp->m_counter)), countdownPtr);
+
+    auto* patch = addPatchpoint(B3::Void);
+    B3::Effects effects = B3::Effects::none();
+    effects.reads = B3::HeapRange::top();
+    effects.writes = B3::HeapRange::top();
+    effects.exitsSideways = true;
+    patch->effects = effects;
+
+    patch->clobber(RegisterSet::macroScratchRegisters());
+    RegisterSet clobberLate;
+    clobberLate.add(GPRInfo::argumentGPR0);
+    patch->clobberLate(clobberLate);
+
+    Vector<ConstrainedTmp> patchArgs;
+    patchArgs.append(countdownPtr);
+    for (const auto& tmp : liveValues)
+        patchArgs.append(ConstrainedTmp(tmp.tmp(), B3::ValueRep::ColdAny));
+
+    TierUpCount::TriggerReason* forceEntryTrigger = &(m_tierUp->osrEntryTriggers().last());
+    static_assert(!static_cast<uint8_t>(TierUpCount::TriggerReason::DontTrigger), "the JIT code assumes non-zero means 'enter'");
+    static_assert(sizeof(TierUpCount::TriggerReason) == 1, "branchTest8 assumes this size");
+    patch->setGenerator([=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        CCallHelpers::Jump forceOSREntry = jit.branchTest8(CCallHelpers::NonZero, CCallHelpers::AbsoluteAddress(forceEntryTrigger));
+        CCallHelpers::Jump tierUp = jit.branchAdd32(CCallHelpers::PositiveOrZero, CCallHelpers::TrustedImm32(TierUpCount::loopIncrement()), CCallHelpers::Address(params[0].gpr()));
+        MacroAssembler::Label tierUpResume = jit.label();
+
+        // First argument is the countdown location.
+        ASSERT(params.value()->numChildren() >= 1);
+        StackMap values(params.value()->numChildren() - 1);
+        for (unsigned i = 1; i < params.value()->numChildren(); ++i)
+            values[i - 1] = OSREntryValue(params[i], params.value()->child(i)->type());
+
+        OSREntryData& osrEntryData = m_tierUp->addOSREntryData(m_functionIndex, loopIndex, WTFMove(values));
+        OSREntryData* osrEntryDataPtr = &osrEntryData;
+
+        params.addLatePath([=] (CCallHelpers& jit) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            forceOSREntry.link(&jit);
+            tierUp.link(&jit);
+
+            jit.probe(tagCFunction<JITProbePtrTag>(operationWasmTriggerOSREntryNow), osrEntryDataPtr);
+            jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::argumentGPR0).linkTo(tierUpResume, &jit);
+            jit.farJump(GPRInfo::argumentGPR1, WasmEntryPtrTag);
+        });
+    });
+
+    emitPatchpoint(m_currentBlock, patch, ResultList { }, WTFMove(patchArgs));
+}
+
+
+template <typename Derived, typename ExpressionType>
 template <typename ResultTmpType, size_t inlineSize>
 void AirIRGeneratorBase<Derived, ExpressionType>::emitPatchpoint(BasicBlock* basicBlock, B3::PatchpointValue* patch, const Vector<ResultTmpType, 8>& results, Vector<ConstrainedTmp, inlineSize>&& args)
 {
@@ -1173,6 +1299,12 @@ void AirIRGeneratorBase<Derived, ExpressionType>::restoreWebAssemblyGlobalState(
     }
 }
 
+template<typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addBottom(BasicBlock* block, Type type) -> ExpressionType
+{
+    append(block, B3::Air::Oops);
+    return self().addConstant(type, 0);
+}
 
 template <typename Derived, typename ExpressionType>
 auto AirIRGeneratorBase<Derived, ExpressionType>::addRefFunc(uint32_t index, ExpressionType& result) -> PartialResult
@@ -1528,6 +1660,327 @@ auto AirIRGeneratorBase<Derived, ExpressionType>::addDataDrop(unsigned dataSegme
 {
     emitCCall(&operationWasmDataDrop, ExpressionType(), instanceValue(), self().addConstant(Types::I32, dataSegmentIndex));
     return {};
+}
+
+template <typename Derived, typename ExpressionType>
+void AirIRGeneratorBase<Derived, ExpressionType>::unifyValuesWithBlock(const Stack& resultStack, const ResultList& result)
+{
+    ASSERT(result.size() <= resultStack.size());
+
+    for (size_t i = 0; i < result.size(); ++i)
+        self().emitMove(resultStack[resultStack.size() - 1 - i], result[result.size() - 1 - i]);
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addLoop(BlockSignature signature, Stack& enclosingStack, ControlType& block, Stack& newStack, uint32_t loopIndex) -> PartialResult
+{
+    RELEASE_ASSERT(loopIndex == m_loopEntryVariableData.size());
+
+    BasicBlock* body = m_code.addBlock();
+    BasicBlock* continuation = m_code.addBlock();
+
+    splitStack(signature, enclosingStack, newStack);
+
+    Vector<ExpressionType> liveValues;
+    forEachLiveValue([&] (auto tmp) {
+        liveValues.append(tmp);
+    });
+    for (auto variable : enclosingStack)
+        liveValues.append(variable);
+    for (auto variable : newStack)
+        liveValues.append(variable);
+
+    ResultList results;
+    results.reserveInitialCapacity(newStack.size());
+    for (auto item : newStack)
+        results.uncheckedAppend(item);
+    block = ControlData(origin(), signature, WTFMove(results), BlockType::Loop, continuation, body);
+
+    append(Jump);
+    m_currentBlock->setSuccessors(body);
+
+    m_currentBlock = body;
+    emitLoopTierUpCheck(loopIndex, liveValues);
+
+    m_loopEntryVariableData.append(std::pair<BasicBlock*, Vector<ExpressionType>>(body, WTFMove(liveValues)));
+
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addBlock(BlockSignature signature, Stack& enclosingStack, ControlType& newBlock, Stack& newStack) -> PartialResult
+{
+    splitStack(signature, enclosingStack, newStack);
+    newBlock = ControlData(origin(), signature, tmpsForSignature(signature), BlockType::Block, m_code.addBlock());
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addIf(ExpressionType condition, BlockSignature signature, Stack& enclosingStack, ControlType& result, Stack& newStack) -> PartialResult
+{
+    BasicBlock* taken = m_code.addBlock();
+    BasicBlock* notTaken = m_code.addBlock();
+    BasicBlock* continuation = m_code.addBlock();
+    B3::FrequencyClass takenFrequency = B3::FrequencyClass::Normal;
+    B3::FrequencyClass notTakenFrequency= B3::FrequencyClass::Normal;
+
+    if (Options::useWebAssemblyBranchHints()) {
+        BranchHint hint = m_info.getBranchHint(m_functionIndex, m_parser->currentOpcodeStartingOffset());
+
+        switch (hint) {
+        case BranchHint::Unlikely:
+            takenFrequency = B3::FrequencyClass::Rare;
+            break;
+        case BranchHint::Likely:
+            notTakenFrequency = B3::FrequencyClass::Rare;
+            break;
+        case BranchHint::Invalid:
+            break;
+        }
+    }
+
+    // Wasm bools are i32.
+    append(BranchTest32, Arg::resCond(MacroAssembler::NonZero), condition, condition);
+    m_currentBlock->setSuccessors(FrequentedBlock(taken, takenFrequency), FrequentedBlock(notTaken, notTakenFrequency));
+
+    m_currentBlock = taken;
+    splitStack(signature, enclosingStack, newStack);
+    result = ControlData(origin(), signature, tmpsForSignature(signature), BlockType::If, continuation, notTaken);
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addElse(ControlData& data, const Stack& currentStack) -> PartialResult
+{
+    unifyValuesWithBlock(currentStack, data.results);
+    append(Jump);
+    m_currentBlock->setSuccessors(data.continuation);
+    return addElseToUnreachable(data);
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addElseToUnreachable(ControlData& data) -> PartialResult
+{
+    ASSERT(data.blockType() == BlockType::If);
+    m_currentBlock = data.special;
+    data.convertIfToBlock();
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addTry(BlockSignature signature, Stack& enclosingStack, ControlType& result, Stack& newStack) -> PartialResult
+{
+    ++m_tryCatchDepth;
+
+    BasicBlock* continuation = m_code.addBlock();
+    splitStack(signature, enclosingStack, newStack);
+    result = ControlData(origin(), signature, tmpsForSignature(signature), BlockType::Try, continuation, ++m_callSiteIndex, m_tryCatchDepth);
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addCatch(unsigned exceptionIndex, const TypeDefinition& signature, Stack& currentStack, ControlType& data, ResultList& results) -> PartialResult
+{
+    unifyValuesWithBlock(currentStack, data.results);
+    append(Jump);
+    m_currentBlock->setSuccessors(data.continuation);
+    return addCatchToUnreachable(exceptionIndex, signature, data, results);
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addCatchAll(Stack& currentStack, ControlType& data) -> PartialResult
+{
+    unifyValuesWithBlock(currentStack, data.results);
+    append(Jump);
+    m_currentBlock->setSuccessors(data.continuation);
+    return addCatchAllToUnreachable(data);
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addCatchToUnreachable(unsigned exceptionIndex, const TypeDefinition& signature, ControlType& data, ResultList& results) -> PartialResult
+{
+    Tmp buffer = self().emitCatchImpl(CatchKind::Catch, data, exceptionIndex);
+    for (unsigned i = 0; i < signature.as<FunctionSignature>()->argumentCount(); ++i) {
+        Type type = signature.as<FunctionSignature>()->argumentType(i);
+        auto tmp = tmpForType(type);
+        self().emitLoad(buffer, i * sizeof(uint64_t), tmp);
+        results.append(tmp);
+    }
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addCatchAllToUnreachable(ControlType& data) -> PartialResult
+{
+    self().emitCatchImpl(CatchKind::CatchAll, data);
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addDelegate(ControlType& target, ControlType& data) -> PartialResult
+{
+    return addDelegateToUnreachable(target, data);
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addDelegateToUnreachable(ControlType& target, ControlType& data) -> PartialResult
+{
+    unsigned targetDepth = 0;
+    if (ControlType::isTry(target))
+        targetDepth = target.tryDepth();
+
+    m_exceptionHandlers.append({ HandlerType::Delegate, data.tryStart(), ++m_callSiteIndex, 0, m_tryCatchDepth, targetDepth });
+    return {};
+}
+
+// NOTE: All branches in Wasm are on 32-bit ints
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addBranch(ControlData& data, ExpressionType condition, const Stack& returnValues) -> PartialResult
+{
+    unifyValuesWithBlock(returnValues, data.results);
+
+    BasicBlock* target = data.targetBlockForBranch();
+    B3::FrequencyClass targetFrequency = B3::FrequencyClass::Normal;
+    B3::FrequencyClass continuationFrequency = B3::FrequencyClass::Normal;
+
+    if (Options::useWebAssemblyBranchHints()) {
+        BranchHint hint = m_info.getBranchHint(m_functionIndex, m_parser->currentOpcodeStartingOffset());
+
+        switch (hint) {
+        case BranchHint::Unlikely:
+            targetFrequency = B3::FrequencyClass::Rare;
+            break;
+        case BranchHint::Likely:
+            continuationFrequency = B3::FrequencyClass::Rare;
+            break;
+        case BranchHint::Invalid:
+            break;
+        }
+    }
+
+    if (condition) {
+        BasicBlock* continuation = m_code.addBlock();
+        append(BranchTest32, Arg::resCond(MacroAssembler::NonZero), condition, condition);
+        m_currentBlock->setSuccessors(FrequentedBlock(target, targetFrequency), FrequentedBlock(continuation, continuationFrequency));
+        m_currentBlock = continuation;
+    } else {
+        append(Jump);
+        m_currentBlock->setSuccessors(FrequentedBlock(target, targetFrequency));
+    }
+
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addSwitch(ExpressionType condition, const Vector<ControlData*>& targets, ControlData& defaultTarget, const Stack& expressionStack) -> PartialResult
+{
+    auto& successors = m_currentBlock->successors();
+    ASSERT(successors.isEmpty());
+    for (const auto& target : targets) {
+        unifyValuesWithBlock(expressionStack, target->results);
+        successors.append(target->targetBlockForBranch());
+    }
+    unifyValuesWithBlock(expressionStack, defaultTarget.results);
+    successors.append(defaultTarget.targetBlockForBranch());
+
+    ASSERT(condition.type().isI32());
+
+    // FIXME: We should consider dynamically switching between a jump table
+    // and a binary switch depending on the number of successors.
+    // https://bugs.webkit.org/show_bug.cgi?id=194477
+
+    size_t numTargets = targets.size();
+
+    auto* patchpoint = addPatchpoint(B3::Void);
+    patchpoint->effects = B3::Effects::none();
+    patchpoint->effects.terminal = true;
+    patchpoint->clobber(RegisterSet::macroScratchRegisters());
+
+    patchpoint->setGenerator([=] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+
+        Vector<int64_t> cases;
+        cases.reserveInitialCapacity(numTargets);
+        for (size_t i = 0; i < numTargets; ++i)
+            cases.uncheckedAppend(i);
+
+        GPRReg valueReg = params[0].gpr();
+        BinarySwitch binarySwitch(valueReg, cases, BinarySwitch::Int32);
+
+        Vector<CCallHelpers::Jump> caseJumps;
+        caseJumps.resize(numTargets);
+
+        while (binarySwitch.advance(jit)) {
+            unsigned value = binarySwitch.caseValue();
+            unsigned index = binarySwitch.caseIndex();
+            ASSERT_UNUSED(value, value == index);
+            ASSERT(index < numTargets);
+            caseJumps[index] = jit.jump();
+        }
+
+        CCallHelpers::JumpList fallThrough = binarySwitch.fallThrough();
+
+        Vector<Box<CCallHelpers::Label>> successorLabels = params.successorLabels();
+        ASSERT(successorLabels.size() == caseJumps.size() + 1);
+
+        params.addLatePath([=, caseJumps = WTFMove(caseJumps), successorLabels = WTFMove(successorLabels)] (CCallHelpers& jit) {
+            for (size_t i = 0; i < numTargets; ++i)
+                caseJumps[i].linkTo(*successorLabels[i], &jit);                
+            fallThrough.linkTo(*successorLabels[numTargets], &jit);
+        });
+    });
+
+    emitPatchpoint(patchpoint, ExpressionType(), condition);
+
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::endBlock(ControlEntry& entry, Stack& expressionStack) -> PartialResult
+{
+    ControlData& data = entry.controlData;
+
+    if (data.blockType() != BlockType::Loop)
+        unifyValuesWithBlock(expressionStack, data.results);
+    append(Jump);
+    m_currentBlock->setSuccessors(data.continuation);
+
+    return addEndToUnreachable(entry, expressionStack);
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addEndToUnreachable(ControlEntry& entry, const Stack& expressionStack) -> PartialResult
+{
+    ControlData& data = entry.controlData;
+    m_currentBlock = data.continuation;
+
+    if (data.blockType() == BlockType::If) {
+        append(data.special, Jump);
+        data.special->setSuccessors(m_currentBlock);
+    } else if (data.blockType() == BlockType::Try || data.blockType() == BlockType::Catch)
+        --m_tryCatchDepth;
+
+    if (data.blockType() == BlockType::Loop) {
+        m_outerLoops.removeLast();
+        for (unsigned i = 0; i < data.signature()->template as<FunctionSignature>()->returnCount(); ++i) {
+            if (i < expressionStack.size())
+                entry.enclosedExpressionStack.append(expressionStack[i]);
+            else {
+                Type type = data.signature()->template as<FunctionSignature>()->returnType(i);
+                entry.enclosedExpressionStack.constructAndAppend(type, addBottom(m_currentBlock, type));
+            }
+        }
+    } else {
+        for (unsigned i = 0; i < data.signature()->template as<FunctionSignature>()->returnCount(); ++i)
+            entry.enclosedExpressionStack.constructAndAppend(data.signature()->template as<FunctionSignature>()->returnType(i), data.results[i]);
+    }
+
+    // TopLevel does not have any code after this so we need to make sure we emit a return here.
+    if (data.blockType() == BlockType::TopLevel)
+        return self().addReturn(data, entry.enclosedExpressionStack);
+
+    return { };
 }
 
 } } // namespace JSC::Wasm

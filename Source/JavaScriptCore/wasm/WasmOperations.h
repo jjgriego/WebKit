@@ -93,12 +93,22 @@ JSC_DECLARE_JIT_OPERATION(operationWasmThrow, void*, (Instance*, CallFrame*, uns
 JSC_DECLARE_JIT_OPERATION(operationWasmRethrow, void*, (Instance*, CallFrame*, EncodedJSValue thrownValue));
 
 JSC_DECLARE_JIT_OPERATION(operationWasmToJSException, void*, (CallFrame*, Wasm::ExceptionType, Instance*));
-struct PointerPair {
-    void* first;
-    void* second;
-};
-JSC_DECLARE_JIT_OPERATION(operationWasmRetrieveAndClearExceptionIfCatchable, PointerPair, (Instance*));
 
-} } // namespace JSC::Wasm
+struct ThrownExceptionInfo {
+    EncodedJSValue thrownValue;
+    void* payload;
+};
+
+#if USE(JSVALUE64)
+JSC_DECLARE_JIT_OPERATION(operationWasmRetrieveAndClearExceptionIfCatchable, ThrownExceptionInfo, (Instance*));
+#else
+/* On 32-bit platforms, we can't return both an EncodedJSValue and the payload
+ * together (not enough return registers are available in the ABI and we don't
+ * handle stack arguments when calling C functions), so, instead, return the
+ * payload and return the thrown value via an out pointer */
+JSC_DECLARE_JIT_OPERATION(operationWasmRetrieveAndClearExceptionIfCatchable, void*, (Instance*, EncodedJSValue*));
+#endif // USE(JSVALUE64)
+}
+} // namespace JSC::Wasm
 
 #endif // ENABLE(WEBASSEMBLY)
