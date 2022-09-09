@@ -102,12 +102,6 @@ public:
     // Memory
     PartialResult WARN_UNUSED_RETURN load(LoadOpType, ExpressionType pointer, ExpressionType& result, uint32_t offset);
     PartialResult WARN_UNUSED_RETURN store(StoreOpType, ExpressionType pointer, ExpressionType value, uint32_t offset);
-    PartialResult WARN_UNUSED_RETURN addGrowMemory(ExpressionType delta, ExpressionType& result);
-    PartialResult WARN_UNUSED_RETURN addCurrentMemory(ExpressionType& result);
-    PartialResult WARN_UNUSED_RETURN addMemoryFill(ExpressionType dstAddress, ExpressionType targetValue, ExpressionType count);
-    PartialResult WARN_UNUSED_RETURN addMemoryCopy(ExpressionType dstAddress, ExpressionType srcAddress, ExpressionType count);
-    PartialResult WARN_UNUSED_RETURN addMemoryInit(unsigned, ExpressionType dstAddress, ExpressionType srcAddress, ExpressionType length);
-    PartialResult WARN_UNUSED_RETURN addDataDrop(unsigned);
 
     // Atomics
     PartialResult WARN_UNUSED_RETURN atomicLoad(ExtAtomicOpType, Type, ExpressionType pointer, ExpressionType& result, uint32_t offset);
@@ -189,6 +183,9 @@ private:
     TypedTmp gRef(Type type) { return { newTmp(B3::GP), type }; }
     TypedTmp f32() { return { newTmp(B3::FP), Types::F32 }; }
     TypedTmp f64() { return { newTmp(B3::FP), Types::F64 }; }
+
+    static auto constexpr AddPtr = Add64;
+    static auto constexpr UrshiftPtr = Urshift64;
 
     static Arg extractArg(const TypedTmp& tmp) { return tmp.tmp(); }
     static Arg extractArg(const Tmp& tmp) { return Arg(tmp); }
@@ -275,12 +272,7 @@ private:
 
     PartialResult addFloatingPointMinOrMax(Type, MinOrMax, ExpressionType lhs, ExpressionType rhs, ExpressionType& result);
 
-    int32_t WARN_UNUSED_RETURN fixupPointerPlusOffset(ExpressionType&, uint32_t);
     ExpressionType WARN_UNUSED_RETURN fixupPointerPlusOffsetForAtomicOps(ExtAtomicOpType, ExpressionType, uint32_t);
-
-    void restoreWasmContextInstance(BasicBlock*, TypedTmp);
-    enum class RestoreCachedStackLimit { No, Yes };
-    void restoreWebAssemblyGlobalState(RestoreCachedStackLimit, const MemoryInformation&, TypedTmp instance, BasicBlock*);
 
     B3::Origin origin();
 
@@ -305,49 +297,6 @@ private:
 
 };
 
-// Memory accesses in WebAssembly have unsigned 32-bit offsets, whereas they have signed 32-bit offsets in B3.
-int32_t AirIRGenerator64::fixupPointerPlusOffset(ExpressionType& ptr, uint32_t offset)
-{
-    if (static_cast<uint64_t>(offset) > static_cast<uint64_t>(std::numeric_limits<int32_t>::max())) {
-        auto previousPtr = ptr;
-        ptr = g64();
-        auto constant = g64();
-        append(Move, Arg::bigImm(offset), constant);
-        append(Add64, constant, previousPtr, ptr);
-        return 0;
-    }
-    return offset;
-}
-
-void AirIRGenerator64::restoreWasmContextInstance(BasicBlock* block, TypedTmp instance)
-{
-    if (Context::useFastTLS()) {
-        auto* patchpoint = addPatchpoint(B3::Void);
-        if (CCallHelpers::storeWasmContextInstanceNeedsMacroScratchRegister())
-            patchpoint->clobber(RegisterSet::macroScratchRegisters());
-        patchpoint->setGenerator([=] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-            AllowMacroScratchRegisterUsageIf allowScratch(jit, CCallHelpers::storeWasmContextInstanceNeedsMacroScratchRegister());
-            jit.storeWasmContextInstance(params[0].gpr());
-        });
-        emitPatchpoint(block, patchpoint, Tmp(), instance);
-        return;
-    }
-
-    // FIXME: Because WasmToWasm call clobbers wasmContextInstance register and does not restore it, we need to restore it in the caller side.
-    // This prevents us from using ArgumentReg to this (logically) immutable pinned register.
-    auto* patchpoint = addPatchpoint(B3::Void);
-    B3::Effects effects = B3::Effects::none();
-    effects.writesPinned = true;
-    effects.reads = B3::HeapRange::top();
-    patchpoint->effects = effects;
-    patchpoint->clobberLate(RegisterSet(m_wasmContextInstanceGPR));
-    GPRReg wasmContextInstanceGPR = m_wasmContextInstanceGPR;
-    patchpoint->setGenerator([=] (CCallHelpers& jit, const B3::StackmapGenerationParams& param) {
-        jit.move(param[0].gpr(), wasmContextInstanceGPR);
-    });
-    emitPatchpoint(block, patchpoint, Tmp(), instance);
-}
-
 AirIRGenerator64::AirIRGenerator64(const ModuleInformation& info, B3::Procedure& procedure, InternalFunction* compilation, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, MemoryMode mode, unsigned functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp, const TypeDefinition& originalSignature, unsigned& osrEntryScratchBufferSize)
     : AirIRGeneratorBase(info, procedure, compilation, unlinkedWasmToWasmCalls, mode, functionIndex, hasExceptionHandlers, tierUp, originalSignature, osrEntryScratchBufferSize)
 {
@@ -368,52 +317,6 @@ B3::Type AirIRGenerator64::toB3ResultType(BlockSignature returnType)
         return m_proc.addTuple(WTFMove(result));
     });
     return result.iterator->value;
-}
-
-void AirIRGenerator64::restoreWebAssemblyGlobalState(RestoreCachedStackLimit restoreCachedStackLimit, const MemoryInformation& memory, TypedTmp instance, BasicBlock* block)
-{
-    restoreWasmContextInstance(block, instance);
-
-    if (restoreCachedStackLimit == RestoreCachedStackLimit::Yes) {
-        // The Instance caches the stack limit, but also knows where its canonical location is.
-        static_assert(sizeof(std::declval<Instance*>()->cachedStackLimit()) == sizeof(uint64_t), "codegen relies on this size");
-
-        RELEASE_ASSERT(Arg::isValidAddrForm(Instance::offsetOfPointerToActualStackLimit(), B3::Width64));
-        RELEASE_ASSERT(Arg::isValidAddrForm(Instance::offsetOfCachedStackLimit(), B3::Width64));
-        auto temp = g64();
-        append(block, Move, Arg::addr(instanceValue(), Instance::offsetOfPointerToActualStackLimit()), temp);
-        append(block, Move, Arg::addr(temp), temp);
-        append(block, Move, temp, Arg::addr(instanceValue(), Instance::offsetOfCachedStackLimit()));
-    }
-
-    if (!!memory) {
-        const PinnedRegisterInfo* pinnedRegs = &PinnedRegisterInfo::get();
-        RegisterSet clobbers;
-        clobbers.set(pinnedRegs->baseMemoryPointer);
-        clobbers.set(pinnedRegs->boundsCheckingSizeRegister);
-        clobbers.set(RegisterSet::macroScratchRegisters());
-
-        auto* patchpoint = addPatchpoint(B3::Void);
-        B3::Effects effects = B3::Effects::none();
-        effects.writesPinned = true;
-        effects.reads = B3::HeapRange::top();
-        patchpoint->effects = effects;
-        patchpoint->clobber(clobbers);
-        patchpoint->numGPScratchRegisters = 1;
-
-        patchpoint->setGenerator([pinnedRegs] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-            AllowMacroScratchRegisterUsage allowScratch(jit);
-            GPRReg baseMemory = pinnedRegs->baseMemoryPointer;
-            GPRReg scratch = params.gpScratch(0);
-
-            jit.loadPtr(CCallHelpers::Address(params[0].gpr(), Instance::offsetOfCachedBoundsCheckingSize()), pinnedRegs->boundsCheckingSizeRegister);
-            jit.loadPtr(CCallHelpers::Address(params[0].gpr(), Instance::offsetOfCachedMemory()), baseMemory);
-
-            jit.cageConditionallyAndUntag(Gigacage::Primitive, baseMemory, pinnedRegs->boundsCheckingSizeRegister, scratch);
-        });
-
-        emitPatchpoint(block, patchpoint, Tmp(), instance);
-    }
 }
 
 template <typename Function>
@@ -524,119 +427,6 @@ auto AirIRGenerator64::addUnreachable() -> PartialResult
     });
     unreachable->effects.terminal = true;
     emitPatchpoint(unreachable, Tmp());
-    return { };
-}
-
-auto AirIRGenerator64::addGrowMemory(ExpressionType delta, ExpressionType& result) -> PartialResult
-{
-    result = g32();
-    emitCCall(&operationGrowMemory, result, TypedTmp { Tmp(GPRInfo::callFrameRegister), Types::I64 }, instanceValue(), delta);
-    restoreWebAssemblyGlobalState(RestoreCachedStackLimit::No, m_info.memory, instanceValue(), m_currentBlock);
-
-    return { };
-}
-
-auto AirIRGenerator64::addCurrentMemory(ExpressionType& result) -> PartialResult
-{
-    static_assert(sizeof(std::declval<Memory*>()->size()) == sizeof(uint64_t), "codegen relies on this size");
-
-    auto temp1 = g64();
-    auto temp2 = g64();
-
-    RELEASE_ASSERT(Arg::isValidAddrForm(Instance::offsetOfMemory(), B3::Width64));
-    RELEASE_ASSERT(Arg::isValidAddrForm(Memory::offsetOfHandle(), B3::Width64));
-    RELEASE_ASSERT(Arg::isValidAddrForm(MemoryHandle::offsetOfSize(), B3::Width64));
-    append(Move, Arg::addr(instanceValue(), Instance::offsetOfMemory()), temp1);
-    append(Move, Arg::addr(temp1, Memory::offsetOfHandle()), temp1);
-    append(Move, Arg::addr(temp1, MemoryHandle::offsetOfSize()), temp1);
-    constexpr uint32_t shiftValue = 16;
-    static_assert(PageCount::pageSize == 1ull << shiftValue, "This must hold for the code below to be correct.");
-    append(Move, Arg::imm(16), temp2);
-    addShift(Types::I32, Urshift64, temp1, temp2, result);
-    append(Move32, result, result);
-
-    return { };
-}
-
-auto AirIRGenerator64::addMemoryFill(ExpressionType dstAddress, ExpressionType targetValue, ExpressionType count) -> PartialResult
-{
-    ASSERT(dstAddress.tmp());
-    ASSERT(dstAddress.type().isI32());
-
-    ASSERT(targetValue.tmp());
-    ASSERT(targetValue.type().isI32());
-
-    ASSERT(count.tmp());
-    ASSERT(count.type().isI32());
-
-    auto result = tmpForType(Types::I32);
-    emitCCall(
-        &operationWasmMemoryFill, result, instanceValue(),
-        dstAddress, targetValue, count);
-
-    emitCheck([&] {
-        return Inst(BranchTest32, nullptr, Arg::resCond(MacroAssembler::Zero), result, result);
-    }, [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
-        this->emitThrowException(jit, ExceptionType::OutOfBoundsMemoryAccess);
-    });
-
-    return { };
-}
-
-auto AirIRGenerator64::addMemoryCopy(ExpressionType dstAddress, ExpressionType srcAddress, ExpressionType count) -> PartialResult
-{
-    ASSERT(dstAddress.tmp());
-    ASSERT(dstAddress.type().isI32());
-
-    ASSERT(srcAddress.tmp());
-    ASSERT(srcAddress.type().isI32());
-
-    ASSERT(count.tmp());
-    ASSERT(count.type().isI32());
-
-    auto result = tmpForType(Types::I32);
-    emitCCall(
-        &operationWasmMemoryCopy, result, instanceValue(),
-        dstAddress, srcAddress, count);
-
-    emitCheck([&] {
-        return Inst(BranchTest32, nullptr, Arg::resCond(MacroAssembler::Zero), result, result);
-    }, [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
-        this->emitThrowException(jit, ExceptionType::OutOfBoundsMemoryAccess);
-    });
-
-    return { };
-}
-
-auto AirIRGenerator64::addMemoryInit(unsigned dataSegmentIndex, ExpressionType dstAddress, ExpressionType srcAddress, ExpressionType length) -> PartialResult
-{
-    ASSERT(dstAddress.tmp());
-    ASSERT(dstAddress.type().isI32());
-
-    ASSERT(srcAddress.tmp());
-    ASSERT(srcAddress.type().isI32());
-
-    ASSERT(length.tmp());
-    ASSERT(length.type().isI32());
-
-    auto result = tmpForType(Types::I32);
-    emitCCall(
-        &operationWasmMemoryInit, result, instanceValue(),
-        addConstant(Types::I32, dataSegmentIndex),
-        dstAddress, srcAddress, length);
-
-    emitCheck([&] {
-        return Inst(BranchTest32, nullptr, Arg::resCond(MacroAssembler::Zero), result, result);
-    }, [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
-        this->emitThrowException(jit, ExceptionType::OutOfBoundsMemoryAccess);
-    });
-
-    return { };
-}
-
-auto AirIRGenerator64::addDataDrop(unsigned dataSegmentIndex) -> PartialResult
-{
-    emitCCall(&operationWasmDataDrop, TypedTmp(), instanceValue(), addConstant(Types::I32, dataSegmentIndex));
     return { };
 }
 
@@ -867,31 +657,6 @@ inline AirIRGenerator64::ExpressionType AirIRGenerator64::emitCheckAndPreparePoi
     return result;
 }
 
-inline uint32_t sizeOfLoadOp(LoadOpType op)
-{
-    switch (op) {
-    case LoadOpType::I32Load8S:
-    case LoadOpType::I32Load8U:
-    case LoadOpType::I64Load8S:
-    case LoadOpType::I64Load8U:
-        return 1;
-    case LoadOpType::I32Load16S:
-    case LoadOpType::I64Load16S:
-    case LoadOpType::I32Load16U:
-    case LoadOpType::I64Load16U:
-        return 2;
-    case LoadOpType::I32Load:
-    case LoadOpType::I64Load32S:
-    case LoadOpType::I64Load32U:
-    case LoadOpType::F32Load:
-        return 4;
-    case LoadOpType::I64Load:
-    case LoadOpType::F64Load:
-        return 8;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 inline TypedTmp AirIRGenerator64::emitLoadOp(LoadOpType op, ExpressionType pointer, uint32_t uoffset)
 {
     uint32_t offset = fixupPointerPlusOffset(pointer, uoffset);
@@ -1045,27 +810,6 @@ auto AirIRGenerator64::load(LoadOpType op, ExpressionType pointer, ExpressionTyp
 
     return { };
 }
-
-inline uint32_t sizeOfStoreOp(StoreOpType op)
-{
-    switch (op) {
-    case StoreOpType::I32Store8:
-    case StoreOpType::I64Store8:
-        return 1;
-    case StoreOpType::I32Store16:
-    case StoreOpType::I64Store16:
-        return 2;
-    case StoreOpType::I32Store:
-    case StoreOpType::I64Store32:
-    case StoreOpType::F32Store:
-        return 4;
-    case StoreOpType::I64Store:
-    case StoreOpType::F64Store:
-        return 8;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 
 inline void AirIRGenerator64::emitStoreOp(StoreOpType op, ExpressionType pointer, ExpressionType value, uint32_t uoffset)
 {
