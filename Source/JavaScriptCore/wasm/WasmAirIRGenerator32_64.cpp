@@ -161,6 +161,7 @@ private:
     static auto constexpr AddPtr = Add32;
     static auto constexpr MulPtr = Mul32;
     static auto constexpr UrshiftPtr = Urshift32;
+    static auto constexpr LeaPtr = Lea32;
     static auto constexpr BranchTestPtr = BranchTest32;
     static auto constexpr BranchPtr = Branch32;
 
@@ -188,9 +189,14 @@ private:
     void emitStoreOp(StoreOpType, ExpressionType pointer, ExpressionType value, uint32_t offset);
     Tmp emitCatchImpl(CatchKind, ControlType&, unsigned exceptionIndex = 0);
 
+    void sanitizeAtomicResult(ExtAtomicOpType, ExpressionType source, ExpressionType dest);
+    void sanitizeAtomicResult(ExtAtomicOpType, ExpressionType result);
+    template<typename InputType>
+    TypedTmp appendGeneralAtomic(ExtAtomicOpType op, B3::Air::Opcode opcode, B3::Commutativity commutativity, InputType input, Arg address, TypedTmp oldValue);
+    TypedTmp appendStrongCAS(ExtAtomicOpType, TypedTmp expected, TypedTmp value, Arg addrArg, TypedTmp result);
 
-        template<size_t inlineCapacity>
-        PatchpointExceptionHandle preparePatchpointForExceptions(B3::PatchpointValue*, Vector<ConstrainedTmp, inlineCapacity>& args);
+    template<size_t inlineCapacity>
+    PatchpointExceptionHandle preparePatchpointForExceptions(B3::PatchpointValue*, Vector<ConstrainedTmp, inlineCapacity>& args);
 
 public:
     // kludge while we add everything
@@ -222,15 +228,6 @@ public:
     // Memory
     PartialResult WARN_UNUSED_RETURN load(LoadOpType, ExpressionType pointer, ExpressionType& result, uint32_t offset);
     PartialResult WARN_UNUSED_RETURN store(StoreOpType, ExpressionType pointer, ExpressionType value, uint32_t offset);
-
-    // Atomics
-    PartialResult WARN_UNUSED_RETURN atomicLoad(ExtAtomicOpType, Type, ExpressionType pointer, ExpressionType& result, uint32_t offset){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN atomicStore(ExtAtomicOpType, Type, ExpressionType pointer, ExpressionType value, uint32_t offset){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN atomicBinaryRMW(ExtAtomicOpType, Type, ExpressionType pointer, ExpressionType value, ExpressionType& result, uint32_t offset){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN atomicCompareExchange(ExtAtomicOpType, Type, ExpressionType pointer, ExpressionType expected, ExpressionType value, ExpressionType& result, uint32_t offset){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN atomicWait(ExtAtomicOpType, ExpressionType pointer, ExpressionType value, ExpressionType timeout, ExpressionType& result, uint32_t offset){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN atomicNotify(ExtAtomicOpType, ExpressionType pointer, ExpressionType value, ExpressionType& result, uint32_t offset){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN atomicFence(ExtAtomicOpType, uint8_t flags){ CRASH(); }
 
     // Saturated truncation.
     PartialResult WARN_UNUSED_RETURN truncSaturated(Ext1OpType, ExpressionType operand, ExpressionType& result, Type returnType, Type operandType){ CRASH(); }
@@ -964,6 +961,271 @@ std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> AirIRGenerator32_64::
     emitPatchpoint(block, patchpoint, patchResults, WTFMove(patchArgs));
     return { patchpoint, exceptionHandle };
 }
+
+void AirIRGenerator32_64::sanitizeAtomicResult(ExtAtomicOpType op, TypedTmp source, TypedTmp dest)
+{
+    ASSERT(source.type() == dest.type());
+    switch (source.type().kind) {
+    case TypeKind::I64: {
+        switch (accessWidth(op)) {
+        case B3::Width8:
+            append(ZeroExtend8To32, source.lo(), dest.lo());
+            append(Move, Arg::imm(0), dest.hi());
+            return;
+        case B3::Width16:
+            append(ZeroExtend16To32, source.lo(), dest.lo());
+            append(Move, Arg::imm(0), dest.hi());
+            return;
+        case B3::Width32:
+            append(Move, source.lo(), dest.lo());
+            append(Move, Arg::imm(0), dest.hi());
+            return;
+        case B3::Width64:
+            emitMove(source, dest);
+            return;
+        }
+        return;
+    }
+    case TypeKind::I32:
+        switch (accessWidth(op)) {
+        case B3::Width8:
+            append(ZeroExtend8To32, source, dest);
+            return;
+        case B3::Width16:
+            append(ZeroExtend16To32, source, dest);
+            return;
+        case B3::Width32:
+        case B3::Width64:
+            emitMove(source, dest);
+            return;
+        }
+        return;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+        return;
+    }
+}
+
+void AirIRGenerator32_64::sanitizeAtomicResult(ExtAtomicOpType op, TypedTmp result)
+{
+    sanitizeAtomicResult(op, result, result);
+}
+
+template<typename InputType>
+TypedTmp AirIRGenerator32_64::appendGeneralAtomic(ExtAtomicOpType op, B3::Air::Opcode opcode, B3::Commutativity commutativity, InputType input, Arg address, TypedTmp oldValue)
+{
+    static_assert(std::is_same_v<InputType, TypedTmp> || std::is_same_v<InputType, Arg>);
+
+    B3::Width accessWidth = Wasm::accessWidth(op);
+
+    auto newTmp = [&]() {
+        if (accessWidth == B3::Width64)
+            return g64();
+        return g32();
+    };
+
+    auto tmp = [&]() -> TypedTmp {
+        if constexpr (std::is_same_v<InputType, Arg>) {
+            TypedTmp result = newTmp();
+            if (result.isGPPair()) {
+                append(Move, input, result.lo());
+                append(Move, Arg::imm(0), result.hi());
+                return result;
+            }
+            append(Move, input, result);
+            return result;
+        } else
+            return input;
+    };
+
+    auto imm = [&]() -> Arg {
+        if constexpr (std::is_same_v<InputType, Arg>) {
+            if (input.isImm())
+                return input;
+        }
+        return Arg();
+    };
+
+    auto bitImm = [&]() -> Arg {
+        if constexpr (std::is_same_v<InputType, Arg>) {
+            if (input.isBitImm())
+                return input;
+        }
+        return Arg();
+    };
+
+    TypedTmp newValue = opcode == B3::Air::Nop ? tmp() : newTmp();
+
+    // We need a CAS loop or a LL/SC loop. Using prepare/attempt jargon, we want:
+    //
+    // Block #reloop:
+    //     Prepare
+    //     opcode
+    //     Attempt
+    //   Successors: Then:#done, Else:#reloop
+    // Block #done:
+    //     Move oldValue, result
+
+    auto* beginBlock = m_currentBlock;
+    auto* reloopBlock = m_code.addBlock();
+    auto* doneBlock = m_code.addBlock();
+
+    appendEffectful(MemoryFence);
+    append(B3::Air::Jump);
+    beginBlock->setSuccessors(reloopBlock);
+    m_currentBlock = reloopBlock;
+
+    RELEASE_ASSERT(isARM());
+
+    if (accessWidth == B3::Width64)
+        appendEffectful(LoadLinkPair32, address, oldValue.lo(), oldValue.hi());
+    else if (oldValue.isGPPair())
+        appendEffectful(OPCODE_FOR_WIDTH(LoadLink, accessWidth), address, oldValue.lo());
+    else
+        appendEffectful(OPCODE_FOR_WIDTH(LoadLink, accessWidth), address, oldValue);
+
+    if (opcode != B3::Air::Nop) {
+        // FIXME: see note in WasmAirGenerator64::appendGeneralAtomic also
+        TypedTmp inTmp = tmp();
+        if (accessWidth == B3::Width64) {
+            switch (opcode) {
+            case Add64:
+                append(Add64, oldValue.hi(), oldValue.lo(), inTmp.hi(), inTmp.lo(), newValue.hi(), newValue.lo());
+                break;
+            case Sub64:
+                append(Sub64, oldValue.hi(), oldValue.lo(), inTmp.hi(), inTmp.lo(), newValue.hi(), newValue.lo());
+                break;
+            case And64:
+                append(And32, oldValue.hi(), inTmp.hi(), newValue.hi());
+                append(And32, oldValue.lo(), inTmp.lo(), newValue.lo());
+                break;
+            case Or64:
+                append(Or32, oldValue.hi(), inTmp.hi(), newValue.hi());
+                append(Or32, oldValue.lo(), inTmp.lo(), newValue.lo());
+                break;
+            case Xor64:
+                append(Xor32, oldValue.hi(), inTmp.hi(), newValue.hi());
+                append(Xor32, oldValue.lo(), inTmp.lo(), newValue.lo());
+                break;
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
+                break;
+            }
+        } else {
+            Tmp oldVal = oldValue.isGPPair() ? oldValue.lo() : oldValue.tmp();
+            Tmp newVal = newValue.isGPPair() ? newValue.lo() : newValue.tmp();
+            Tmp inVal = inTmp.isGPPair() ? inTmp.lo() : inTmp.tmp();
+            if (commutativity == B3::Commutative && imm() && isValidForm(opcode, Arg::Imm, Arg::Tmp, Arg::Tmp))
+                append(opcode, imm(), oldVal, newVal);
+            else if (imm() && isValidForm(opcode, Arg::Tmp, Arg::Imm, Arg::Tmp))
+                append(opcode, oldVal, imm(), newVal);
+            else if (commutativity == B3::Commutative && bitImm() && isValidForm(opcode, Arg::BitImm, Arg::Tmp, Arg::Tmp))
+                append(opcode, bitImm(), oldVal, newVal);
+            else if (isValidForm(opcode, Arg::Tmp, Arg::Tmp, Arg::Tmp))
+                append(opcode, oldVal, inVal, newVal);
+            else {
+                append(Move, oldVal, newVal);
+                if (imm() && isValidForm(opcode, Arg::Imm, Arg::Tmp))
+                    append(opcode, imm(), newVal);
+                else
+                    append(opcode, inVal, newVal);
+            }
+        }
+    }
+
+    TypedTmp boolResult = g32();
+    if (accessWidth == B3::Width64)
+        appendEffectful(StoreCondPair32, newValue.lo(), newValue.hi(), address, boolResult);
+    else if (newValue.isGPPair())
+        appendEffectful(OPCODE_FOR_WIDTH(StoreCond, accessWidth), newValue.lo(), address, boolResult);
+    else
+        appendEffectful(OPCODE_FOR_WIDTH(StoreCond, accessWidth), newValue, address, boolResult);
+    append(BranchTest32, Arg::resCond(MacroAssembler::Zero), boolResult, boolResult);
+    reloopBlock->setSuccessors(doneBlock, reloopBlock);
+    m_currentBlock = doneBlock;
+    appendEffectful(MemoryFence);
+    return oldValue;
+}
+
+TypedTmp AirIRGenerator32_64::appendStrongCAS(ExtAtomicOpType op, TypedTmp expected, TypedTmp newValue, Arg address, TypedTmp oldValue)
+{
+    B3::Width accessWidth = Wasm::accessWidth(op);
+
+    // We wish to emit:
+    //
+    // Block #reloop:
+    //     LoadLink
+    //     Branch NotEqual
+    //   Successors: Then:#fail, Else: #store
+    // Block #store:
+    //     StoreCond
+    //     Xor $1, %result    <--- only if !invert
+    //     Jump
+    //   Successors: #done
+    // Block #fail:
+    //     Move $invert, %result
+    //     Jump
+    //   Successors: #done
+    // Block #done:
+
+    auto* reloopBlock = m_code.addBlock();
+    auto* storeBlock = m_code.addBlock();
+    auto* strongFailBlock = m_code.addBlock();
+    auto* doneBlock = m_code.addBlock();
+    auto* beginBlock = m_currentBlock;
+
+    appendEffectful(MemoryFence);
+    append(B3::Air::Jump);
+    beginBlock->setSuccessors(reloopBlock);
+
+    m_currentBlock = reloopBlock;
+    if (accessWidth == B3::Width64) {
+        appendEffectful(LoadLinkPair32, address, oldValue.lo(), oldValue.hi());
+        append(Branch32, Arg::relCond(MacroAssembler::NotEqual), oldValue.lo(), expected.lo());
+        auto* checkHiBlock = m_code.addBlock();
+        reloopBlock->setSuccessors(B3::Air::FrequentedBlock(strongFailBlock), checkHiBlock);
+        m_currentBlock = checkHiBlock;
+        append(Branch32, Arg::relCond(MacroAssembler::NotEqual), oldValue.hi(), expected.hi());
+    } else if (oldValue.isGPPair()) {
+        appendEffectful(OPCODE_FOR_WIDTH(LoadLink, accessWidth), address, oldValue.lo());
+        append(OPCODE_FOR_CANONICAL_WIDTH(Branch, accessWidth), Arg::relCond(MacroAssembler::NotEqual), oldValue.lo(), expected.lo());
+    } else {
+        appendEffectful(OPCODE_FOR_WIDTH(LoadLink, accessWidth), address, oldValue);
+        append(OPCODE_FOR_CANONICAL_WIDTH(Branch, accessWidth), Arg::relCond(MacroAssembler::NotEqual), oldValue, expected);
+    }
+    reloopBlock->setSuccessors(B3::Air::FrequentedBlock(strongFailBlock), storeBlock);
+
+    m_currentBlock = storeBlock;
+    {
+        TypedTmp tmp = g32();
+        if (accessWidth == B3::Width64)
+            appendEffectful(StoreCondPair32, newValue.lo(), newValue.hi(), address, tmp);
+        else if (newValue.isGPPair())
+            appendEffectful(OPCODE_FOR_WIDTH(StoreCond, accessWidth), newValue.lo(), address, tmp);
+        else
+            appendEffectful(OPCODE_FOR_WIDTH(StoreCond, accessWidth), newValue, address, tmp);
+        append(BranchTest32, Arg::resCond(MacroAssembler::Zero), tmp, tmp);
+    }
+    storeBlock->setSuccessors(doneBlock, reloopBlock);
+
+    m_currentBlock = strongFailBlock;
+    {
+        TypedTmp tmp = g32();
+        if (accessWidth == B3::Width64)
+            appendEffectful(StoreCondPair32, oldValue.lo(), oldValue.hi(), address, tmp);
+        else if (oldValue.isGPPair())
+            appendEffectful(OPCODE_FOR_WIDTH(StoreCond, accessWidth), oldValue.lo(), address, tmp);
+        else
+            appendEffectful(OPCODE_FOR_WIDTH(StoreCond, accessWidth), oldValue, address, tmp);
+        append(BranchTest32, Arg::resCond(MacroAssembler::Zero), tmp, tmp);
+    }
+    strongFailBlock->setSuccessors(B3::Air::FrequentedBlock(doneBlock), reloopBlock);
+
+    m_currentBlock = doneBlock;
+    appendEffectful(MemoryFence);
+    return oldValue;
+}
+
 
 
 
