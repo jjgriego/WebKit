@@ -94,10 +94,6 @@ public:
     // References
     PartialResult WARN_UNUSED_RETURN addRefIsNull(ExpressionType value, ExpressionType& result);
 
-    // Globals
-    PartialResult WARN_UNUSED_RETURN getGlobal(uint32_t index, ExpressionType& result);
-    PartialResult WARN_UNUSED_RETURN setGlobal(uint32_t index, ExpressionType value);
-
     // Memory
     PartialResult WARN_UNUSED_RETURN load(LoadOpType, ExpressionType pointer, ExpressionType& result, uint32_t offset);
     PartialResult WARN_UNUSED_RETURN store(StoreOpType, ExpressionType pointer, ExpressionType value, uint32_t offset);
@@ -207,6 +203,19 @@ private:
         }
     }
 
+    void emitStore(const TypedTmp& value, Tmp base, size_t offset)
+    {
+        if (!Arg::isValidAddrForm(offset, B3::widthForType(toB3Type(value.type())))) {
+            auto address = g64();
+            append(Move, Arg::bigImm(offset), address);
+            append(Add64, base, address, address);
+            base = address.tmp();
+            offset = 0;
+        }
+
+        append(moveOpForValueType(value.type()), value, Arg::addr(base, offset));
+    }
+
     void appendCCallArg(B3::Air::Inst& inst, const TypedTmp& tmp) {
         inst.args.append(tmp.tmp());
     }
@@ -223,7 +232,6 @@ private:
         append(moveOpForValueType(src.type()), src, dst);
     }
 
-    void emitWriteBarrierForJSWrapper();
     ExpressionType emitCheckAndPreparePointer(ExpressionType pointer, uint32_t offset, uint32_t sizeOfOp);
     ExpressionType emitLoadOp(LoadOpType, ExpressionType pointer, uint32_t offset);
     void emitStoreOp(StoreOpType, ExpressionType pointer, ExpressionType value, uint32_t offset);
@@ -370,174 +378,6 @@ auto AirIRGenerator64::addUnreachable() -> PartialResult
     unreachable->effects.terminal = true;
     emitPatchpoint(unreachable, Tmp());
     return { };
-}
-
-auto AirIRGenerator64::getGlobal(uint32_t index, ExpressionType& result) -> PartialResult
-{
-    const Wasm::GlobalInformation& global = m_info.globals[index];
-    Type type = global.type;
-
-    result = tmpForType(type);
-
-    auto temp = g64();
-
-    RELEASE_ASSERT(Arg::isValidAddrForm(Instance::offsetOfGlobals(), B3::Width64));
-    append(Move, Arg::addr(instanceValue(), Instance::offsetOfGlobals()), temp);
-
-    int32_t offset = safeCast<int32_t>(index * sizeof(Register));
-    switch (global.bindingMode) {
-    case Wasm::GlobalInformation::BindingMode::EmbeddedInInstance:
-        if (Arg::isValidAddrForm(offset, B3::widthForType(toB3Type(type))))
-            append(moveOpForValueType(type), Arg::addr(temp, offset), result);
-        else {
-            auto temp2 = g64();
-            append(Move, Arg::bigImm(offset), temp2);
-            append(Add64, temp2, temp, temp);
-            append(moveOpForValueType(type), Arg::addr(temp), result);
-        }
-        break;
-    case Wasm::GlobalInformation::BindingMode::Portable:
-        ASSERT(global.mutability == Wasm::Mutability::Mutable);
-        if (Arg::isValidAddrForm(offset, B3::Width64))
-            append(Move, Arg::addr(temp, offset), temp);
-        else {
-            auto temp2 = g64();
-            append(Move, Arg::bigImm(offset), temp2);
-            append(Add64, temp2, temp, temp);
-            append(Move, Arg::addr(temp), temp);
-        }
-        append(moveOpForValueType(type), Arg::addr(temp), result);
-        break;
-    }
-    return { };
-}
-
-auto AirIRGenerator64::setGlobal(uint32_t index, ExpressionType value) -> PartialResult
-{
-    auto temp = g64();
-
-    RELEASE_ASSERT(Arg::isValidAddrForm(Instance::offsetOfGlobals(), B3::Width64));
-    append(Move, Arg::addr(instanceValue(), Instance::offsetOfGlobals()), temp);
-
-    const Wasm::GlobalInformation& global = m_info.globals[index];
-    Type type = global.type;
-
-    int32_t offset = safeCast<int32_t>(index * sizeof(Register));
-    switch (global.bindingMode) {
-    case Wasm::GlobalInformation::BindingMode::EmbeddedInInstance:
-        if (Arg::isValidAddrForm(offset, B3::widthForType(toB3Type(type))))
-            append(moveOpForValueType(type), value, Arg::addr(temp, offset));
-        else {
-            auto temp2 = g64();
-            append(Move, Arg::bigImm(offset), temp2);
-            append(Add64, temp2, temp, temp);
-            append(moveOpForValueType(type), value, Arg::addr(temp));
-        }
-        if (isRefType(type))
-            emitWriteBarrierForJSWrapper();
-        break;
-    case Wasm::GlobalInformation::BindingMode::Portable:
-        ASSERT(global.mutability == Wasm::Mutability::Mutable);
-        if (Arg::isValidAddrForm(offset, B3::Width64))
-            append(Move, Arg::addr(temp, offset), temp);
-        else {
-            auto temp2 = g64();
-            append(Move, Arg::bigImm(offset), temp2);
-            append(Add64, temp2, temp, temp);
-            append(Move, Arg::addr(temp), temp);
-        }
-        append(moveOpForValueType(type), value, Arg::addr(temp));
-        // We emit a write-barrier onto JSWebAssemblyGlobal, not JSWebAssemblyInstance.
-        if (isRefType(type)) {
-            auto cell = g64();
-            auto vm = g64();
-            auto cellState = g32();
-            auto threshold = g32();
-
-            BasicBlock* fenceCheckPath = m_code.addBlock();
-            BasicBlock* fencePath = m_code.addBlock();
-            BasicBlock* doSlowPath = m_code.addBlock();
-            BasicBlock* continuation = m_code.addBlock();
-
-            append(Move, Arg::addr(instanceValue(), Instance::offsetOfOwner()), cell);
-            append(Move, Arg::addr(cell, JSWebAssemblyInstance::offsetOfVM()), vm);
-
-            append(Move, Arg::addr(temp, Wasm::Global::offsetOfOwner() - Wasm::Global::offsetOfValue()), cell);
-            append(Load8, Arg::addr(cell, JSCell::cellStateOffset()), cellState);
-            append(Move32, Arg::addr(vm, VM::offsetOfHeapBarrierThreshold()), threshold);
-
-            append(Branch32, Arg::relCond(MacroAssembler::Above), cellState, threshold);
-            m_currentBlock->setSuccessors(continuation, fenceCheckPath);
-            m_currentBlock = fenceCheckPath;
-
-            append(Load8, Arg::addr(vm, VM::offsetOfHeapMutatorShouldBeFenced()), threshold);
-            append(BranchTest32, Arg::resCond(MacroAssembler::Zero), threshold, threshold);
-            m_currentBlock->setSuccessors(doSlowPath, fencePath);
-            m_currentBlock = fencePath;
-
-            auto* doFence = addPatchpoint(B3::Void);
-            doFence->setGenerator([] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
-                jit.memoryFence();
-            });
-            emitPatchpoint(doFence, Tmp());
-
-            append(Load8, Arg::addr(cell, JSCell::cellStateOffset()), cellState);
-            append(Branch32, Arg::relCond(MacroAssembler::Above), cellState, Arg::imm(blackThreshold));
-            m_currentBlock->setSuccessors(continuation, doSlowPath);
-            m_currentBlock = doSlowPath;
-
-            emitCCall(&operationWasmWriteBarrierSlowPath, TypedTmp(), cell, vm);
-            append(Jump);
-            m_currentBlock->setSuccessors(continuation);
-            m_currentBlock = continuation;
-        }
-        break;
-    }
-
-    return { };
-}
-
-inline void AirIRGenerator64::emitWriteBarrierForJSWrapper()
-{
-    auto cell = g64();
-    auto vm = g64();
-    auto cellState = g32();
-    auto threshold = g32();
-
-    BasicBlock* fenceCheckPath = m_code.addBlock();
-    BasicBlock* fencePath = m_code.addBlock();
-    BasicBlock* doSlowPath = m_code.addBlock();
-    BasicBlock* continuation = m_code.addBlock();
-
-    append(Move, Arg::addr(instanceValue(), Instance::offsetOfOwner()), cell);
-    append(Move, Arg::addr(cell, JSWebAssemblyInstance::offsetOfVM()), vm);
-    append(Load8, Arg::addr(cell, JSCell::cellStateOffset()), cellState);
-    append(Move32, Arg::addr(vm, VM::offsetOfHeapBarrierThreshold()), threshold);
-
-    append(Branch32, Arg::relCond(MacroAssembler::Above), cellState, threshold);
-    m_currentBlock->setSuccessors(continuation, fenceCheckPath);
-    m_currentBlock = fenceCheckPath;
-
-    append(Load8, Arg::addr(vm, VM::offsetOfHeapMutatorShouldBeFenced()), threshold);
-    append(BranchTest32, Arg::resCond(MacroAssembler::Zero), threshold, threshold);
-    m_currentBlock->setSuccessors(doSlowPath, fencePath);
-    m_currentBlock = fencePath;
-
-    auto* doFence = addPatchpoint(B3::Void);
-    doFence->setGenerator([] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
-        jit.memoryFence();
-    });
-    emitPatchpoint(doFence, Tmp());
-
-    append(Load8, Arg::addr(cell, JSCell::cellStateOffset()), cellState);
-    append(Branch32, Arg::relCond(MacroAssembler::Above), cellState, Arg::imm(blackThreshold));
-    m_currentBlock->setSuccessors(continuation, doSlowPath);
-    m_currentBlock = doSlowPath;
-
-    emitCCall(&operationWasmWriteBarrierSlowPath, TypedTmp(), cell, vm);
-    append(Jump);
-    m_currentBlock->setSuccessors(continuation);
-    m_currentBlock = continuation;
 }
 
 inline AirIRGenerator64::ExpressionType AirIRGenerator64::emitCheckAndPreparePointer(ExpressionType pointer, uint32_t offset, uint32_t sizeOfOperation)

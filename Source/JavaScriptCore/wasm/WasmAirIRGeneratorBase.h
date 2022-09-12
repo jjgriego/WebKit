@@ -473,6 +473,8 @@ protected:
     enum class RestoreCachedStackLimit { No, Yes };
     void restoreWebAssemblyGlobalState(RestoreCachedStackLimit, const MemoryInformation&, ExpressionType instance, BasicBlock*);
 
+    void emitWriteBarrierForJSWrapper();
+
     template<typename Function>
     void forEachLiveValue(Function&& function)
     {
@@ -616,6 +618,11 @@ public:
     // References
     //                               addRefIsNull (in derived classes)
     PartialResult WARN_UNUSED_RETURN addRefFunc(uint32_t index, ExpressionType& result);
+
+    // Globals
+    PartialResult WARN_UNUSED_RETURN getGlobal(uint32_t index, ExpressionType& result);
+    PartialResult WARN_UNUSED_RETURN setGlobal(uint32_t index, ExpressionType value);
+
     // Tables
     PartialResult WARN_UNUSED_RETURN addTableGet(unsigned, ExpressionType index, ExpressionType& result);
     PartialResult WARN_UNUSED_RETURN addTableSet(unsigned, ExpressionType index, ExpressionType value);
@@ -1319,6 +1326,166 @@ auto AirIRGeneratorBase<Derived, ExpressionType>::addRefFunc(uint32_t index, Exp
 
     return {};
 }
+
+template<typename Derived, typename ExpressionType>
+void AirIRGeneratorBase<Derived, ExpressionType>::emitWriteBarrierForJSWrapper()
+{
+    auto cell = self().g64();
+    auto vm = self().g64();
+    auto cellState = self().g32();
+    auto threshold = self().g32();
+
+    BasicBlock* fenceCheckPath = m_code.addBlock();
+    BasicBlock* fencePath = m_code.addBlock();
+    BasicBlock* doSlowPath = m_code.addBlock();
+    BasicBlock* continuation = m_code.addBlock();
+
+    append(Move, Arg::addr(instanceValue(), Instance::offsetOfOwner()), cell);
+    append(Move, Arg::addr(cell, JSWebAssemblyInstance::offsetOfVM()), vm);
+    append(Load8, Arg::addr(cell, JSCell::cellStateOffset()), cellState);
+    append(Move32, Arg::addr(vm, VM::offsetOfHeapBarrierThreshold()), threshold);
+
+    append(Branch32, Arg::relCond(MacroAssembler::Above), cellState, threshold);
+    m_currentBlock->setSuccessors(continuation, fenceCheckPath);
+    m_currentBlock = fenceCheckPath;
+
+    append(Load8, Arg::addr(vm, VM::offsetOfHeapMutatorShouldBeFenced()), threshold);
+    append(BranchTest32, Arg::resCond(MacroAssembler::Zero), threshold, threshold);
+    m_currentBlock->setSuccessors(doSlowPath, fencePath);
+    m_currentBlock = fencePath;
+
+    auto* doFence = addPatchpoint(B3::Void);
+    doFence->setGenerator([] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+        jit.memoryFence();
+    });
+    emitPatchpoint(doFence, Tmp());
+
+    append(Load8, Arg::addr(cell, JSCell::cellStateOffset()), cellState);
+    append(Branch32, Arg::relCond(MacroAssembler::Above), cellState, Arg::imm(blackThreshold));
+    m_currentBlock->setSuccessors(continuation, doSlowPath);
+    m_currentBlock = doSlowPath;
+
+    emitCCall(&operationWasmWriteBarrierSlowPath, ExpressionType(), cell, vm);
+    append(Jump);
+    m_currentBlock->setSuccessors(continuation);
+    m_currentBlock = continuation;
+}
+
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::getGlobal(uint32_t index, ExpressionType& result) -> PartialResult
+{
+    const Wasm::GlobalInformation& global = m_info.globals[index];
+    Type type = global.type;
+
+    result = tmpForType(type);
+
+    auto temp = self().gPtr();
+    RELEASE_ASSERT(Arg::isValidAddrForm(Instance::offsetOfGlobals(), B3::pointerWidth()));
+    append(Move, Arg::addr(instanceValue(), Instance::offsetOfGlobals()), temp);
+    int32_t offset = safeCast<int32_t>(index * sizeof(Register));
+
+    if (global.bindingMode == Wasm::GlobalInformation::BindingMode::Portable) {
+        ASSERT(global.mutability == Wasm::Mutability::Mutable);
+        if (Arg::isValidAddrForm(offset, B3::pointerWidth()))
+            append(Move, Arg::addr(temp, offset), temp);
+        else {
+            auto temp2 = self().gPtr();
+            append(Move, Arg::bigImm(offset), temp2);
+            append(Derived::AddPtr, temp2, temp, temp);
+            append(Move, Arg::addr(temp), temp);
+        }
+        offset = 0;
+    } else
+        ASSERT(global.bindingMode == Wasm::GlobalInformation::BindingMode::EmbeddedInInstance);
+
+    result = tmpForType(type);
+    self().emitLoad(temp, offset, result);
+    return {};
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::setGlobal(uint32_t index, ExpressionType value) -> PartialResult
+{
+    const Wasm::GlobalInformation& global = m_info.globals[index];
+    Type type = global.type;
+
+    auto temp = self().gPtr();
+    RELEASE_ASSERT(Arg::isValidAddrForm(Instance::offsetOfGlobals(), B3::pointerWidth()));
+    append(Move, Arg::addr(instanceValue(), Instance::offsetOfGlobals()), temp);
+    int32_t offset = safeCast<int32_t>(index * sizeof(Register));
+
+    if (global.bindingMode == Wasm::GlobalInformation::BindingMode::Portable) {
+        ASSERT(global.mutability == Wasm::Mutability::Mutable);
+        if (Arg::isValidAddrForm(offset, B3::pointerWidth()))
+            append(Move, Arg::addr(temp, offset), temp);
+        else {
+            auto temp2 = self().gPtr();
+            append(Move, Arg::bigImm(offset), temp2);
+            append(Derived::AddPtr, temp2, temp, temp);
+            append(Move, Arg::addr(temp), temp);
+        }
+        offset = 0;
+    } else
+        ASSERT(global.bindingMode == Wasm::GlobalInformation::BindingMode::EmbeddedInInstance);
+
+
+    self().emitStore(value, temp, offset);
+
+    if (isRefType(type)) {
+        switch (global.bindingMode) {
+        case Wasm::GlobalInformation::BindingMode::EmbeddedInInstance:
+            emitWriteBarrierForJSWrapper();
+            break;
+        case Wasm::GlobalInformation::BindingMode::Portable:
+            auto cell = self().gPtr();
+            auto vm = self().gPtr();
+            auto cellState = self().g32();
+            auto threshold = self().g32();
+
+            BasicBlock* fenceCheckPath = m_code.addBlock();
+            BasicBlock* fencePath = m_code.addBlock();
+            BasicBlock* doSlowPath = m_code.addBlock();
+            BasicBlock* continuation = m_code.addBlock();
+
+            append(Move, Arg::addr(instanceValue(), Instance::offsetOfOwner()), cell);
+            append(Move, Arg::addr(cell, JSWebAssemblyInstance::offsetOfVM()), vm);
+
+            append(Move, Arg::addr(temp, Wasm::Global::offsetOfOwner() - Wasm::Global::offsetOfValue()), cell);
+            append(Load8, Arg::addr(cell, JSCell::cellStateOffset()), cellState);
+            append(Move32, Arg::addr(vm, VM::offsetOfHeapBarrierThreshold()), threshold);
+
+            append(Branch32, Arg::relCond(MacroAssembler::Above), cellState, threshold);
+            m_currentBlock->setSuccessors(continuation, fenceCheckPath);
+            m_currentBlock = fenceCheckPath;
+
+            append(Load8, Arg::addr(vm, VM::offsetOfHeapMutatorShouldBeFenced()), threshold);
+            append(BranchTest32, Arg::resCond(MacroAssembler::Zero), threshold, threshold);
+            m_currentBlock->setSuccessors(doSlowPath, fencePath);
+            m_currentBlock = fencePath;
+
+            auto* doFence = addPatchpoint(B3::Void);
+            doFence->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+                jit.memoryFence();
+            });
+            emitPatchpoint(doFence, ExpressionType());
+
+            append(Load8, Arg::addr(cell, JSCell::cellStateOffset()), cellState);
+            append(Branch32, Arg::relCond(MacroAssembler::Above), cellState, Arg::imm(blackThreshold));
+            m_currentBlock->setSuccessors(continuation, doSlowPath);
+            m_currentBlock = doSlowPath;
+
+            emitCCall(&operationWasmWriteBarrierSlowPath, ExpressionType(), cell, vm);
+            append(Jump);
+            m_currentBlock->setSuccessors(continuation);
+            m_currentBlock = continuation;
+            break;
+        }
+    }
+
+    return { };
+}
+
 
 template <typename Derived, typename ExpressionType>
 auto AirIRGeneratorBase<Derived, ExpressionType>::addTableInit(unsigned elementIndex, unsigned tableIndex, ExpressionType dstOffset, ExpressionType srcOffset, ExpressionType length) -> PartialResult
