@@ -144,6 +144,8 @@ public:
     static constexpr bool generatesB3OriginData = false;
     static constexpr bool supportsPinnedStateRegisters = false;
 
+    bool useSignalingMemory() const { return false; }
+
 private:
     TypedTmp gNewWord(Type t) { return TypedTmp({ newTmp(B3::GP), {} }, t); }
     TypedTmp gNewPair(Type t) { return TypedTmp({ newTmp(B3::GP), newTmp(B3::GP) }, t); }
@@ -157,16 +159,23 @@ private:
     TypedTmp f64() { return TypedTmp({ newTmp(B3::FP), { } }, Types::F64 ); }
 
     static auto constexpr AddPtr = Add32;
+    static auto constexpr MulPtr = Mul32;
     static auto constexpr UrshiftPtr = Urshift32;
+    static auto constexpr BranchTestPtr = BranchTest32;
+    static auto constexpr BranchPtr = Branch32;
 
     // TODO(jgriego) these are a mega-kludge and should be fixed
     static Arg extractArg(const TypedTmp& tmp) { return tmp.tmp(); }
     static Arg extractArg(const Tmp& tmp) { return Arg(tmp); }
     static Arg extractArg(const Arg& arg) { return arg; }
 
+    Tmp extractJSValuePointer(const TypedTmp& tmp) const { return tmp.lo(); }
+
     void emitZeroInitialize(ExpressionType value);
     template <typename Taken>
     void emitCheckI64Zero(ExpressionType value, Taken&& taken);
+    template<typename Taken>
+    void emitCheckForNullReference(const ExpressionType& ref, Taken&& then);
 
     void appendCCallArg(B3::Air::Inst& inst, const TypedTmp& tmp);
 
@@ -179,8 +188,9 @@ private:
     void emitStoreOp(StoreOpType, ExpressionType pointer, ExpressionType value, uint32_t offset);
     Tmp emitCatchImpl(CatchKind, ControlType&, unsigned exceptionIndex = 0);
 
-    template<size_t inlineCapacity>
-    PatchpointExceptionHandle preparePatchpointForExceptions(B3::PatchpointValue*, Vector<ConstrainedTmp, inlineCapacity>& args);
+
+        template<size_t inlineCapacity>
+        PatchpointExceptionHandle preparePatchpointForExceptions(B3::PatchpointValue*, Vector<ConstrainedTmp, inlineCapacity>& args);
 
 public:
     // kludge while we add everything
@@ -239,10 +249,7 @@ public:
     PartialResult WARN_UNUSED_RETURN addRethrow(unsigned, ControlType&);
 
     // Calls
-    PartialResult WARN_UNUSED_RETURN addCall(uint32_t calleeIndex, const TypeDefinition&, Vector<ExpressionType>& args, ResultList& results){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addCallIndirect(unsigned tableIndex, const TypeDefinition&, Vector<ExpressionType>& args, ResultList& results){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addCallRef(const TypeDefinition&, Vector<ExpressionType>& args, ResultList& results){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addUnreachable(){ CRASH(); }
+    std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> WARN_UNUSED_RETURN emitCallPatchpoint(BasicBlock*, const TypeDefinition&, const ResultList& results, const Vector<ExpressionType>& args, Vector<ConstrainedTmp> extraArgs = {});
 
     PartialResult addShift(Type, B3::Air::Opcode, ExpressionType value, ExpressionType shift, ExpressionType& result){ CRASH(); }
     PartialResult addIntegerSub(B3::Air::Opcode, ExpressionType lhs, ExpressionType rhs, ExpressionType& result){ CRASH(); }
@@ -318,6 +325,16 @@ void AirIRGenerator32_64::emitCheckI64Zero(ExpressionType value, Taken&& taken)
     append(Jump);
     m_currentBlock->setSuccessors(continuation);
     m_currentBlock = continuation;
+}
+
+template<typename Taken>
+void AirIRGenerator32_64::emitCheckForNullReference(const ExpressionType& ref, Taken&& taken)
+{
+    auto tmpForNullTag = g32();
+    append(Move, Arg::bigImm(JSValue::NullTag), tmpForNullTag);
+    emitCheck([&] {
+        return Inst(Branch32, nullptr, Arg::relCond(MacroAssembler::Equal), ref.hi(), tmpForNullTag);
+    }, std::forward<Taken>(taken));
 }
 
 void AirIRGenerator32_64::emitLoad(Tmp base, size_t offset, const TypedTmp& result)
@@ -883,6 +900,71 @@ auto AirIRGenerator32_64::addRethrow(unsigned, ControlType& data) -> PartialResu
 
     return { };
 }
+
+std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> AirIRGenerator32_64::emitCallPatchpoint(BasicBlock* block, const TypeDefinition& signature, const ResultList& results, const Vector<ExpressionType>& args, Vector<ConstrainedTmp> patchArgs)
+{
+    auto* patchpoint = addPatchpoint(toB3ResultType(&signature));
+    patchpoint->effects.writesPinned = true;
+    patchpoint->effects.readsPinned = true;
+    patchpoint->clobberEarly(RegisterSet::macroScratchRegisters());
+    patchpoint->clobberLate(RegisterSet::volatileRegistersForJSCall());
+
+    CallInformation locations = wasmCallingConvention().callInformationFor(signature);
+    m_code.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf(stackAlignmentBytes(), locations.headerAndArgumentStackSizeInBytes));
+
+    ASSERT(locations.params.size() == args.size());
+    ASSERT(locations.results.size() == results.size());
+
+    // On 32-bit platforms, 64-bit integer types are passed as two 32-bit values
+    size_t offset = patchArgs.size();
+    size_t passedArgs = args.size();
+    for (unsigned i = 0; i < args.size(); ++i) {
+        if (args[i].isGPPair())
+            ++passedArgs;
+    }
+    Checked<size_t> newSize = checkedSum<size_t>(patchArgs.size(), passedArgs);
+    RELEASE_ASSERT(!newSize.hasOverflowed());
+    patchArgs.grow(newSize);
+    unsigned j = 0;
+    for (unsigned i = 0; i < args.size(); ++i) {
+        const TypedTmp& arg = args[i];
+        ValueLocation& loc = locations.params[i];
+        if (arg.isGPPair()) {
+            B3::ValueRep valueRepLo = loc.isGPR() ? B3::ValueRep(loc.jsr().payloadGPR()) : B3::ValueRep::stackArgument(loc.offsetFromSP());
+            B3::ValueRep valueRepHi = loc.isGPR() ? B3::ValueRep(loc.jsr().tagGPR()) : B3::ValueRep::stackArgument(loc.offsetFromSP() + 4);
+            patchArgs[offset + j++] = ConstrainedTmp(arg.lo(), valueRepLo);
+            patchArgs[offset + j++] = ConstrainedTmp(arg.hi(), valueRepHi);
+            continue;
+        }
+        patchArgs[offset + j++] = ConstrainedTmp(arg, loc);
+    }
+    ASSERT(j == passedArgs);
+
+    // On 32-bit platforms, 64-bit integer types are returned as two 32-bit values
+    ResultList patchResults;
+    if (patchpoint->type() != B3::Void) {
+        Vector<B3::ValueRep, 1> resultConstraints;
+        for (unsigned i = 0; i < results.size(); ++i) {
+            const TypedTmp& result = results[i];
+            ValueLocation& loc = locations.results[i];
+            if (result.isGPPair()) {
+                patchResults.append(TypedTmp { result.lo(), Types::I32 });
+                patchResults.append(TypedTmp { result.hi(), Types::I32 });
+                resultConstraints.append(loc.isGPR() ? B3::ValueRep(loc.jsr().payloadGPR()) : B3::ValueRep::stackArgument(loc.offsetFromSP()));
+                resultConstraints.append(loc.isGPR() ? B3::ValueRep(loc.jsr().tagGPR()) : B3::ValueRep::stackArgument(loc.offsetFromSP() + 4));
+                continue;
+            }
+            patchResults.append(result);
+            resultConstraints.append(B3::ValueRep(loc));
+        }
+        patchpoint->resultConstraints = WTFMove(resultConstraints);
+    } else
+        ASSERT(!results.size());
+    PatchpointExceptionHandle exceptionHandle = preparePatchpointForExceptions(patchpoint, patchArgs);
+    emitPatchpoint(block, patchpoint, patchResults, WTFMove(patchArgs));
+    return { patchpoint, exceptionHandle };
+}
+
 
 
 Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAir(CompilationContext& compilationContext, const FunctionData& function, const TypeDefinition& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, const ModuleInformation& info, MemoryMode mode, uint32_t functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp)

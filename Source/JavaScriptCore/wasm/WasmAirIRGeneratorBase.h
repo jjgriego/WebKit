@@ -467,6 +467,12 @@ protected:
 
     void emitThrowException(CCallHelpers& jit, ExceptionType type);
 
+    void emitThrowOnNullReference(const ExpressionType& ref) {
+        self().emitCheckForNullReference(ref, [=, this](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+            this->emitThrowException(jit, ExceptionType::NullI31Get);
+        });
+    }
+
     int32_t WARN_UNUSED_RETURN fixupPointerPlusOffset(ExpressionType&, uint32_t);
 
     void restoreWasmContextInstance(BasicBlock*, ExpressionType);
@@ -495,6 +501,23 @@ protected:
         // FIXME: We should implement a way to give Inst's an origin, and pipe that
         // information into the sampling profiler: https://bugs.webkit.org/show_bug.cgi?id=234182
         return B3::Origin();
+    }
+
+    B3::Type toB3ResultType(BlockSignature returnType)
+    {
+        if (returnType->as<FunctionSignature>()->returnsVoid())
+            return B3::Void;
+
+        if (returnType->as<FunctionSignature>()->returnCount() == 1)
+            return toB3Type(returnType->as<FunctionSignature>()->returnType(0));
+
+        auto result = m_tupleMap.ensure(returnType, [&] {
+            Vector<B3::Type> result;
+            for (unsigned i = 0; i < returnType->as<FunctionSignature>()->returnCount(); ++i)
+                result.append(toB3Type(returnType->as<FunctionSignature>()->returnType(i)));
+            return m_proc.addTuple(WTFMove(result));
+        });
+        return result.iterator->value;
     }
 
     void unifyValuesWithBlock(const Stack& resultStack, const ResultList& stack);
@@ -667,6 +690,12 @@ public:
     PartialResult WARN_UNUSED_RETURN endBlock(ControlEntry&, Stack& expressionStack);
     PartialResult WARN_UNUSED_RETURN addEndToUnreachable(ControlEntry&, const Stack& expressionStack = { });
 
+    // Calls
+    PartialResult WARN_UNUSED_RETURN addCall(uint32_t calleeIndex, const TypeDefinition&, Vector<ExpressionType>& args, ResultList& results);
+    PartialResult WARN_UNUSED_RETURN addCallIndirect(unsigned tableIndex, const TypeDefinition&, Vector<ExpressionType>& args, ResultList& results);
+    PartialResult WARN_UNUSED_RETURN addCallRef(const TypeDefinition&, Vector<ExpressionType>& args, ResultList& results);
+    PartialResult WARN_UNUSED_RETURN emitIndirectCall(ExpressionType calleeInstance, ExpressionType calleeCode, const TypeDefinition&, const Vector<ExpressionType>& args, ResultList&);
+    PartialResult WARN_UNUSED_RETURN addUnreachable();
 
     ////////////////////////////////////////////////////////////////////////////////
     // debug utilities
@@ -2150,6 +2179,306 @@ auto AirIRGeneratorBase<Derived, ExpressionType>::addEndToUnreachable(ControlEnt
     return { };
 }
 
+template<typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addCall(uint32_t functionIndex, const TypeDefinition& signature, Vector<ExpressionType>& args, ResultList& results) -> PartialResult
+{
+    ASSERT(signature.as<FunctionSignature>()->argumentCount() == args.size());
+
+    m_makesCalls = true;
+
+    for (unsigned i = 0; i < signature.as<FunctionSignature>()->returnCount(); ++i)
+        results.append(tmpForType(signature.as<FunctionSignature>()->returnType(i)));
+
+    Vector<UnlinkedWasmToWasmCall>* unlinkedWasmToWasmCalls = &m_unlinkedWasmToWasmCalls;
+
+    if (m_info.isImportedFunctionFromFunctionIndexSpace(functionIndex)) {
+        m_maxNumJSCallArguments = std::max(m_maxNumJSCallArguments, static_cast<uint32_t>(args.size()));
+
+        auto currentInstance = self().gPtr();
+        append(Move, instanceValue(), currentInstance);
+
+        auto targetInstance = self().gPtr();
+
+        // FIXME: We should have better isel here.
+        // https://bugs.webkit.org/show_bug.cgi?id=193999
+        append(Move, Arg::bigImm(Instance::offsetOfTargetInstance(functionIndex)), targetInstance);
+        append(Derived::AddPtr, instanceValue(), targetInstance);
+        append(Move, Arg::addr(targetInstance), targetInstance);
+
+        BasicBlock* isWasmBlock = m_code.addBlock();
+        BasicBlock* isEmbedderBlock = m_code.addBlock();
+        BasicBlock* continuation = m_code.addBlock();
+
+        append(Derived::BranchTestPtr, Arg::resCond(MacroAssembler::NonZero), targetInstance, targetInstance);
+        m_currentBlock->setSuccessors(isWasmBlock, isEmbedderBlock);
+
+        {
+            auto pair = self().emitCallPatchpoint(isWasmBlock, signature, results, args);
+            auto* patchpoint = pair.first;
+            auto exceptionHandle = pair.second;
+            // We need to clobber all potential pinned registers since we might be leaving the instance.
+            // We pessimistically assume we could be calling to something that is bounds checking.
+            // FIXME: We shouldn't have to do this: https://bugs.webkit.org/show_bug.cgi?id=172181
+            patchpoint->clobberLate(PinnedRegisterInfo::get().toSave(MemoryMode::BoundsChecking));
+
+            patchpoint->setGenerator([=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+                AllowMacroScratchRegisterUsage allowScratch(jit);
+                exceptionHandle.generate(jit, params, this);
+                CCallHelpers::Call call = jit.threadSafePatchableNearCall();
+                jit.addLinkTask([unlinkedWasmToWasmCalls, call, functionIndex] (LinkBuffer& linkBuffer) {
+                    unlinkedWasmToWasmCalls->append({ linkBuffer.locationOfNearCall<WasmEntryPtrTag>(call), functionIndex });
+                });
+            });
+
+            append(isWasmBlock, Jump);
+            isWasmBlock->setSuccessors(continuation);
+        }
+
+        {
+            auto jumpDestination = self().gPtr();
+            append(isEmbedderBlock, Move, Arg::bigImm(Instance::offsetOfWasmToEmbedderStub(functionIndex)), jumpDestination);
+            append(isEmbedderBlock, Derived::AddPtr, instanceValue(), jumpDestination);
+            append(isEmbedderBlock, Move, Arg::addr(jumpDestination), jumpDestination);
+
+            Vector<ConstrainedTmp> jumpArgs;
+            jumpArgs.append({ jumpDestination, B3::ValueRep::SomeRegister });
+            auto pair = self().emitCallPatchpoint(isEmbedderBlock, signature, results, args, WTFMove(jumpArgs));
+            auto* patchpoint = pair.first;
+            auto exceptionHandle = pair.second;
+
+            // We need to clobber all potential pinned registers since we might be leaving the instance.
+            // We pessimistically assume we could be calling to something that is bounds checking.
+            // FIXME: We shouldn't have to do this: https://bugs.webkit.org/show_bug.cgi?id=172181
+            patchpoint->clobberLate(PinnedRegisterInfo::get().toSave(MemoryMode::BoundsChecking));
+            patchpoint->setGenerator([=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+                AllowMacroScratchRegisterUsage allowScratch(jit);
+                exceptionHandle.generate(jit, params, this);
+                jit.call(params[params.proc().resultCount(params.value()->type())].gpr(), WasmEntryPtrTag);
+            });
+
+            append(isEmbedderBlock, Jump);
+            isEmbedderBlock->setSuccessors(continuation);
+        }
+
+        m_currentBlock = continuation;
+        // The call could have been to another WebAssembly instance, and / or could have modified our Memory.
+        restoreWebAssemblyGlobalState(RestoreCachedStackLimit::Yes, m_info.memory, currentInstance, continuation);
+    } else {
+        auto pair = self().emitCallPatchpoint(m_currentBlock, signature, results, args);
+        auto* patchpoint = pair.first;
+        auto exceptionHandle = pair.second;
+        // We need to clobber the size register since the LLInt always bounds checks
+        if (self().useSignalingMemory() || m_info.memory.isShared())
+            patchpoint->clobberLate(RegisterSet { PinnedRegisterInfo::get().boundsCheckingSizeRegister });
+        patchpoint->setGenerator([=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            exceptionHandle.generate(jit, params, this);
+            CCallHelpers::Call call = jit.threadSafePatchableNearCall();
+            jit.addLinkTask([unlinkedWasmToWasmCalls, call, functionIndex] (LinkBuffer& linkBuffer) {
+                unlinkedWasmToWasmCalls->append({ linkBuffer.locationOfNearCall<WasmEntryPtrTag>(call), functionIndex });
+            });
+        });
+    }
+
+    return { };
+}
+
+template<typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addCallIndirect(unsigned tableIndex, const TypeDefinition& originalSignature, Vector<ExpressionType>& args, ResultList& results) -> PartialResult
+{
+    ExpressionType calleeIndex = args.takeLast();
+    const TypeDefinition& signature = originalSignature.expand();
+    ASSERT(signature.as<FunctionSignature>()->argumentCount() == args.size());
+    ASSERT(m_info.tableCount() > tableIndex);
+    ASSERT(m_info.tables[tableIndex].type() == TableElementType::Funcref);
+
+    m_makesCalls = true;
+    // Note: call indirect can call either WebAssemblyFunction or WebAssemblyWrapperFunction. Because
+    // WebAssemblyWrapperFunction is like calling into the embedder, we conservatively assume all call indirects
+    // can be to the embedder for our stack check calculation.
+    m_maxNumJSCallArguments = std::max(m_maxNumJSCallArguments, static_cast<uint32_t>(args.size()));
+
+    ExpressionType callableFunctionBuffer = self().gPtr();
+    ExpressionType instancesBuffer = self().gPtr();
+    ExpressionType callableFunctionBufferLength = self().gPtr();
+    {
+        RELEASE_ASSERT(Arg::isValidAddrForm(FuncRefTable::offsetOfFunctions(), B3::pointerWidth()));
+        RELEASE_ASSERT(Arg::isValidAddrForm(FuncRefTable::offsetOfInstances(), B3::pointerWidth()));
+        RELEASE_ASSERT(Arg::isValidAddrForm(FuncRefTable::offsetOfLength(), B3::pointerWidth()));
+
+        self().emitLoad(instanceValue().tmp(), Instance::offsetOfTablePtr(m_numImportFunctions, tableIndex), callableFunctionBufferLength);
+        append(Move, Arg::addr(callableFunctionBufferLength, FuncRefTable::offsetOfFunctions()), callableFunctionBuffer);
+        append(Move, Arg::addr(callableFunctionBufferLength, FuncRefTable::offsetOfInstances()), instancesBuffer);
+        append(Move32, Arg::addr(callableFunctionBufferLength, Table::offsetOfLength()), callableFunctionBufferLength);
+    }
+
+    append(Move32, calleeIndex, calleeIndex);
+
+    // Check the index we are looking for is valid.
+    emitCheck([&] {
+        return Inst(Branch32, nullptr, Arg::relCond(MacroAssembler::AboveOrEqual), calleeIndex, callableFunctionBufferLength);
+    }, [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+        this->emitThrowException(jit, ExceptionType::OutOfBoundsCallIndirect);
+    });
+
+    ExpressionType calleeCode = self().gPtr();
+    {
+        static_assert(sizeof(TypeIndex) == sizeof(void*));
+        ExpressionType calleeSignatureIndex = self().gPtr();
+        // Compute the offset in the table index space we are looking for.
+        append(Move, Arg::imm(sizeof(WasmToWasmImportableFunction)), calleeSignatureIndex);
+        append(Derived::MulPtr, calleeIndex, calleeSignatureIndex);
+        append(Derived::AddPtr, callableFunctionBuffer, calleeSignatureIndex);
+        
+        append(Move, Arg::addr(calleeSignatureIndex, WasmToWasmImportableFunction::offsetOfEntrypointLoadLocation()), calleeCode); // Pointer to callee code.
+
+        // FIXME: This seems wasteful to do two checks just for a nicer error message.
+        // We should move just to use a single branch and then figure out what
+        // error to use in the exception handler.
+
+        append(Move, Arg::addr(calleeSignatureIndex, WasmToWasmImportableFunction::offsetOfSignatureIndex()), calleeSignatureIndex);
+
+        emitCheck([&] {
+            static_assert(!TypeDefinition::invalidIndex, "");
+            return Inst(Derived::BranchTestPtr, nullptr, Arg::resCond(MacroAssembler::Zero), calleeSignatureIndex, calleeSignatureIndex);
+        }, [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+            this->emitThrowException(jit, ExceptionType::NullTableEntry);
+        });
+
+        ExpressionType expectedSignatureIndex = self().gPtr();
+        append(Move, Arg::bigImm(TypeInformation::get(originalSignature)), expectedSignatureIndex);
+        emitCheck([&] {
+            return Inst(Derived::BranchPtr, nullptr, Arg::relCond(MacroAssembler::NotEqual), calleeSignatureIndex, expectedSignatureIndex);
+        }, [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+            this->emitThrowException(jit, ExceptionType::BadSignature);
+        });
+    }
+
+    auto calleeInstance = self().gPtr();
+    append(Move, Arg::index(instancesBuffer, calleeIndex, sizeof(void*), 0), calleeInstance);
+
+    return self().emitIndirectCall(calleeInstance, calleeCode, signature, args, results);
+}
+
+template<typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::emitIndirectCall(ExpressionType calleeInstance, ExpressionType calleeCode, const TypeDefinition& signature, const Vector<ExpressionType>& args, ResultList& results) -> PartialResult
+{
+    auto currentInstance = self().gPtr();
+    append(Move, instanceValue(), currentInstance);
+
+    // Do a context switch if needed.
+    {
+        BasicBlock* doContextSwitch = m_code.addBlock();
+        BasicBlock* continuation = m_code.addBlock();
+
+        append(Derived::BranchPtr, Arg::relCond(MacroAssembler::Equal), calleeInstance, currentInstance);
+        m_currentBlock->setSuccessors(continuation, doContextSwitch);
+
+        auto* patchpoint = addPatchpoint(B3::Void);
+        patchpoint->effects.writesPinned = true;
+        // We pessimistically assume we're calling something with BoundsChecking memory.
+        // FIXME: We shouldn't have to do this: https://bugs.webkit.org/show_bug.cgi?id=172181
+        patchpoint->clobber(PinnedRegisterInfo::get().toSave(MemoryMode::BoundsChecking));
+        patchpoint->clobber(RegisterSet::macroScratchRegisters());
+        patchpoint->numGPScratchRegisters = 1;
+
+        patchpoint->setGenerator([=] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            GPRReg calleeInstance = params[0].gpr();
+            GPRReg oldContextInstance = params[1].gpr();
+            GPRReg scratch = params.gpScratch(0);
+            ASSERT(scratch != calleeInstance);
+            jit.loadPtr(CCallHelpers::Address(oldContextInstance, Instance::offsetOfCachedStackLimit()), scratch);
+            jit.storePtr(scratch, CCallHelpers::Address(calleeInstance, Instance::offsetOfCachedStackLimit()));
+            jit.storeWasmContextInstance(calleeInstance);
+
+            if constexpr (Derived::supportsPinnedStateRegisters) {
+                const PinnedRegisterInfo& pinnedRegs = PinnedRegisterInfo::get();
+                // FIXME: We should support more than one memory size register
+                //   see: https://bugs.webkit.org/show_bug.cgi?id=162952
+                ASSERT(pinnedRegs.boundsCheckingSizeRegister != calleeInstance);
+                ASSERT(pinnedRegs.baseMemoryPointer != calleeInstance);
+                jit.loadPtr(CCallHelpers::Address(calleeInstance, Instance::offsetOfCachedBoundsCheckingSize()), pinnedRegs.boundsCheckingSizeRegister); // Bound checking size.
+                jit.loadPtr(CCallHelpers::Address(calleeInstance, Instance::offsetOfCachedMemory()), pinnedRegs.baseMemoryPointer); // Memory::void*.
+                jit.cageConditionallyAndUntag(Gigacage::Primitive, pinnedRegs.baseMemoryPointer, pinnedRegs.boundsCheckingSizeRegister, scratch);
+            }
+        });
+
+        emitPatchpoint(doContextSwitch, patchpoint, ExpressionType(), calleeInstance, currentInstance);
+        append(doContextSwitch, Jump);
+        doContextSwitch->setSuccessors(continuation);
+
+        m_currentBlock = continuation;
+    }
+
+    append(Move, Arg::addr(calleeCode), calleeCode);
+
+    Vector<ConstrainedTmp> extraArgs;
+    extraArgs.append(calleeCode);
+
+    for (unsigned i = 0; i < signature.as<FunctionSignature>()->returnCount(); ++i)
+        results.append(tmpForType(signature.as<FunctionSignature>()->returnType(i)));
+
+    auto pair = self().emitCallPatchpoint(m_currentBlock, signature, results, args, WTFMove(extraArgs));
+    auto* patchpoint = pair.first;
+    auto exceptionHandle = pair.second;
+
+    // We need to clobber all potential pinned registers since we might be leaving the instance.
+    // We pessimistically assume we're always calling something that is bounds checking so
+    // because the wasm->wasm thunk unconditionally overrides the size registers.
+    // FIXME: We should not have to do this, but the wasm->wasm stub assumes it can
+    // use all the pinned registers as scratch: https://bugs.webkit.org/show_bug.cgi?id=172181
+
+    patchpoint->clobberLate(PinnedRegisterInfo::get().toSave(MemoryMode::BoundsChecking));
+
+    patchpoint->setGenerator([=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        exceptionHandle.generate(jit, params, this);
+        jit.call(params[params.proc().resultCount(params.value()->type())].gpr(), WasmEntryPtrTag);
+    });
+
+    // The call could have been to another WebAssembly instance, and / or could have modified our Memory.
+    restoreWebAssemblyGlobalState(RestoreCachedStackLimit::Yes, m_info.memory, currentInstance, m_currentBlock);
+
+    return { };
+}
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addCallRef(const TypeDefinition& originalSignature, Vector<ExpressionType>& args, ResultList& results) -> PartialResult
+{
+    m_makesCalls = true;
+    // Note: call ref can call either WebAssemblyFunction or WebAssemblyWrapperFunction. Because
+    // WebAssemblyWrapperFunction is like calling into the embedder, we conservatively assume all call indirects
+    // can be to the embedder for our stack check calculation.
+    ExpressionType calleeFunction = args.takeLast();
+    m_maxNumJSCallArguments = std::max(m_maxNumJSCallArguments, static_cast<uint32_t>(args.size()));
+    const TypeDefinition& signature = originalSignature.expand();
+
+    emitThrowOnNullReference(calleeFunction);
+
+    ExpressionType calleeCode = self().gPtr();
+    append(Move, Arg::addr(self().extractJSValuePointer(calleeFunction), WebAssemblyFunctionBase::offsetOfEntrypointLoadLocation()), calleeCode); // Pointer to callee code.
+
+    auto calleeInstance = self().g64();
+    append(Move, Arg::addr(self().extractJSValuePointer(calleeFunction), WebAssemblyFunctionBase::offsetOfInstance()), calleeInstance);
+    append(Move, Arg::addr(calleeInstance, JSWebAssemblyInstance::offsetOfInstance()), calleeInstance);
+
+    return emitIndirectCall(calleeInstance, calleeCode, signature, args, results);
+}
+
+
+
+template <typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addUnreachable() -> PartialResult
+{
+    B3::PatchpointValue* unreachable = addPatchpoint(B3::Void);
+    unreachable->setGenerator([this](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+        this->emitThrowException(jit, ExceptionType::Unreachable);
+    });
+    unreachable->effects.terminal = true;
+    emitPatchpoint(unreachable, Tmp());
+    return {};
+}
 } } // namespace JSC::Wasm
 
 #endif // ENABLE(WEBASSEMBLY_B3JIT)
