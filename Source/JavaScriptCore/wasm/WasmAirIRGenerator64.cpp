@@ -120,6 +120,16 @@ public:
     PartialResult addIntegerSub(B3::Air::Opcode, ExpressionType lhs, ExpressionType rhs, ExpressionType& result);
     PartialResult addFloatingPointAbs(B3::Air::Opcode, ExpressionType value, ExpressionType& result);
     PartialResult addFloatingPointBinOp(Type, B3::Air::Opcode, ExpressionType lhs, ExpressionType rhs, ExpressionType& result);
+    PartialResult addCompare(Type type, MacroAssembler::RelationalCondition cond, ExpressionType lhs, ExpressionType rhs, ExpressionType& result);
+
+    // Misc. operations that require 64-bit-only patchpoints
+    PartialResult addI64TruncUF32(ExpressionType arg, ExpressionType& result);
+    PartialResult addI64TruncSF32(ExpressionType arg, ExpressionType& result);
+    PartialResult addI64TruncUF64(ExpressionType arg, ExpressionType& result);
+    PartialResult addI64TruncSF64(ExpressionType arg, ExpressionType& result);
+    PartialResult addF64ConvertUI64(ExpressionType arg, ExpressionType& result);
+    PartialResult addF32ConvertUI64(ExpressionType arg, ExpressionType& result);
+    PartialResult addI64Ctz(ExpressionType arg, ExpressionType& result);
 
     Tmp emitCatchImpl(CatchKind, ControlType&, unsigned exceptionIndex = 0);
     template <size_t inlineCapacity>
@@ -225,14 +235,7 @@ private:
     TypedTmp appendStrongCAS(ExtAtomicOpType, TypedTmp expected, TypedTmp value, Arg addrArg, TypedTmp result);
 
     template <typename IntType>
-    void emitChecksForModOrDiv(bool isSignedDiv, ExpressionType left, ExpressionType right);
-
-    template <typename IntType>
     void emitModOrDiv(bool isDiv, ExpressionType lhs, ExpressionType rhs, ExpressionType& result);
-
-    enum class MinOrMax { Min, Max };
-
-    PartialResult addFloatingPointMinOrMax(Type, MinOrMax, ExpressionType lhs, ExpressionType rhs, ExpressionType& result);
 
 
     bool useSignalingMemory() const
@@ -1313,42 +1316,6 @@ std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> AirIRGenerator64::emi
 }
 
 template <typename IntType>
-void AirIRGenerator64::emitChecksForModOrDiv(bool isSignedDiv, ExpressionType left, ExpressionType right)
-{
-    static_assert(sizeof(IntType) == 4 || sizeof(IntType) == 8);
-
-    emitCheck([&] {
-        return Inst(sizeof(IntType) == 4 ? BranchTest32 : BranchTest64, nullptr, Arg::resCond(MacroAssembler::Zero), right, right);
-    }, [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
-        this->emitThrowException(jit, ExceptionType::DivisionByZero);
-    });
-
-    if (isSignedDiv) {
-        ASSERT(std::is_signed<IntType>::value);
-        IntType min = std::numeric_limits<IntType>::min();
-
-        // FIXME: Better isel for compare with imms here.
-        // https://bugs.webkit.org/show_bug.cgi?id=193999
-        auto minTmp = sizeof(IntType) == 4 ? g32() : g64();
-        auto negOne = sizeof(IntType) == 4 ? g32() : g64();
-
-        B3::Air::Opcode op = sizeof(IntType) == 4 ? Compare32 : Compare64;
-        append(Move, Arg::bigImm(static_cast<uint64_t>(min)), minTmp);
-        append(op, Arg::relCond(MacroAssembler::Equal), left, minTmp, minTmp);
-
-        append(Move, Arg::isValidImmForm(-1) ? Arg::imm(-1) : Arg::bigImm(-1) , negOne);
-        append(op, Arg::relCond(MacroAssembler::Equal), right, negOne, negOne);
-
-        emitCheck([&] {
-            return Inst(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), minTmp, negOne);
-        },
-        [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
-            this->emitThrowException(jit, ExceptionType::IntegerOverflow);
-        });
-    }
-}
-
-template <typename IntType>
 void AirIRGenerator64::emitModOrDiv(bool isDiv, ExpressionType lhs, ExpressionType rhs, ExpressionType& result)
 {
     static_assert(sizeof(IntType) == 4 || sizeof(IntType) == 8);
@@ -1551,62 +1518,21 @@ auto AirIRGenerator64::addFloatingPointBinOp(Type type, B3::Air::Opcode op, Expr
     return { };
 }
 
-auto AirIRGenerator64::addFloatingPointMinOrMax(Type floatType, MinOrMax minOrMax, ExpressionType arg0, ExpressionType arg1, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addCompare(Type type, MacroAssembler::RelationalCondition cond, ExpressionType lhs, ExpressionType rhs, ExpressionType& result) -> PartialResult
 {
-    ASSERT(floatType.isF32() || floatType.isF64());
-    result = tmpForType(floatType);
+    ASSERT(type.isI32() || type.isI64());
 
-    if (isARM64()) {
-        if (floatType.isF32())
-            append(m_currentBlock, minOrMax == MinOrMax::Max ? FloatMax : FloatMin, arg0, arg1, result);
-        else
-            append(m_currentBlock, minOrMax == MinOrMax::Max ? DoubleMax : DoubleMin, arg0, arg1, result);
+    result = g32();
+
+    if (type.isI32()) {
+        append(Compare32, Arg::relCond(cond), lhs, rhs, result);
         return { };
     }
 
-    BasicBlock* isEqual = m_code.addBlock();
-    BasicBlock* notEqual = m_code.addBlock();
-    BasicBlock* isLessThan = m_code.addBlock();
-    BasicBlock* notLessThan = m_code.addBlock();
-    BasicBlock* isGreaterThan = m_code.addBlock();
-    BasicBlock* isNaN = m_code.addBlock();
-    BasicBlock* continuation = m_code.addBlock();
-
-    auto branchOp = floatType.isF32() ? BranchFloat : BranchDouble;
-    append(m_currentBlock, branchOp, Arg::doubleCond(MacroAssembler::DoubleEqualAndOrdered), arg0, arg1);
-    m_currentBlock->setSuccessors(isEqual, notEqual);
-
-    append(notEqual, branchOp, Arg::doubleCond(MacroAssembler::DoubleLessThanAndOrdered), arg0, arg1);
-    notEqual->setSuccessors(isLessThan, notLessThan);
-
-    append(notLessThan, branchOp, Arg::doubleCond(MacroAssembler::DoubleGreaterThanAndOrdered), arg0, arg1);
-    notLessThan->setSuccessors(isGreaterThan, isNaN);
-
-    auto andOp = floatType.isF32() ? AndFloat : AndDouble;
-    auto orOp = floatType.isF32() ? OrFloat : OrDouble;
-    append(isEqual, minOrMax == MinOrMax::Max ? andOp : orOp, arg0, arg1, result);
-    append(isEqual, Jump);
-    isEqual->setSuccessors(continuation);
-
-    auto isLessThanResult = minOrMax == MinOrMax::Max ? arg1 : arg0;
-    append(isLessThan, moveOpForValueType(floatType), isLessThanResult, result);
-    append(isLessThan, Jump);
-    isLessThan->setSuccessors(continuation);
-
-    auto isGreaterThanResult = minOrMax == MinOrMax::Max ? arg0 : arg1;
-    append(isGreaterThan, moveOpForValueType(floatType), isGreaterThanResult, result);
-    append(isGreaterThan, Jump);
-    isGreaterThan->setSuccessors(continuation);
-
-    auto addOp = floatType.isF32() ? AddFloat : AddDouble;
-    append(isNaN, addOp, arg0, arg1, result);
-    append(isNaN, Jump);
-    isNaN->setSuccessors(continuation);
-
-    m_currentBlock = continuation;
-
+    append(Compare64, Arg::relCond(cond), lhs, rhs, result);
     return { };
 }
+
 
 template <size_t inlineCapacity>
 PatchpointExceptionHandle AirIRGenerator64::preparePatchpointForExceptions(B3::PatchpointValue* patch, Vector<ConstrainedTmp, inlineCapacity>& args)
@@ -1625,6 +1551,208 @@ PatchpointExceptionHandle AirIRGenerator64::preparePatchpointForExceptions(B3::P
 
     return { m_hasExceptionHandlers, m_callSiteIndex, numLiveValues };
 }
+
+auto AirIRGenerator64::addI64Ctz(ExpressionType arg, ExpressionType& result) -> PartialResult
+{
+    auto* patchpoint = addPatchpoint(B3::Int64);
+    patchpoint->effects = B3::Effects::none();
+    patchpoint->setGenerator([=](auto& jit, const B3::StackmapGenerationParams& params) {
+        jit.countTrailingZeros64(params[1].gpr(), params[0].gpr());
+    });
+    result = g64();
+    emitPatchpoint(patchpoint, result, arg);
+    return {};
+}
+
+auto AirIRGenerator64::addF64ConvertUI64(ExpressionType arg, ExpressionType& result) -> PartialResult
+{
+    auto* patchpoint = addPatchpoint(B3::Double);
+    patchpoint->effects = B3::Effects::none();
+    if (isX86())
+        patchpoint->numGPScratchRegisters = 1;
+    patchpoint->clobber(RegisterSet::macroScratchRegisters());
+    patchpoint->setGenerator([=](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+#if CPU(X86_64)
+        jit.convertUInt64ToDouble(params[1].gpr(), params[0].fpr(), params.gpScratch(0));
+#else
+        jit.convertUInt64ToDouble(params[1].gpr(), params[0].fpr());
+#endif
+    });
+    result = f64();
+    emitPatchpoint(patchpoint, result, arg);
+    return {};
+}
+
+auto AirIRGenerator64::addF32ConvertUI64(ExpressionType arg, ExpressionType& result) -> PartialResult
+{
+    auto* patchpoint = addPatchpoint(B3::Float);
+    patchpoint->effects = B3::Effects::none();
+    if (isX86())
+        patchpoint->numGPScratchRegisters = 1;
+    patchpoint->clobber(RegisterSet::macroScratchRegisters());
+    patchpoint->setGenerator([=](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+#if CPU(X86_64)
+        jit.convertUInt64ToFloat(params[1].gpr(), params[0].fpr(), params.gpScratch(0));
+#else
+        jit.convertUInt64ToFloat(params[1].gpr(), params[0].fpr());
+#endif
+    });
+    result = f32();
+    emitPatchpoint(patchpoint, result, arg);
+    return {};
+}
+
+auto AirIRGenerator64::addI64TruncSF64(ExpressionType arg, ExpressionType& result) -> PartialResult
+{
+    auto max = addConstant(Types::F64, bitwise_cast<uint64_t>(-static_cast<double>(std::numeric_limits<int64_t>::min())));
+    auto min = addConstant(Types::F64, bitwise_cast<uint64_t>(static_cast<double>(std::numeric_limits<int64_t>::min())));
+
+    auto temp1 = g32();
+    auto temp2 = g32();
+    append(CompareDouble, Arg::doubleCond(MacroAssembler::DoubleLessThanOrUnordered), arg, min, temp1);
+    append(CompareDouble, Arg::doubleCond(MacroAssembler::DoubleGreaterThanOrEqualOrUnordered), arg, max, temp2);
+    append(Or32, temp1, temp2);
+
+    emitCheck([&] {
+        return Inst(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), temp2, temp2);
+    }, [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+        this->emitThrowException(jit, ExceptionType::OutOfBoundsTrunc);
+    });
+
+    auto* patchpoint = addPatchpoint(B3::Int64);
+    patchpoint->effects = B3::Effects::none();
+    patchpoint->setGenerator([=] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
+    });
+
+    result = g64();
+    emitPatchpoint(patchpoint, result, arg);
+    return { };
+}
+
+auto AirIRGenerator64::addI64TruncUF64(ExpressionType arg, ExpressionType& result) -> PartialResult
+{
+    auto max = addConstant(Types::F64, bitwise_cast<uint64_t>(static_cast<double>(std::numeric_limits<int64_t>::min()) * -2.0));
+    auto min = addConstant(Types::F64, bitwise_cast<uint64_t>(-1.0));
+    
+    auto temp1 = g32();
+    auto temp2 = g32();
+    append(CompareDouble, Arg::doubleCond(MacroAssembler::DoubleLessThanOrEqualOrUnordered), arg, min, temp1);
+    append(CompareDouble, Arg::doubleCond(MacroAssembler::DoubleGreaterThanOrEqualOrUnordered), arg, max, temp2);
+    append(Or32, temp1, temp2);
+
+    emitCheck([&] {
+        return Inst(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), temp2, temp2);
+    }, [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+        this->emitThrowException(jit, ExceptionType::OutOfBoundsTrunc);
+    });
+
+    ExpressionType signBitConstant;
+    if (isX86())
+        signBitConstant = addConstant(Types::F64, bitwise_cast<uint64_t>(static_cast<double>(std::numeric_limits<uint64_t>::max() - std::numeric_limits<int64_t>::max())));
+
+    Vector<ConstrainedTmp> args;
+    auto* patchpoint = addPatchpoint(B3::Int64);
+    patchpoint->effects = B3::Effects::none();
+    patchpoint->clobber(RegisterSet::macroScratchRegisters());
+    args.append(arg);
+    if (isX86()) {
+        args.append(signBitConstant);
+        patchpoint->numFPScratchRegisters = 1;
+    }
+    patchpoint->setGenerator([=] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        FPRReg scratch = InvalidFPRReg;
+        FPRReg constant = InvalidFPRReg;
+        if (isX86()) {
+            scratch = params.fpScratch(0);
+            constant = params[2].fpr();
+        }
+        jit.truncateDoubleToUint64(params[1].fpr(), params[0].gpr(), scratch, constant);
+    });
+
+    result = g64();
+    emitPatchpoint(m_currentBlock, patchpoint, Vector<ExpressionType, 8> { result }, WTFMove(args));
+    return { };
+}
+
+auto AirIRGenerator64::addI64TruncSF32(ExpressionType arg, ExpressionType& result) -> PartialResult
+{
+    auto max = addConstant(Types::F32, bitwise_cast<uint32_t>(-static_cast<float>(std::numeric_limits<int64_t>::min())));
+    auto min = addConstant(Types::F32, bitwise_cast<uint32_t>(static_cast<float>(std::numeric_limits<int64_t>::min())));
+
+    auto temp1 = g32();
+    auto temp2 = g32();
+    append(CompareFloat, Arg::doubleCond(MacroAssembler::DoubleLessThanOrUnordered), arg, min, temp1);
+    append(CompareFloat, Arg::doubleCond(MacroAssembler::DoubleGreaterThanOrEqualOrUnordered), arg, max, temp2);
+    append(Or32, temp1, temp2);
+
+    emitCheck([&] {
+        return Inst(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), temp2, temp2);
+    }, [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+        this->emitThrowException(jit, ExceptionType::OutOfBoundsTrunc);
+    });
+
+    auto* patchpoint = addPatchpoint(B3::Int64);
+    patchpoint->effects = B3::Effects::none();
+    patchpoint->setGenerator([=] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        jit.truncateFloatToInt64(params[1].fpr(), params[0].gpr());
+    });
+    result = g64();
+    emitPatchpoint(patchpoint, result, arg);
+    return { };
+}
+
+auto AirIRGenerator64::addI64TruncUF32(ExpressionType arg, ExpressionType& result) -> PartialResult
+{
+    auto max = addConstant(Types::F32, bitwise_cast<uint32_t>(static_cast<float>(std::numeric_limits<int64_t>::min()) * static_cast<float>(-2.0)));
+    auto min = addConstant(Types::F32, bitwise_cast<uint32_t>(static_cast<float>(-1.0)));
+    
+    auto temp1 = g32();
+    auto temp2 = g32();
+    append(CompareFloat, Arg::doubleCond(MacroAssembler::DoubleLessThanOrEqualOrUnordered), arg, min, temp1);
+    append(CompareFloat, Arg::doubleCond(MacroAssembler::DoubleGreaterThanOrEqualOrUnordered), arg, max, temp2);
+    append(Or32, temp1, temp2);
+
+    emitCheck([&] {
+        return Inst(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), temp2, temp2);
+    }, [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+        this->emitThrowException(jit, ExceptionType::OutOfBoundsTrunc);
+    });
+
+    ExpressionType signBitConstant;
+    if (isX86())
+        signBitConstant = addConstant(Types::F32, bitwise_cast<uint32_t>(static_cast<float>(std::numeric_limits<uint64_t>::max() - std::numeric_limits<int64_t>::max())));
+
+    auto* patchpoint = addPatchpoint(B3::Int64);
+    patchpoint->effects = B3::Effects::none();
+    patchpoint->clobber(RegisterSet::macroScratchRegisters());
+    Vector<ConstrainedTmp, 2> args;
+    args.append(arg);
+    if (isX86()) {
+        args.append(signBitConstant);
+        patchpoint->numFPScratchRegisters = 1;
+    }
+    patchpoint->setGenerator([=] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        FPRReg scratch = InvalidFPRReg;
+        FPRReg constant = InvalidFPRReg;
+        if (isX86()) {
+            scratch = params.fpScratch(0);
+            constant = params[2].fpr();
+        }
+        jit.truncateFloatToUint64(params[1].fpr(), params[0].gpr(), scratch, constant);
+    });
+
+    result = g64();
+    emitPatchpoint(m_currentBlock, patchpoint, Vector<ExpressionType, 8> { result }, WTFMove(args));
+
+    return { };
+}
+
+
 
 Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAir(CompilationContext& compilationContext, const FunctionData& function, const TypeDefinition& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, const ModuleInformation& info, MemoryMode mode, uint32_t functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp)
 {
