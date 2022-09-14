@@ -214,9 +214,9 @@ public:
     PartialResult WARN_UNUSED_RETURN truncSaturated(Ext1OpType, ExpressionType operand, ExpressionType& result, Type returnType, Type operandType){ CRASH(); }
 
     // GC
-    PartialResult WARN_UNUSED_RETURN addI31New(ExpressionType value, ExpressionType& result){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addI31GetS(ExpressionType ref, ExpressionType& result){ CRASH(); }
-    PartialResult WARN_UNUSED_RETURN addI31GetU(ExpressionType ref, ExpressionType& result){ CRASH(); }
+    PartialResult WARN_UNUSED_RETURN addI31New(ExpressionType value, ExpressionType& result);
+    PartialResult WARN_UNUSED_RETURN addI31GetS(ExpressionType ref, ExpressionType& result);
+    PartialResult WARN_UNUSED_RETURN addI31GetU(ExpressionType ref, ExpressionType& result);
 
     // Control flow
     PartialResult WARN_UNUSED_RETURN addReturn(const ControlData&, const Stack& returnValues);
@@ -1896,6 +1896,52 @@ auto AirIRGenerator32_64::addF64Copysign(ExpressionType arg0, ExpressionType arg
     append(Or32, sign, value.hi(), value.hi());
     append(Move64ToDouble, value.hi(), value.lo(), result);
     return {};
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// i31 manipulation
+
+auto AirIRGenerator64::addI31New(ExpressionType value, ExpressionType& result) -> PartialResult
+{
+    result = gRef(Type { TypeKind::Ref, Nullable::No, static_cast<TypeIndex>(TypeKind::I31ref) });
+
+    auto tmp1 = g32();
+    append(Move, Arg::bigImm(0x7fffffff), tmp1);
+    append(And32, tmp1, value, result.lo());
+    append(Move, Arg::bigImm(JSValue::Int32Tag), result.hi());
+
+    return { };
+}
+
+auto AirIRGenerator64::addI31GetS(ExpressionType ref, ExpressionType& result) -> PartialResult
+{
+    // Trap on null reference.
+    emitCheckForNullReference(ref, [=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+        this->emitThrowException(jit, ExceptionType::NullI31Get);
+    });
+
+    auto tmpForShift = g32();
+    result = g32();
+
+    append(Move, Arg::imm(1), tmpForShift);
+    append(Move, ref, result);
+    addShift(Types::I32, Lshift32, result, tmpForShift, result);
+    addShift(Types::I32, Rshift32, result, tmpForShift, result);
+
+    return { };
+}
+
+auto AirIRGenerator64::addI31GetU(ExpressionType ref, ExpressionType& result) -> PartialResult
+{
+    // Trap on null reference.
+    emitCheckForNullReference(ref, [=, this](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+        this->emitThrowException(jit, ExceptionType::NullI31Get);
+    });
+
+    result = g32();
+    append(Move, ref.lo(), result);
+
+    return { };
 }
 
 Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAir(CompilationContext& compilationContext, const FunctionData& function, const TypeDefinition& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, const ModuleInformation& info, MemoryMode mode, uint32_t functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp)
