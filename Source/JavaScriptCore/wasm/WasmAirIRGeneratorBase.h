@@ -713,6 +713,8 @@ public:
     PartialResult WARN_UNUSED_RETURN endBlock(ControlEntry&, Stack& expressionStack);
     PartialResult WARN_UNUSED_RETURN addEndToUnreachable(ControlEntry&, const Stack& expressionStack = { });
 
+    PartialResult WARN_UNUSED_RETURN addSelect(ExpressionType condition, ExpressionType nonZero, ExpressionType zero, ExpressionType& result);
+
     // Basic operators
     //
     // Note some of these are not defined in AirIRGeneratorBase: they are expected
@@ -3009,6 +3011,32 @@ auto AirIRGeneratorBase<Derived, ExpressionType>::atomicFence(ExtAtomicOpType, u
 {
     append(MemoryFence);
     return { };
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Select
+
+template<typename Derived, typename ExpressionType>
+auto AirIRGeneratorBase<Derived, ExpressionType>::addSelect(ExpressionType condition, ExpressionType nonZero, ExpressionType zero, ExpressionType& result) -> PartialResult
+{
+    ASSERT(nonZero.type() == zero.type());
+    result = self().tmpForType(nonZero.type());
+
+    BasicBlock* isZero = m_code.addBlock();
+    BasicBlock* continuation = m_code.addBlock();
+
+    self().emitMove(nonZero, result);
+    append(BranchTest32, Arg::resCond(MacroAssembler::Zero), condition, condition);
+    m_currentBlock->setSuccessors(isZero, continuation);
+
+    m_currentBlock = isZero;
+    self().emitMove(zero, result);
+    append(Jump);
+    isZero->setSuccessors(continuation);
+
+    m_currentBlock = continuation;
+
+    return {};
 }
 
 ////////////////////////////////////////////////////////////////////////////////

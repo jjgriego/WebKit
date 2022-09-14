@@ -106,8 +106,6 @@ public:
     PartialResult WARN_UNUSED_RETURN addI31GetS(ExpressionType ref, ExpressionType& result);
     PartialResult WARN_UNUSED_RETURN addI31GetU(ExpressionType ref, ExpressionType& result);
 
-    PartialResult WARN_UNUSED_RETURN addSelect(ExpressionType condition, ExpressionType nonZero, ExpressionType zero, ExpressionType& result);
-
     // Control flow
     PartialResult WARN_UNUSED_RETURN addReturn(const ControlData&, const Stack& returnValues);
     PartialResult WARN_UNUSED_RETURN addThrow(unsigned exceptionIndex, Vector<ExpressionType>& args, Stack&);
@@ -1110,27 +1108,6 @@ auto AirIRGenerator64::addI31GetU(ExpressionType ref, ExpressionType& result) ->
 
     result = g32();
     append(Move32, ref, result);
-
-    return { };
-}
-
-auto AirIRGenerator64::addSelect(ExpressionType condition, ExpressionType nonZero, ExpressionType zero, ExpressionType& result) -> PartialResult
-{
-    ASSERT(nonZero.type() == zero.type());
-    result = tmpForType(nonZero.type());
-    append(moveOpForValueType(nonZero.type()), nonZero, result);
-
-    BasicBlock* isZero = m_code.addBlock();
-    BasicBlock* continuation = m_code.addBlock();
-
-    append(BranchTest32, Arg::resCond(MacroAssembler::Zero), condition, condition);
-    m_currentBlock->setSuccessors(isZero, continuation);
-
-    append(isZero, moveOpForValueType(zero.type()), zero, result);
-    append(isZero, Jump);
-    isZero->setSuccessors(continuation);
-
-    m_currentBlock = continuation;
 
     return { };
 }
