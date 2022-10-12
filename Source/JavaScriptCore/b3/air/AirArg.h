@@ -33,6 +33,8 @@
 #include "B3Type.h"
 #include "B3Value.h"
 #include "B3Width.h"
+#include "Fits.h"
+#include "OpcodeSize.h"
 
 #if !ASSERT_ENABLED
 IGNORE_RETURN_TYPE_WARNINGS_BEGIN
@@ -495,6 +497,8 @@ public:
 
     static Arg imm(int64_t value)
     {
+        if constexpr (is32Bit())
+            RELEASE_ASSERT((Fits<int64_t, Wide32>::check(value) || Fits<uint64_t, Wide32>::check(value)));
         Arg result;
         result.m_kind = Imm;
         result.m_offset = value;
@@ -503,14 +507,28 @@ public:
 
     static Arg bigImm(int64_t value)
     {
+        if constexpr (is32Bit())
+            RELEASE_ASSERT((Fits<int64_t, Wide32>::check(value) || Fits<uint64_t, Wide32>::check(value)));
         Arg result;
         result.m_kind = BigImm;
         result.m_offset = value;
         return result;
     }
 
+    static Arg bigImmLo32(int64_t value)
+    {
+        return bigImm(value & 0xffffffff);
+    }
+
+    static Arg bigImmHi32(int64_t value)
+    {
+        return bigImm(value >> 32);
+    }
+
     static Arg bitImm(int64_t value)
     {
+        if constexpr (is32Bit())
+            RELEASE_ASSERT((Fits<int64_t, Wide32>::check(value)));
         Arg result;
         result.m_kind = BitImm;
         result.m_offset = value;
@@ -519,6 +537,8 @@ public:
 
     static Arg bitImm64(int64_t value)
     {
+        if constexpr (is32Bit())
+            UNREACHABLE_FOR_PLATFORM();
         Arg result;
         result.m_kind = BitImm64;
         result.m_offset = value;
@@ -594,13 +614,13 @@ public:
     {
         switch (scale) {
         case 1:
-            if (isX86() || isARM64())
+            if (isX86() || isARM64() || isARM())
                 return true;
             return false;
         case 2:
         case 4:
         case 8:
-            if (isX86())
+            if (isX86() || isARM())
                 return true;
             if (isARM64()) {
                 if (!width)
@@ -1220,6 +1240,8 @@ public:
             return B3::isRepresentableAs<int32_t>(value);
         if (isARM64())
             return isUInt12(value);
+        if (isARM())
+            return isValidARMThumb2Immediate(value);
         return false;
     }
 
@@ -1229,6 +1251,8 @@ public:
             return B3::isRepresentableAs<int32_t>(value);
         if (isARM64())
             return ARM64LogicalImmediate::create32(value).isValid();
+        if (isARM())
+            return isValidARMThumb2Immediate(value);
         return false;
     }
 
@@ -1246,10 +1270,11 @@ public:
     {
         if (isX86())
             return true;
-        if (isARM64()) {
-            if (!width)
-                return true;
 
+        if (!width)
+            return true;
+
+        if (isARM64()) {
             if (isValidSignedImm9(offset))
                 return true;
 
@@ -1264,7 +1289,12 @@ public:
                 return isValidScaledUImm12<64>(offset);
             }
         }
+
+#if CPU(ARM_THUMB2)
+        return MacroAssemblerARMv7::BoundsNonDoubleWordOffset::within(offset);
+#else
         return false;
+#endif
     }
 
     template<typename Int, typename = Value::IsLegalOffset<Int>>
@@ -1274,7 +1304,7 @@ public:
             return false;
         if (isX86())
             return true;
-        if (isARM64())
+        if (isARM64() || isARM())
             return !offset;
         return false;
     }
@@ -1402,13 +1432,22 @@ public:
         return MacroAssembler::TrustedImm32(static_cast<Value::OffsetType>(m_offset));
     }
 
-#if USE(JSVALUE64)
     MacroAssembler::TrustedImm64 asTrustedImm64() const
     {
+        if constexpr (is32Bit())
+            UNREACHABLE_FOR_PLATFORM();
         ASSERT(isBigImm() || isBitImm64());
         return MacroAssembler::TrustedImm64(value());
     }
-#endif
+
+    decltype(auto) asTrustedBigImm() const
+    {
+        ASSERT(isBigImm());
+        if constexpr (is32Bit())
+            return MacroAssembler::TrustedImm32(value());
+        else
+            return MacroAssembler::TrustedImm64(value());
+    }
 
 #if CPU(ARM64)
     MacroAssembler::RegisterID asZeroReg() const
