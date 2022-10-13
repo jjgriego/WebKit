@@ -232,7 +232,11 @@ public:
 #if USE(JSVALUE64)
         return (m_bits.count() + m_upperBits.count()) * sizeof(CPURegister);
 #else
-        return numberOfSetGPRs() * bytesForWidth(pointerWidth()) + numberOfSetFPRs() * sizeof(double);
+
+        auto effectiveGPRCount = numberOfSetFPRs()
+            ? WTF::roundUpToMultipleOf<2>(numberOfSetGPRs())
+            : numberOfSetGPRs();
+        return effectiveGPRCount * bytesForWidth(pointerWidth()) + numberOfSetFPRs() * sizeof(double);
 #endif
     }
 
@@ -272,8 +276,14 @@ public:
             [&] (size_t index) {
                 ASSERT(m_bits.get(index) >= m_upperBits.get(index));
                 Reg reg = Reg::fromIndex(index);
-                Width includedWidth = (conservativeWidth(reg) <= Width64 || !m_upperBits.get(index)) ? Width64 : Width128;
-                func(reg, includedWidth);
+                if (conservativeWidth(reg) > minimumWidth(reg)) {
+                    // this is currently only possible on 64-bit platforms when using 128-bit extended registers
+                    ASSERT(is64Bit() && conservativeWidth(reg) == Width128 && minimumWidth(reg) == Width64);
+                    func(reg, m_upperBits.get(index) ? Width64 : Width128);
+                } else {
+                    ASSERT(!m_upperBits.get(index));
+                    func(reg, conservativeWidth(reg));
+                }
             });
     }
 

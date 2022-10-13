@@ -53,7 +53,7 @@ struct RegDispatch<GPRReg, Width64> {
     template<typename Spooler> static GPRReg temp2(const Spooler* spooler) { return spooler->m_temp2GPR; }
     template<typename Spooler> static GPRReg& regToStore(Spooler* spooler) { return spooler->m_gprToStore; }
     static constexpr GPRReg invalid() { return InvalidGPRReg; }
-    static constexpr size_t regSize() { return bytesForWidth(pointerWidth()); }
+    static constexpr size_t regSize() { return bytesForWidth(Width64); }
 #if CPU(ARM64)
     static bool isValidLoadPairImm(int offset) { return ARM64Assembler::isValidLDPImm<64>(offset); }
     static bool isValidStorePairImm(int offset) { return ARM64Assembler::isValidSTPImm<64>(offset); }
@@ -179,7 +179,12 @@ public:
         : Base(jit, baseGPR)
     { }
 
-    ALWAYS_INLINE void loadGPR(const RegisterAtOffset& entry) { ASSERT(entry.width() == Width64); execute<GPRReg, Width64>(entry); }
+    ALWAYS_INLINE void loadGPR(const RegisterAtOffset& entry)
+    {
+        ASSERT(entry.width() == pointerWidth());
+        // We use Width64 for GPRs because, uh, reasons? it was like this before
+        execute<GPRReg, Width64>(entry);
+    }
     ALWAYS_INLINE void finalizeGPR() { finalize<GPRReg>(); }
     ALWAYS_INLINE void loadFPR(const RegisterAtOffset& entry) { ASSERT(entry.width() == Width64); execute<FPRReg, Width64>(entry); }
     ALWAYS_INLINE void finalizeFPR() { finalize<FPRReg>(); }
@@ -240,7 +245,12 @@ public:
         : Base(jit, baseGPR)
     { }
 
-    ALWAYS_INLINE void storeGPR(const RegisterAtOffset& entry) { ASSERT(entry.width() == Width64); execute<GPRReg, Width64>(entry); }
+    ALWAYS_INLINE void storeGPR(const RegisterAtOffset& entry)
+    {
+        ASSERT(entry.width() == pointerWidth());
+        // see comment above
+        execute<GPRReg, Width64>(entry);
+    }
     ALWAYS_INLINE void finalizeGPR() { finalize<GPRReg>(); }
     ALWAYS_INLINE void storeFPR(const RegisterAtOffset& entry) { ASSERT(entry.width() == Width64); execute<FPRReg, Width64>(entry); }
     ALWAYS_INLINE void finalizeFPR() { finalize<FPRReg>(); }

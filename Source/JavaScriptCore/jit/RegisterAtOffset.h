@@ -43,7 +43,7 @@ public:
         , m_offsetBits((offset >> 2) & 0xFFFFFFFFFFFFFF)
     {
         ASSERT(!(offset & 0b11));
-        ASSERT(width == Width64 || (width == Width128 && Options::useWebAssemblySIMD()));
+        ASSERT(width == conservativeWidth(reg) || (width == Width128 && Options::useWebAssemblySIMD()));
         ASSERT(reg.index() < (1 << 6));
         ASSERT(Reg::last().index() < (1 << 6));
         ASSERT(this->reg() == reg);
@@ -56,7 +56,9 @@ public:
     Reg reg() const { return Reg::fromIndex(m_regIndex); }
     ptrdiff_t offset() const { return m_offsetBits << 2; }
     size_t byteSize() const { return bytesForWidth(width()); }
-    Width width() const { return m_width ? Width128 : Width64; }
+    Width width() const {
+        return m_width ? Width128 : conservativeWidth(reg());
+    }
     int offsetAsIndex() const { ASSERT(!(offset() % sizeof(CPURegister))); return offset() / static_cast<int>(sizeof(CPURegister)); }
     
     bool operator==(const RegisterAtOffset& other) const

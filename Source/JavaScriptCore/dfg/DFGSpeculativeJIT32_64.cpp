@@ -195,8 +195,8 @@ void SpeculativeJIT::cachedGetById(
     RegisterSet usedRegisters = this->usedRegisters();
     if (spillMode == DontSpill) {
         // We've already flushed registers to the stack, we don't need to spill these.
-        usedRegisters.add(JSValueRegs(baseTagGPROrNone, basePayloadGPR), Width64);
-        usedRegisters.add(JSValueRegs(resultTagGPR, resultPayloadGPR), Width64);
+        usedRegisters.remove(JSValueRegs(baseTagGPROrNone, basePayloadGPR));
+        usedRegisters.remove(JSValueRegs(resultTagGPR, resultPayloadGPR));
     }
     
     CallSiteIndex callSite = m_jit.recordCallSiteAndGenerateExceptionHandlingOSRExitIfNeeded(codeOrigin, m_stream.size());
