@@ -42,6 +42,7 @@ RegisterAtOffsetList::RegisterAtOffsetList(WholeRegisterSet registerSet, OffsetB
     ASSERT(!registerSet.hasAnyWideRegisters() || Options::useWebAssemblySIMD());
 
     size_t sizeOfAreaInBytes = registerSet.sizeOfSetRegisters();
+    m_sizeOfAreaInBytes = sizeOfAreaInBytes;
 
     ptrdiff_t startOffset = 0;
     if (offsetBaseType == FramePointerBased)
