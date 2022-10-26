@@ -26,7 +26,7 @@
 #include "config.h"
 #include "testb3.h"
 
-#if ENABLE(B3_JIT) && !CPU(ARM)
+#if ENABLE(B3_JIT)
 
 void test42()
 {
@@ -140,6 +140,8 @@ void testLoadOffsetScaledUnsignedOverImm12Max()
     testLoadWithOffsetImpl(32761, 16381);
     testLoadWithOffsetImpl(32768, 16384);
 }
+
+#if !CPU(ARM)
 
 static void testBitXorTreeArgs(int64_t a, int64_t b)
 {
@@ -7419,4 +7421,5 @@ void addBitTests(const char* filter, Deque<RefPtr<SharedTask<void()>>>& tasks)
     RUN(testStoreSignExtendIndexAddress());
 }
 
+#endif
 #endif // ENABLE(B3_JIT)

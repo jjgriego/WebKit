@@ -26,7 +26,7 @@
 #include "config.h"
 #include "testb3.h"
 
-#if ENABLE(B3_JIT) && !CPU(ARM)
+#if ENABLE(B3_JIT)
 
 Lock crashLock;
 
@@ -130,7 +130,7 @@ void run(const char* filter)
 {
     Deque<RefPtr<SharedTask<void()>>> tasks;
 
-    RUN_NOW(testTerminalPatchpointThatNeedsToBeSpilled2());
+    // RUN_NOW(testTerminalPatchpointThatNeedsToBeSpilled2());
     RUN(test42());
     RUN(testLoad42());
     RUN(testLoadAcq42());
@@ -141,6 +141,7 @@ void run(const char* filter)
     RUN(testLoadOffsetImm9MinMinusOne());
     RUN(testLoadOffsetScaledUnsignedImm12Max());
     RUN(testLoadOffsetScaledUnsignedOverImm12Max());
+#if !CPU(ARM)
     RUN(testArg(43));
     RUN(testReturnConst64(5));
     RUN(testReturnConst64(-42));
@@ -882,6 +883,8 @@ void run(const char* filter)
             RUN(testVectorFmulByElementDouble());
         }
     }
+
+#endif
 
     if (tasks.isEmpty())
         usage();

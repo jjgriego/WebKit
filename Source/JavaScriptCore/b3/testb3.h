@@ -91,7 +91,7 @@ inline void usage()
         exit(1);
 }
 
-#if ENABLE(B3_JIT) && !CPU(ARM)
+#if ENABLE(B3_JIT)
 
 using namespace JSC;
 using namespace JSC::B3;
@@ -192,6 +192,7 @@ extern Lock crashLock;
 inline std::unique_ptr<Compilation> compileProc(Procedure& procedure, unsigned optLevel = Options::defaultB3OptLevel())
 {
     procedure.setOptLevel(optLevel);
+    procedure.setShouldDumpIR();
     return makeUnique<Compilation>(B3::compile(procedure));
 }
 

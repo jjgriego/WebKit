@@ -48,6 +48,8 @@ inline bool MemoryValue::isLegalOffsetImpl(int32_t offset) const
 
 inline bool MemoryValue::requiresSimpleAddr() const
 {
+    if constexpr (isARM())
+        return isAtom(opcode());
     return !isX86() && isExotic();
 }
 

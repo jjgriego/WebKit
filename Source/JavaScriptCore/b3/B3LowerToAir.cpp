@@ -2743,10 +2743,11 @@ private:
         case Load: {
             MemoryValue* memory = m_value->as<MemoryValue>();
             Air::Kind kind = moveForType(memory->type());
+            bool needsFullDataFence = false;
             if (memory->hasFence()) {
                 if (isX86())
                     kind.effects = true;
-                else {
+                else if (isARM64()) {
                     switch (memory->type().kind()) {
                     case Int32:
                         kind = LoadAcq32;
@@ -2758,6 +2759,8 @@ private:
                         RELEASE_ASSERT_NOT_REACHED();
                         break;
                     }
+                } else {
+                    needsFullDataFence = true;
                 }
             }
 
@@ -2802,10 +2805,17 @@ private:
                 return false;
             };
 
+            if (needsFullDataFence) {
+                ASSERT(isARM());
+                append(LoadFence);
+            }
+
             if (tryAppendIncrementAddress())
                 return;
 
-            append(trappingInst(m_value, kind, m_value, addr(m_value), tmp(m_value)));
+            auto const src = addr(m_value);
+            ASSERT(src.isValidForm());
+            append(trappingInst(m_value, kind, m_value, src, tmp(m_value)));
             return;
         }
             
