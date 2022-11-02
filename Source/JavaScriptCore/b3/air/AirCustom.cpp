@@ -69,10 +69,7 @@ bool CCallCustom::isValidForm(Inst& inst)
     size_t expectedArgCount = resultCount;
     for (Value* child : value->children()) {
         ASSERT(child->type() != Tuple);
-        if (is32Bit() && child->type() == Int64)
-            expectedArgCount += 2;
-        else
-            expectedArgCount += 1;
+        expectedArgCount += cCallArgumentRegisterCount(child);
     }
 
     if (inst.args.size() != expectedArgCount)
@@ -105,10 +102,10 @@ bool CCallCustom::isValidForm(Inst& inst)
 
     for (unsigned i = 1 ; i < value->numChildren(); ++i) {
         Value* child = value->child(i);
-        if (is32Bit() && child->type() == Int64 && !checkNextArg(child))
-            return false;
-        if (!checkNextArg(child))
-            return false;
+        for (unsigned j = 0; j < cCallArgumentRegisterCount(child); j++) {
+            if (!checkNextArg(child))
+                return false;
+        }
     }
 
     return true;

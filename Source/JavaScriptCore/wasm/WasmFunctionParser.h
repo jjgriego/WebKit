@@ -602,6 +602,10 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         return { };
     };
 
+    // only used in some specializations
+    UNUSED_VARIABLE(pushUnreachable);
+    UNUSED_PARAM(optionalRelation);
+
     auto parseMemOp = [&] (uint32_t& offset, TypedExpression& pointer) -> PartialResult {
         uint32_t maxAlignment;
         switch (op) {

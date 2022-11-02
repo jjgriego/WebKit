@@ -44,6 +44,18 @@ Vector<Arg> computeCCallingConvention(Code&, CCallValue*);
 
 size_t cCallResultCount(CCallValue*);
 
+/*
+ * On some platforms (well, on 32-bit platforms,) C functions can take arguments
+ * that need more than one Air::Arg to pass around. These functions serve as a
+ * source of truth about how args of a CCallValue must be represented by the time we
+ * lower to Air.
+ */
+
+// Return the number of Air::Args needed to marshall this Value to the C function
+size_t cCallArgumentRegisterCount(const Value*);
+// Return the width of the individual Air::Args needed to marshall this value
+Width cCallArgumentRegisterWidth(const Value*);
+
 Tmp cCallResult(CCallValue*, unsigned);
 
 Inst buildCCall(Code&, Value* origin, const Vector<Arg>&);

@@ -67,11 +67,8 @@ void lowerMacros(Code& code)
                 };
                 for (unsigned i = 1; i < value->numChildren(); ++i) {
                     Value* child = value->child(i);
-                    if (is32Bit() && child->type() == Int64) {
-                        addNextPair(Width32);
-                        addNextPair(Width32);
-                    } else
-                        addNextPair(widthForType(child->type()));
+                    for (unsigned j = 0; j < cCallArgumentRegisterCount(child); j++)
+                        addNextPair(cCallArgumentRegisterWidth(child));
                 }
                 ASSERT(offset = inst.args.size());
                 

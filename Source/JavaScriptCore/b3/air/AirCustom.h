@@ -146,22 +146,19 @@ struct CCallCustom : public CommonCustomBase<CCallCustom> {
             next(
                 Arg::Def,
                 bankForType(value->type()),
-                is32Bit() && value->type() == Int64 ? Width32 : widthForType(value->type()));
+                cCallArgumentRegisterWidth(value)
+            );
         }
 
         for (unsigned i = 1; i < value->numChildren(); ++i) {
             Value* child = value->child(i);
-#if USE(JSVALUE32_64)
-            if (child->type() == Int64) {
-                next(Arg::Use, GP, Width32);
-                next(Arg::Use, GP, Width32);
-                continue;
+            for (size_t j = 0; j < cCallArgumentRegisterCount(child); j++) {
+                next(
+                    Arg::Use,
+                    bankForType(child->type()),
+                    cCallArgumentRegisterWidth(child)
+                );
             }
-#endif
-            next(
-                Arg::Use,
-                bankForType(child->type()),
-                widthForType(child->type()));
         }
         ASSERT(index == inst.args.size());
     }

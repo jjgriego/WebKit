@@ -155,7 +155,7 @@ static ALWAYS_INLINE CCallHelpers::Address callFrameAddr(CCallHelpers& jit, intp
     }
 
     auto addr = Arg::addr(Air::Tmp(GPRInfo::callFrameRegister), offsetFromFP);
-    if (addr.isValidForm(pointerWidth()))
+    if (addr.isValidForm(registerWidth()))
         return CCallHelpers::Address(GPRInfo::callFrameRegister, offsetFromFP);
     GPRReg reg = extendedOffsetAddrRegister();
     jit.move(CCallHelpers::TrustedImmPtr(offsetFromFP), reg);
@@ -181,7 +181,7 @@ ALWAYS_INLINE void GenerateAndAllocateRegisters::flush(Tmp tmp, Reg reg)
     intptr_t offset = m_map[tmp].spillSlot->offsetFromFP();
     JIT_COMMENT(*m_jit, "Flush(", tmp, ", ", reg, ", offset=", offset, ")");
     if (tmp.isGP())
-        m_jit->storePtr(reg.gpr(), callFrameAddr(*m_jit, offset));
+        m_jit->storeRegWord(reg.gpr(), callFrameAddr(*m_jit, offset));
     else if (B3::conservativeRegisterBytes(B3::FP) == sizeof(double) || !Options::useWebAssemblySIMD()) {
         ASSERT(m_map[tmp].spillSlot->byteSize() == bytesForWidth(Width64));
         m_jit->storeDouble(reg.fpr(), callFrameAddr(*m_jit, offset));
@@ -217,7 +217,7 @@ ALWAYS_INLINE void GenerateAndAllocateRegisters::alloc(Tmp tmp, Reg reg, Arg::Ro
         JIT_COMMENT(*m_jit, "Alloc(", tmp, ", ", reg, ", role=", role, ")");
         intptr_t offset = m_map[tmp].spillSlot->offsetFromFP();
         if (tmp.bank() == GP)
-            m_jit->loadPtr(callFrameAddr(*m_jit, offset), reg.gpr());
+            m_jit->loadRegWord(callFrameAddr(*m_jit, offset), reg.gpr());
         else if (B3::conservativeRegisterBytes(B3::FP) == sizeof(double) || !Options::useWebAssemblySIMD()) {
             ASSERT(m_map[tmp].spillSlot->byteSize() == bytesForWidth(Width64));
             m_jit->loadDouble(callFrameAddr(*m_jit, offset), reg.fpr());

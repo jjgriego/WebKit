@@ -72,25 +72,26 @@ using namespace B3::Air;
  * Wasm::AirIRGeneratorBase
  *
  * This is a template base class for a code generator that cooperates with the
- * wasm function parser to produce a valid Air unit for that wasm function.
+ * wasm function parser and a suitable deriving class to produce a valid Air
+ * unit for that wasm function.
  *
- * This is provided as a template base class to accomodate both 32- and 64-bit
+ * This is a _template_ base class to accomodate both 32- and 64-bit
  * platforms, which require pretty different Air units to be generated; a
- * cooperating deriving class provide the methods that depend on the word size
- * of the target platform; most of the wasm-specific details are handled here.
- *
- * Access methods provided by the deriving class by calling `self()` (to obtain
- * `*this` downcasted as `Derived&`)
+ * cooperating deriving class provides the methods that depend on the word size
+ * of the target platform.
  *
  * Some wasm instructions are also handled directly in the deriving classes
  * because their code generation is so different it's easier not to share code,
  * if the instruction you are looking for is not here, check either in
  * AirIRGenerator64 or AirIRGenerator32_64
  *
+ * Access methods provided by the deriving class by calling `self()` (to obtain
+ * `*this` downcasted as `Derived&`)
+ *
  * The template parameters are:
  * - Derived: the deriving class
  * - ExpressionType: the type of wasm values--morally one or more Air::Tmp's
-     paired with a wasm type
+ *   paired with a wasm type
  */
 template<typename Derived, typename ExpressionType>
 struct AirIRGeneratorBase {
@@ -98,8 +99,6 @@ struct AirIRGeneratorBase {
     // Related types
 
     using ResultList = Vector<ExpressionType, 8>;
-
-    static constexpr bool tierSupportsSIMD = true;
 
     struct ControlData {
         ControlData(B3::Origin, BlockSignature result, ResultList resultTmps, BlockType type, BasicBlock* continuation, BasicBlock* special = nullptr)
@@ -1549,6 +1548,8 @@ auto AirIRGeneratorBase<Derived, ExpressionType>::getGlobal(uint32_t index, Expr
     const Wasm::GlobalInformation& global = m_info.globals[index];
     Type type = global.type;
 
+    result = tmpForType(type);
+
     auto temp = self().gPtr();
     RELEASE_ASSERT(Arg::isValidAddrForm(Instance::offsetOfGlobals(), pointerWidth()));
     append(Move, Arg::addr(instanceValue(), Instance::offsetOfGlobals()), temp);
@@ -1556,30 +1557,14 @@ auto AirIRGeneratorBase<Derived, ExpressionType>::getGlobal(uint32_t index, Expr
     int32_t offset = safeCast<int32_t>(index * sizeof(Global::Value));
     switch (global.bindingMode) {
     case Wasm::GlobalInformation::BindingMode::EmbeddedInInstance:
-        if (Arg::isValidAddrForm(offset, widthForType(toB3Type(type))))
-            append(moveOpForValueType(type), Arg::addr(temp, offset), result);
-        else {
-            auto temp2 = g64();
-            append(Move, Arg::bigImm(offset), temp2);
-            append(Add64, temp2, temp, temp);
-            append(moveOpForValueType(type), Arg::addr(temp), result);
-        }
         break;
     case Wasm::GlobalInformation::BindingMode::Portable:
         ASSERT(global.mutability == Wasm::Mutability::Mutable);
-        if (Arg::isValidAddrForm(offset, pointerWidth()))
-            append(Move, Arg::addr(temp, offset), temp);
-        else {
-            auto temp2 = self().gPtr();
-            append(Move, Arg::bigImm(offset), temp2);
-            append(Derived::AddPtr, temp2, temp, temp);
-            append(Move, Arg::addr(temp), temp);
-        }
+        self().emitLoad(temp, offset, temp);
         offset = 0;
-    } else
-        ASSERT(global.bindingMode == Wasm::GlobalInformation::BindingMode::EmbeddedInInstance);
+        break;
+    }
 
-    result = tmpForType(type);
     self().emitLoad(temp, offset, result);
 
     return { };
@@ -1588,38 +1573,25 @@ auto AirIRGeneratorBase<Derived, ExpressionType>::getGlobal(uint32_t index, Expr
 template <typename Derived, typename ExpressionType>
 auto AirIRGeneratorBase<Derived, ExpressionType>::setGlobal(uint32_t index, ExpressionType value) -> PartialResult
 {
+    auto temp = self().gPtr();
+
+    RELEASE_ASSERT(Arg::isValidAddrForm(Instance::offsetOfGlobals(), pointerWidth()));
+    append(Move, Arg::addr(instanceValue(), Instance::offsetOfGlobals()), temp);
+
     const Wasm::GlobalInformation& global = m_info.globals[index];
     Type type = global.type;
 
     int32_t offset = safeCast<int32_t>(index * sizeof(Global::Value));
+
     switch (global.bindingMode) {
     case Wasm::GlobalInformation::BindingMode::EmbeddedInInstance:
-        if (Arg::isValidAddrForm(offset, widthForType(toB3Type(type))))
-            append(moveOpForValueType(type), value, Arg::addr(temp, offset));
-        else {
-            auto temp2 = g64();
-            append(Move, Arg::bigImm(offset), temp2);
-            append(Add64, temp2, temp, temp);
-            append(moveOpForValueType(type), value, Arg::addr(temp));
-        }
-        if (isRefType(type))
-            emitWriteBarrierForJSWrapper();
         break;
     case Wasm::GlobalInformation::BindingMode::Portable:
         ASSERT(global.mutability == Wasm::Mutability::Mutable);
-        if (Arg::isValidAddrForm(offset, pointerWidth()))
-            append(Move, Arg::addr(temp, offset), temp);
-        else {
-            auto temp2 = self().gPtr();
-            append(Move, Arg::bigImm(offset), temp2);
-            append(Derived::AddPtr, temp2, temp, temp);
-            append(Move, Arg::addr(temp), temp);
-        }
+        self().emitLoad(temp, offset, temp);
         offset = 0;
-    } else
-        ASSERT(global.bindingMode == Wasm::GlobalInformation::BindingMode::EmbeddedInInstance);
-
-
+        break;
+    }
     self().emitStore(value, temp, offset);
 
     if (isRefType(type)) {

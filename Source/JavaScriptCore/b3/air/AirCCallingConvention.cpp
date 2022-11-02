@@ -39,32 +39,41 @@ namespace {
 template<typename BankInfo>
 void marshallCCallArgumentImpl(Vector<Arg>& result, unsigned& argumentCount, unsigned& stackOffset, Value* child)
 {
+    const auto registerCount = cCallArgumentRegisterCount(child);
     if (is32Bit() && child->type() == Int64)
         argumentCount = WTF::roundUpToMultipleOf<2>(argumentCount);
 
     if (argumentCount < BankInfo::numberOfArgumentRegisters) {
-        result.append(Tmp(BankInfo::toArgumentRegister(argumentCount++)));
-        if (is32Bit() && child->type() == Int64) {
-            ASSERT(argumentCount < BankInfo::numberOfArgumentRegisters);
+        for (unsigned i = 0; i < registerCount; i++) {
             result.append(Tmp(BankInfo::toArgumentRegister(argumentCount++)));
         }
         return;
     }
 
-    unsigned slotSize;
+    unsigned slotSize, slotAlignment;
     if ((isARM64() && isDarwin()) || isARM()) {
-        // Arguments are packed.
-        slotSize = sizeofType(child->type());
+        // Arguments are packed to their natural alignment.
+        //
+        // In the rare case when the Arg width does not match the argument width
+        // (32-bit arm passing a 64-bit argument), we respect the width needed
+        // for each stack access:
+        slotSize = bytesForWidth(cCallArgumentRegisterWidth(child));
+
+        // but the logical stack slot uses the natural alignment of the argument
+        slotAlignment = sizeofType(child->type());
+
     } else {
-        // Arguments are aligned.
+        // On other platforms, arguments are always aligned to machine word
+        // boundaries.
         slotSize = 8;
+        slotAlignment = slotSize;
     }
 
-    stackOffset = WTF::roundUpToMultipleOf(slotSize, stackOffset);
-    result.append(Arg::callArg(stackOffset));
-    if (is32Bit() && child->type() == Int64)
-        result.append(Arg::callArg(stackOffset + 4));
-    stackOffset += slotSize;
+    stackOffset = WTF::roundUpToMultipleOf(slotAlignment, stackOffset);
+    for (unsigned i = 0; i < registerCount; i++) {
+        result.append(Arg::callArg(stackOffset));
+        stackOffset += slotSize;
+    }
 }
 
 void marshallCCallArgument(Vector<Arg> &result, unsigned& gpArgumentCount, unsigned& fpArgumentCount, unsigned& stackOffset, Value* child)
@@ -110,6 +119,32 @@ size_t cCallResultCount(CCallValue* value)
         return 1;
 
     }
+}
+
+size_t cCallArgumentRegisterCount(const Value* value)
+{
+    switch (value->type().kind()) {
+    case Void:
+        return 0;
+    case Int64:
+        if constexpr (is32Bit())
+            return 2;
+        return 1;
+    case Tuple:
+        RELEASE_ASSERT_NOT_REACHED();
+    default:
+        return 1;
+    }
+}
+
+Width cCallArgumentRegisterWidth(const Value* value)
+{
+    if constexpr (is32Bit()) {
+        if (value->type() == Int64)
+            return Width32;
+    }
+
+    return widthForType(value->type());
 }
 
 Tmp cCallResult(CCallValue* value, unsigned index)

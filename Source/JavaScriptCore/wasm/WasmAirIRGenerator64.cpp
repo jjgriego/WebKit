@@ -94,6 +94,10 @@ public:
 
     AirIRGenerator64(const ModuleInformation&, B3::Procedure&, InternalFunction*, Vector<UnlinkedWasmToWasmCall>&, MemoryMode, unsigned functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount*, const TypeDefinition&, unsigned& osrEntryScratchBufferSize);
 
+    static constexpr bool tierSupportsSIMD = true;
+    static constexpr bool generatesB3OriginData = true;
+    static constexpr bool supportsPinnedStateRegisters = true;
+
     void emitMaterializeConstant(Type, uint64_t value, TypedTmp& dest);
     void emitMaterializeConstant(BasicBlock*, Type, uint64_t value, TypedTmp& dest);
 
@@ -416,6 +420,8 @@ private:
             return MoveFloat;
         case TypeKind::F64:
             return MoveDouble;
+        case TypeKind::V128:
+            return MoveVector;
         default:
             RELEASE_ASSERT_NOT_REACHED();
         }
@@ -430,6 +436,14 @@ private:
         append(Move, Arg::bigImm(offset), temp);
         append(Add64, temp, base, temp);
         return Arg::addr(temp);
+    }
+
+    B3::Air::Arg materializeSimpleAddrArg(Tmp base, size_t offset)
+    {
+        auto temp = g64();
+        append(Move, Arg::bigImm(offset), temp);
+        append(Add64, temp, base, temp);
+        return Arg::simpleAddr(temp);
     }
 
     void emitLoad(Tmp base, size_t offset, const TypedTmp& result)
@@ -526,6 +540,14 @@ void AirIRGenerator64::emitZeroInitialize(ExpressionType value)
         // IEEE 754 "0" is just int32/64 zero.
         append(Xor64, temp, temp);
         append(type.isF32() ? Move32ToFloat : Move64ToDouble, temp, value);
+        break;
+    }
+    case TypeKind::V128: {
+        auto temp = g64();
+        append(Xor64, temp, temp);
+        // FIXME clear value
+        append(VectorReplaceLaneInt64, Arg::imm(0), temp, value);
+        append(VectorReplaceLaneInt64, Arg::imm(1), temp, value);
         break;
     }
     default:
@@ -759,8 +781,6 @@ inline TypedTmp AirIRGenerator64::emitLoadOp(LoadOpType op, ExpressionType point
 {
     uint32_t offset = fixupPointerPlusOffset(pointer, uoffset);
 
-    TypedTmp immTmp;
-    TypedTmp newPtr;
     TypedTmp result;
 
     Arg addrArg = materializeAddrArg(pointer, offset, widthForBytes(sizeOfLoadOp(op)));
@@ -903,9 +923,6 @@ auto AirIRGenerator64::load(LoadOpType op, ExpressionType pointer, ExpressionTyp
 inline void AirIRGenerator64::emitStoreOp(StoreOpType op, ExpressionType pointer, ExpressionType value, uint32_t uoffset)
 {
     uint32_t offset = fixupPointerPlusOffset(pointer, uoffset);
-
-    TypedTmp immTmp;
-    TypedTmp newPtr;
 
     Arg addrArg = materializeAddrArg(pointer, offset, widthForBytes(sizeOfStoreOp(op)));
 
@@ -1269,7 +1286,7 @@ auto AirIRGenerator64::addI31GetU(ExpressionType ref, ExpressionType& result) ->
     return { };
 }
 
-auto AirIRGenerator::addSIMDLoad(ExpressionType pointer, uint32_t uoffset, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addSIMDLoad(ExpressionType pointer, uint32_t uoffset, ExpressionType& result) -> PartialResult
 {
     result = v128();
     auto offset = fixupPointerPlusOffset(pointer, uoffset);
@@ -1279,7 +1296,7 @@ auto AirIRGenerator::addSIMDLoad(ExpressionType pointer, uint32_t uoffset, Expre
     return { };
 }
 
-auto AirIRGenerator::addSIMDStore(ExpressionType value, ExpressionType pointer, uint32_t uoffset) -> PartialResult
+auto AirIRGenerator64::addSIMDStore(ExpressionType value, ExpressionType pointer, uint32_t uoffset) -> PartialResult
 {
     auto offset = fixupPointerPlusOffset(pointer, uoffset);
     Arg addrArg = materializeAddrArg(emitCheckAndPreparePointer(pointer, offset, bytesForWidth(Width128)), offset, Width128);
@@ -1288,7 +1305,7 @@ auto AirIRGenerator::addSIMDStore(ExpressionType value, ExpressionType pointer, 
     return { };
 }
 
-auto AirIRGenerator::addSIMDSplat(SIMDLane lane, ExpressionType scalar, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addSIMDSplat(SIMDLane lane, ExpressionType scalar, ExpressionType& result) -> PartialResult
 {
     Tmp toSplat = scalar.tmp();
     if (scalarTypeIsFloatingPoint(lane)) {
@@ -1321,7 +1338,7 @@ auto AirIRGenerator::addSIMDSplat(SIMDLane lane, ExpressionType scalar, Expressi
     return { };
 }
 
-auto AirIRGenerator::addSIMDShift(SIMDLaneOperation op, SIMDInfo info, ExpressionType v, ExpressionType shift, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addSIMDShift(SIMDLaneOperation op, SIMDInfo info, ExpressionType v, ExpressionType shift, ExpressionType& result) -> PartialResult
 {
     result = v128();
     int32_t mask = (elementByteSize(info.lane) * CHAR_BIT) - 1;
@@ -1346,7 +1363,7 @@ auto AirIRGenerator::addSIMDShift(SIMDLaneOperation op, SIMDInfo info, Expressio
     return { };
 }
 
-auto AirIRGenerator::addSIMDExtmul(SIMDLaneOperation op, SIMDInfo info, ExpressionType lhs, ExpressionType rhs, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addSIMDExtmul(SIMDLaneOperation op, SIMDInfo info, ExpressionType lhs, ExpressionType rhs, ExpressionType& result) -> PartialResult
 {
     ASSERT(info.signMode != SIMDSignMode::None);
 
@@ -1363,7 +1380,7 @@ auto AirIRGenerator::addSIMDExtmul(SIMDLaneOperation op, SIMDInfo info, Expressi
     return { };
 }
 
-auto AirIRGenerator::addSIMDShuffle(v128_t imm, ExpressionType a, ExpressionType b, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addSIMDShuffle(v128_t imm, ExpressionType a, ExpressionType b, ExpressionType& result) -> PartialResult
 {
     result = v128();
 
@@ -1372,7 +1389,7 @@ auto AirIRGenerator::addSIMDShuffle(v128_t imm, ExpressionType a, ExpressionType
     return { };
 }
 
-auto AirIRGenerator::addSIMDLoadSplat(SIMDLaneOperation op, ExpressionType pointer, uint32_t uoffset, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addSIMDLoadSplat(SIMDLaneOperation op, ExpressionType pointer, uint32_t uoffset, ExpressionType& result) -> PartialResult
 {
     B3::Air::Opcode opcode;
     Width width;
@@ -1406,7 +1423,7 @@ auto AirIRGenerator::addSIMDLoadSplat(SIMDLaneOperation op, ExpressionType point
     return { };
 }
 
-auto AirIRGenerator::addSIMDLoadLane(SIMDLaneOperation op, ExpressionType pointer, ExpressionType vector, uint32_t uoffset, uint8_t laneIndex, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addSIMDLoadLane(SIMDLaneOperation op, ExpressionType pointer, ExpressionType vector, uint32_t uoffset, uint8_t laneIndex, ExpressionType& result) -> PartialResult
 {
     B3::Air::Opcode opcode;
     Width width;
@@ -1440,7 +1457,7 @@ auto AirIRGenerator::addSIMDLoadLane(SIMDLaneOperation op, ExpressionType pointe
     return { };
 }
 
-auto AirIRGenerator::addSIMDStoreLane(SIMDLaneOperation op, ExpressionType pointer, ExpressionType vector, uint32_t uoffset, uint8_t laneIndex) -> PartialResult
+auto AirIRGenerator64::addSIMDStoreLane(SIMDLaneOperation op, ExpressionType pointer, ExpressionType vector, uint32_t uoffset, uint8_t laneIndex) -> PartialResult
 {
     B3::Air::Opcode opcode;
     Width width;
@@ -1472,7 +1489,7 @@ auto AirIRGenerator::addSIMDStoreLane(SIMDLaneOperation op, ExpressionType point
     return { };
 }
 
-auto AirIRGenerator::addSIMDLoadExtend(SIMDLaneOperation op, ExpressionType pointer, uint32_t uoffset, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addSIMDLoadExtend(SIMDLaneOperation op, ExpressionType pointer, uint32_t uoffset, ExpressionType& result) -> PartialResult
 {
     SIMDLane lane;
     SIMDSignMode signMode;
@@ -1516,7 +1533,7 @@ auto AirIRGenerator::addSIMDLoadExtend(SIMDLaneOperation op, ExpressionType poin
     return { };
 }
 
-auto AirIRGenerator::addSIMDLoadPad(SIMDLaneOperation op, ExpressionType pointer, uint32_t uoffset, ExpressionType& result) -> PartialResult
+auto AirIRGenerator64::addSIMDLoadPad(SIMDLaneOperation op, ExpressionType pointer, uint32_t uoffset, ExpressionType& result) -> PartialResult
 {
     B3::Air::Opcode airOp;
     Width width;
@@ -1538,30 +1555,6 @@ auto AirIRGenerator::addSIMDLoadPad(SIMDLaneOperation op, ExpressionType pointer
     auto offset = fixupPointerPlusOffset(pointer, uoffset);
     Arg addrArg = materializeAddrArg(emitCheckAndPreparePointer(pointer, offset, bytesForWidth(Width64)), offset, width);
     appendEffectful(airOp, addrArg, result);
-
-    return { };
-}
-
-void AirIRGenerator::emitEntryTierUpCheck()
->>>>>>> variant B
-template <typename Derived, typename ExpressionType>
-void AirIRGeneratorBase<Derived, ExpressionType>::emitEntryTierUpCheck()
-####### Ancestor
-auto AirIRGenerator::addSIMDLoad(ExpressionType pointer, uint32_t uoffset, ExpressionType& result) -> PartialResult
-{
-    result = v128();
-    auto offset = fixupPointerPlusOffset(pointer, uoffset);
-    Arg addrArg = materializeAddrArg(emitCheckAndPreparePointer(pointer, offset, bytesForWidth(Width128)), offset, Width128);
-    appendEffectful(MoveVector, addrArg, result);
-
-    return { };
-}
-
-auto AirIRGenerator::addSIMDStore(ExpressionType value, ExpressionType pointer, uint32_t uoffset) -> PartialResult
-{
-    auto offset = fixupPointerPlusOffset(pointer, uoffset);
-    Arg addrArg = materializeAddrArg(emitCheckAndPreparePointer(pointer, offset, bytesForWidth(Width128)), offset, Width128);
-    appendEffectful(MoveVector, value, addrArg);
 
     return { };
 }

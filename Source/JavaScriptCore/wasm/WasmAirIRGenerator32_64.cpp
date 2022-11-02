@@ -38,6 +38,8 @@ inline namespace Air32 {
 
 namespace {
 
+#if ASSERT_ENABLED
+
 static bool typeNeedsGPPair(Type type)
 {
     switch (type.kind) {
@@ -51,6 +53,8 @@ static bool typeNeedsGPPair(Type type)
         return false;
     }
 }
+
+#endif
 
 }
 
@@ -149,7 +153,7 @@ public:
     {
     }
 
-
+    static constexpr bool tierSupportsSIMD = false;
     static constexpr bool generatesB3OriginData = false;
     static constexpr bool supportsPinnedStateRegisters = false;
 
@@ -243,13 +247,8 @@ public:
     PartialResult WARN_UNUSED_RETURN addI31GetS(ExpressionType ref, ExpressionType& result);
     PartialResult WARN_UNUSED_RETURN addI31GetU(ExpressionType ref, ExpressionType& result);
 
-    // SIMD (unimplemented)
-    PartialResult WARN_UNUSED_RETURN addSIMDLoad(ExpressionType pointer, uint32_t offset, ExpressionType& result) { RELEASE_ASSERT_NOT_REACHED(); }
-    PartialResult WARN_UNUSED_RETURN addSIMDStore(ExpressionType value, ExpressionType pointer, uint32_t offset) { RELEASE_ASSERT_NOT_REACHED(); }
-    PartialResult WARN_UNUSED_RETURN addExtractLane(SIMDInfo info, uint8_t imm, ExpressionType arg0, ExpressionType& result) { RELEASE_ASSERT_NOT_REACHED(); }
-
-        // Control flow
-        PartialResult WARN_UNUSED_RETURN addReturn(const ControlData&, const Stack& returnValues);
+    // Control flow
+    PartialResult WARN_UNUSED_RETURN addReturn(const ControlData&, const Stack& returnValues);
     PartialResult WARN_UNUSED_RETURN addThrow(unsigned exceptionIndex, Vector<ExpressionType>& args, Stack&);
     PartialResult WARN_UNUSED_RETURN addRethrow(unsigned, ControlType&);
 
