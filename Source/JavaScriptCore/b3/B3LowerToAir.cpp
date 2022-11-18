@@ -2805,6 +2805,13 @@ private:
                 return false;
             };
 
+            // TODO(jgriego) do we really need to lower a fence?
+            //
+            // AIUI fences are most important in the JS/wasm JIT to ensure we
+            // are cooperating with the concurrent mark threads; but on armv7 we
+            // don't have those at all--it might be the case that we _never_
+            // need a fence in the translated code, even if the frontend has
+            // asked for one
             if (needsFullDataFence) {
                 ASSERT(isARM());
                 append(LoadFence);

@@ -39,6 +39,7 @@
 #include "B3HoistLoopInvariantValues.h"
 #include "B3InferSwitches.h"
 #include "B3LegalizeMemoryOffsets.h"
+#include "B3Lower64BitForms.h"
 #include "B3LowerMacros.h"
 #include "B3LowerMacrosAfterOptimizations.h"
 #include "B3LowerToAir.h"
@@ -101,6 +102,11 @@ void generateToAir(Procedure& procedure)
         // FIXME: Explore better "quick mode" optimizations.
         reduceStrength(procedure);
     }
+
+    // On 32-bit platforms we avoid a lot of work by converting several
+    // operations to patchpoints or compound operations just before lowering to
+    // Air, this does nothing on 64-bit platforms.
+    lower64BitForms(procedure);
 
     // This puts the IR in quirks mode.
     lowerMacros(procedure);
