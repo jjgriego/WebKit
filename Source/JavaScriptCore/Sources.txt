@@ -1063,6 +1063,7 @@ runtime/VM.cpp
 runtime/VMEntryScope.cpp
 runtime/VMTraps.cpp
 runtime/VarOffset.cpp
+runtime/WaiterListManager.cpp
 runtime/Watchdog.cpp
 runtime/WeakMapConstructor.cpp
 runtime/WeakMapImpl.cpp

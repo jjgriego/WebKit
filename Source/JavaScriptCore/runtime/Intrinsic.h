@@ -153,6 +153,7 @@ enum Intrinsic : uint8_t {
     AtomicsStoreIntrinsic,
     AtomicsSubIntrinsic,
     AtomicsWaitIntrinsic,
+    AtomicsWaitAsyncIntrinsic,
     AtomicsXorIntrinsic,
     ParseIntIntrinsic,
     FunctionToStringIntrinsic,

@@ -2133,6 +2133,7 @@
 		FEF5B42C2628CBC80016E776 /* VMTrapsInlines.h in Headers */ = {isa = PBXBuildFile; fileRef = FEF5B42B2628CBC80016E776 /* VMTrapsInlines.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		FEF5B430262A338B0016E776 /* ExceptionExpectation.h in Headers */ = {isa = PBXBuildFile; fileRef = FEF5B42F262A338B0016E776 /* ExceptionExpectation.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		FEFD6FC61D5E7992008F2F0B /* JSStringInlines.h in Headers */ = {isa = PBXBuildFile; fileRef = FEFD6FC51D5E7970008F2F0B /* JSStringInlines.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		FF41590C28FF3C6B00F80B96 /* WaiterListManager.h in Headers */ = {isa = PBXBuildFile; fileRef = FF41590B28FF3C6B00F80B96 /* WaiterListManager.h */; settings = {ATTRIBUTES = (Private, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXBuildRule section */
@@ -5791,6 +5792,8 @@
 		FEF5B42B2628CBC80016E776 /* VMTrapsInlines.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = VMTrapsInlines.h; sourceTree = "<group>"; };
 		FEF5B42F262A338B0016E776 /* ExceptionExpectation.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ExceptionExpectation.h; sourceTree = "<group>"; };
 		FEFD6FC51D5E7970008F2F0B /* JSStringInlines.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = JSStringInlines.h; sourceTree = "<group>"; };
+		FF41590B28FF3C6B00F80B96 /* WaiterListManager.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = WaiterListManager.h; sourceTree = "<group>"; };
+		FFB77C2828FF561B00F3C55B /* WaiterListManager.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = WaiterListManager.cpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -8370,6 +8373,8 @@
 				FE6F56DC1E64E92000D17801 /* VMTraps.cpp */,
 				FE6F56DD1E64E92000D17801 /* VMTraps.h */,
 				FEF5B42B2628CBC80016E776 /* VMTrapsInlines.h */,
+				FFB77C2828FF561B00F3C55B /* WaiterListManager.cpp */,
+				FF41590B28FF3C6B00F80B96 /* WaiterListManager.h */,
 				FED94F2B171E3E2300BE77A4 /* Watchdog.cpp */,
 				FED94F2C171E3E2300BE77A4 /* Watchdog.h */,
 				BCE2FAFE26091782000A510F /* WeakGCHashTable.h */,
@@ -8835,8 +8840,6 @@
 		9688CB120ED12B4E001D649F /* assembler */ = {
 			isa = PBXGroup;
 			children = (
-				4BDF3001289324AB00AE1DE3 /* AssemblyComments.cpp */,
-				4BDF3002289324AC00AE1DE3 /* AssemblyComments.h */,
 				0F1FE51B1922A3BC006987C5 /* AbortReason.h */,
 				0F2C63BF1E660EA500C13839 /* AbstractMacroAssembler.cpp */,
 				860161DF0F3A83C100F84710 /* AbstractMacroAssembler.h */,
@@ -8850,6 +8853,8 @@
 				0FA6F39620CCB7A600A03DCD /* AssemblerBuffer.cpp */,
 				9688CB130ED12B4E001D649F /* AssemblerBuffer.h */,
 				43C392AA1C3BEB0000241F53 /* AssemblerCommon.h */,
+				4BDF3001289324AB00AE1DE3 /* AssemblyComments.cpp */,
+				4BDF3002289324AC00AE1DE3 /* AssemblyComments.h */,
 				86E116B00FE75AC800B512BC /* CodeLocation.h */,
 				52335628225EB8E900268BD2 /* CPU.cpp */,
 				0F30D7BF1D95D62F0053089D /* CPU.h */,
@@ -9769,6 +9774,7 @@
 				FE1D6D7123625AB1007A5C26 /* ArrayStorageInlines.h in Headers */,
 				9688CB150ED12B4E001D649F /* AssemblerBuffer.h in Headers */,
 				43C392AB1C3BEB0500241F53 /* AssemblerCommon.h in Headers */,
+				4BDF3004289324AC00AE1DE3 /* AssemblyComments.h in Headers */,
 				0F24E54117EA9F5900ABB217 /* AssemblyHelpers.h in Headers */,
 				6B767E7B26791F270017F8D1 /* AssemblyHelpersSpoolers.h in Headers */,
 				A784A26111D16622005776AC /* ASTBuilder.h in Headers */,
@@ -10457,7 +10463,6 @@
 				0FB7F39B15ED8E4600F167B2 /* IndexingType.h in Headers */,
 				14386A791DD6989C008652C4 /* IndirectEvalExecutable.h in Headers */,
 				0FF8BDEB1AD4CF7100DFE884 /* InferredValue.h in Headers */,
-				4BDF3004289324AC00AE1DE3 /* AssemblyComments.h in Headers */,
 				0F4AE0431FE0D25700E20839 /* InferredValueInlines.h in Headers */,
 				BC18C4100E16F5CD00B34460 /* InitializeThreading.h in Headers */,
 				A513E5B8185B8BD3007E95AD /* InjectedScript.h in Headers */,
@@ -11223,6 +11228,7 @@
 				FEC5797323105B5100BCA83F /* VMInspectorInlines.h in Headers */,
 				FE6F56DE1E64EAD600D17801 /* VMTraps.h in Headers */,
 				FEF5B42C2628CBC80016E776 /* VMTrapsInlines.h in Headers */,
+				FF41590C28FF3C6B00F80B96 /* WaiterListManager.h in Headers */,
 				52847ADC21FFB8690061A9DB /* WasmAirIRGenerator.h in Headers */,
 				53F40E931D5A4AB30099A1B6 /* WasmB3IRGenerator.h in Headers */,
 				53CA730A1EA533D80076049D /* WasmBBQPlan.h in Headers */,
@@ -12258,10 +12264,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				4BE92D442898522400FA48E1 /* LowLevelInterpreter.asm in Sources */,
-				4BE92D452898522400FA48E1 /* LowLevelInterpreter.cpp in Sources */,
-				4B46940428984FEE00512FDF /* MacroAssemblerX86Common.cpp in Sources */,
-				4B46940328984FA800512FDF /* MacroAssemblerARM64.cpp in Sources */,
 				FE05FAFD1FE4CEDA00093230 /* DeprecatedInspectorValues.cpp in Sources */,
 				5333BBDC2110F7D9007618EC /* DFGSpeculativeJIT.cpp in Sources */,
 				5333BBDB2110F7D2007618EC /* DFGSpeculativeJIT32_64.cpp in Sources */,
@@ -12273,6 +12275,10 @@
 				E30873E7272559410053B601 /* IntlPluralRules.cpp in Sources */,
 				A3EE8543262514B000FC9B8D /* IntlWorkaround.cpp in Sources */,
 				E38E8790254B978400F6F9E4 /* JSDateMath.cpp in Sources */,
+				4BE92D442898522400FA48E1 /* LowLevelInterpreter.asm in Sources */,
+				4BE92D452898522400FA48E1 /* LowLevelInterpreter.cpp in Sources */,
+				4B46940328984FA800512FDF /* MacroAssemblerARM64.cpp in Sources */,
+				4B46940428984FEE00512FDF /* MacroAssemblerX86Common.cpp in Sources */,
 				DFBC2CA625E6D5B90081BDD1 /* SymbolStubsForSafariCompatibility.mm in Sources */,
 				E32F713F281B3C6600AFD21D /* UnifiedSource1-c.c in Sources */,
 				536B319A1F735E780037FC33 /* UnifiedSource1-mm.mm in Sources */,
