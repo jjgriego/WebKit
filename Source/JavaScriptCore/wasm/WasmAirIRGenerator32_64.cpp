@@ -261,9 +261,10 @@ public:
     PartialResult WARN_UNUSED_RETURN addRethrow(unsigned, ControlType&);
 
     // Calls
-    std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> WARN_UNUSED_RETURN emitCallPatchpoint(BasicBlock*, const TypeDefinition&, const ResultList& results, const Vector<ExpressionType>& args, Vector<ConstrainedTmp> extraArgs = { });
+    CallPatchpointData WARN_UNUSED_RETURN emitCallPatchpoint(BasicBlock*, B3::Type, const ResultList& results, const Vector<TypedTmp>& args, const CallInformation& locations, Vector<ConstrainedTmp> extraArgs = {});
+    CallPatchpointData emitTailCallPatchpoint(BasicBlock*, const Checked<int32_t>&, Vector<ArgumentLocation>&, Vector<TypedTmp>& args, Vector<ConstrainedTmp> patchArgs = {});
 
-    PartialResult addShift(Type, B3::Air::Opcode, ExpressionType value, ExpressionType shift, ExpressionType& result);
+        PartialResult addShift(Type, B3::Air::Opcode, ExpressionType value, ExpressionType shift, ExpressionType& result);
     PartialResult addShift64(B3::Air::Opcode, ExpressionType value, ExpressionType shift, ExpressionType& result);
     PartialResult addRotate64(B3::Air::Opcode, ExpressionType value, ExpressionType shift, ExpressionType& result);
     PartialResult addIntegerSub(B3::Air::Opcode, ExpressionType lhs, ExpressionType rhs, ExpressionType& result);
@@ -1116,19 +1117,16 @@ auto AirIRGenerator32::addRethrow(unsigned, ControlType& data) -> PartialResult
     return { };
 }
 
-std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> AirIRGenerator32::emitCallPatchpoint(BasicBlock* block, const TypeDefinition& signature, const ResultList& results, const Vector<ExpressionType>& args, Vector<ConstrainedTmp> patchArgs)
+AirIRGenerator32::CallPatchpointData WARN_UNUSED_RETURN AirIRGenerator32::emitCallPatchpoint(BasicBlock*block,  B3::Type returnType, const ResultList& results, const Vector<TypedTmp>& args, const CallInformation& wasmCalleeInfo, Vector<ConstrainedTmp> patchArgs)
 {
-    auto* patchpoint = addPatchpoint(toB3ResultType(&signature));
+    auto* patchpoint = addPatchpoint(returnType);
     patchpoint->effects.writesPinned = true;
     patchpoint->effects.readsPinned = true;
     patchpoint->clobberEarly(RegisterSetBuilder::macroClobberedRegisters());
     patchpoint->clobberLate(RegisterSetBuilder::registersToSaveForJSCall(RegisterSetBuilder::allScalarRegisters()));
 
-    CallInformation locations = wasmCallingConvention().callInformationFor(signature);
-    m_code.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf(stackAlignmentBytes(), locations.headerAndArgumentStackSizeInBytes));
-
-    ASSERT(locations.params.size() == args.size());
-    ASSERT(locations.results.size() == results.size());
+    ASSERT(wasmCalleeInfo.params.size() == args.size());
+    ASSERT(wasmCalleeInfo.results.size() == results.size());
 
     // On 32-bit platforms, 64-bit integer types are passed as two 32-bit values
     size_t offset = patchArgs.size();
@@ -1143,7 +1141,7 @@ std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> AirIRGenerator32::emi
     unsigned j = 0;
     for (unsigned i = 0; i < args.size(); ++i) {
         const TypedTmp& arg = args[i];
-        auto& loc = locations.params[i].location;
+        auto& loc = wasmCalleeInfo.params[i].location;
         if (arg.isGPPair()) {
             B3::ValueRep valueRepLo = loc.isGPR() ? B3::ValueRep(loc.jsr().payloadGPR()) : B3::ValueRep::stackArgument(loc.offsetFromSP());
             B3::ValueRep valueRepHi = loc.isGPR() ? B3::ValueRep(loc.jsr().tagGPR()) : B3::ValueRep::stackArgument(loc.offsetFromSP() + 4);
@@ -1161,7 +1159,7 @@ std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> AirIRGenerator32::emi
         Vector<B3::ValueRep, 1> resultConstraints;
         for (unsigned i = 0; i < results.size(); ++i) {
             const TypedTmp& result = results[i];
-            auto& loc = locations.results[i].location;
+            auto& loc = wasmCalleeInfo.results[i].location;
             if (result.isGPPair()) {
                 patchResults.append(TypedTmp { result.lo(), Types::I32 });
                 patchResults.append(TypedTmp { result.hi(), Types::I32 });
@@ -1175,9 +1173,20 @@ std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> AirIRGenerator32::emi
         patchpoint->resultConstraints = WTFMove(resultConstraints);
     } else
         ASSERT(!results.size());
+
     PatchpointExceptionHandle exceptionHandle = preparePatchpointForExceptions(patchpoint, patchArgs);
     emitPatchpoint(block, patchpoint, patchResults, WTFMove(patchArgs));
     return { patchpoint, exceptionHandle };
+}
+
+AirIRGenerator32::CallPatchpointData AirIRGenerator32::emitTailCallPatchpoint(BasicBlock* block, const Checked<int32_t>& tailCallStackOffsetFromFP, Vector<ArgumentLocation>& constrainedArgLocations, Vector<TypedTmp>& tmpArgs, Vector<ConstrainedTmp> patchArgs)
+{
+    UNUSED_PARAM(block);
+    UNUSED_PARAM(tailCallStackOffsetFromFP);
+    UNUSED_PARAM(constrainedArgLocations);
+    UNUSED_PARAM(tmpArgs);
+    UNUSED_PARAM(patchArgs);
+    UNREACHABLE_FOR_PLATFORM();
 }
 
 void AirIRGenerator32::sanitizeAtomicResult(ExtAtomicOpType op, TypedTmp source, TypedTmp dest)
