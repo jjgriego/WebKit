@@ -495,7 +495,6 @@ set(WTF_SOURCES
     SmallSet.cpp
     StackBounds.cpp
     StackCheck.cpp
-    StackPointer.cpp
     StackStats.cpp
     StackTrace.cpp
     StringPrintStream.cpp

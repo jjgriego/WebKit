@@ -101,7 +101,7 @@ void JSErrorHandler::handleEvent(ScriptExecutionContext& scriptExecutionContext,
         ASSERT(!args.hasOverflowed());
 
         VM& vm = globalObject->vm();
-        VMEntryScope entryScope(vm, vm.entryScope ? vm.entryScope->globalObject() : globalObject);
+        VMEntryScope entryScope(vm.entryScope ? vm.entryScope->globalObject() : globalObject);
 
         JSExecState::instrumentFunction(&scriptExecutionContext, callData);
 

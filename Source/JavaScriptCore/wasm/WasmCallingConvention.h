@@ -291,7 +291,7 @@ class JSCallingConvention {
 public:
     static constexpr unsigned headerSizeInBytes = CallFrame::headerSizeInRegisters * sizeof(Register);
 
-    // vmEntryToWasm passes the JSWebAssemblyInstance corresponding to Wasm::Context*'s
+    // callWebAssemblyFunction passes the JSWebAssemblyInstance corresponding to Wasm::Context*'s
     // instance as the first JS argument when we're not using fast TLS to hold the
     // Wasm::Context*'s instance.
     static constexpr ptrdiff_t instanceStackOffset = CallFrameSlot::thisArgument * sizeof(EncodedJSValue);

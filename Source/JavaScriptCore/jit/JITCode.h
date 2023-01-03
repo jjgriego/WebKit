@@ -50,7 +50,6 @@ namespace DOMJIT {
 class Signature;
 }
 
-struct ProtoCallFrame;
 class TrackedReferences;
 class VM;
 
@@ -171,7 +170,7 @@ public:
     };
 
 protected:
-    JITCode(JITType, JITCode::ShareAttribute = JITCode::ShareAttribute::NotShared);
+    JITCode(JITType, CodePtr<JSEntryPtrTag> code = nullptr, JITCode::ShareAttribute = JITCode::ShareAttribute::NotShared);
     
 public:
     virtual ~JITCode();
@@ -205,8 +204,6 @@ public:
     
     virtual void validateReferences(const TrackedReferences&);
     
-    JSValue execute(VM*, ProtoCallFrame*);
-    
     void* start() { return dataAddressAtOffset(0); }
     virtual size_t size() = 0;
     void* end() { return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(start()) + size()); }
@@ -228,11 +225,14 @@ public:
 
     static ptrdiff_t offsetOfJITType() { return OBJECT_OFFSETOF(JITCode, m_jitType); }
 
+    void* addressForCall() const { return m_addressForCall.taggedPtr(); }
+
 private:
     const JITType m_jitType;
     const ShareAttribute m_shareAttribute;
 protected:
     Intrinsic m_intrinsic { NoIntrinsic }; // Effective only in NativeExecutable.
+    CodePtr<JSEntryPtrTag> m_addressForCall;
 };
 
 class JITCodeWithCodeRef : public JITCode {
@@ -252,7 +252,7 @@ public:
     CodeRef<JSEntryPtrTag> swapCodeRefForDebugger(CodeRef<JSEntryPtrTag>) override;
 
 protected:
-    CodeRef<JSEntryPtrTag> m_ref;
+    RefPtr<ExecutableMemoryHandle> m_executableMemory;
 };
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DirectJITCode);

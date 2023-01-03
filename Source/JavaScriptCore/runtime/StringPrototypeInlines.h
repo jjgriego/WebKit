@@ -249,7 +249,6 @@ inline JSString* replaceUsingStringSearch(VM& vm, JSGlobalObject* globalObject, 
         } else if (callData.type == CallData::Type::JS) {
             cachedCall.emplace(globalObject, jsCast<JSFunction*>(replaceValue), 3);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            cachedCall->setThis(jsUndefined());
         }
     }
 
@@ -272,12 +271,26 @@ inline JSString* replaceUsingStringSearch(VM& vm, JSGlobalObject* globalObject, 
             if (cachedCall) {
                 auto* substring = jsSubstring(vm, string, matchStart, searchStringLength);
                 RETURN_IF_EXCEPTION(scope, nullptr);
-                cachedCall->clearArguments();
-                cachedCall->appendArgument(substring);
-                cachedCall->appendArgument(jsNumber(matchStart));
-                cachedCall->appendArgument(jsString);
-                ASSERT(!cachedCall->hasOverflowedArguments());
-                replacement = cachedCall->call();
+
+#if 1 || ASSERT_ENABLED // mlam TEST
+                void* oldSP = CURRENT_STACK_POINTER_FOR_VM_ENTRY_STACK_CHECK(cachedCall->entryScope());
+#endif
+#if COMPILER(MSVC)
+#pragma warning(push)
+#pragma warning(disable:4750)
+#endif
+                replacement = cachedCall->call([&] (CachedCall& cachedCall) {
+                    cachedCall.clearArguments();
+                    cachedCall.appendArgument(substring);
+                    cachedCall.appendArgument(jsNumber(matchStart));
+                    cachedCall.appendArgument(jsString);
+                    cachedCall.finalizeCall(jsUndefined());
+                });
+#if COMPILER(MSVC)
+#pragma warning(pop)
+#endif
+                RELEASE_ASSERT(oldSP == CURRENT_STACK_POINTER_FOR_VM_ENTRY_STACK_CHECK(cachedCall->entryScope())); // mlam make ASSERT
+
             } else {
                 MarkedArgumentBuffer args;
                 auto* substring = jsSubstring(vm, string, matchStart, searchString.impl()->length());

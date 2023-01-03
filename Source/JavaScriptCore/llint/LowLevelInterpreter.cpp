@@ -153,7 +153,7 @@ public:
     ALWAYS_INLINE const void* instruction() const { return bitwise_cast<const void*>(m_value); }
     ALWAYS_INLINE VM* vm() const { return bitwise_cast<VM*>(m_value); }
     ALWAYS_INLINE JSCell* cell() const { return bitwise_cast<JSCell*>(m_value); }
-    ALWAYS_INLINE ProtoCallFrame* protoCallFrame() const { return bitwise_cast<ProtoCallFrame*>(m_value); }
+    ALWAYS_INLINE EntryFrame* entryFrame() const { return bitwise_cast<EntryFrame*>(m_value); }
     ALWAYS_INLINE NativeFunction nativeFunc() const { return bitwise_cast<NativeFunction>(m_value); }
 #if USE(JSVALUE64)
     ALWAYS_INLINE int64_t i64() const { return m_value; }
@@ -165,7 +165,7 @@ public:
     operator CallFrame*() { return bitwise_cast<CallFrame*>(m_value); }
     operator const JSInstruction*() { return bitwise_cast<const JSInstruction*>(m_value); }
     operator JSCell*() { return bitwise_cast<JSCell*>(m_value); }
-    operator ProtoCallFrame*() { return bitwise_cast<ProtoCallFrame*>(m_value); }
+    operator EntryFrame*() { return bitwise_cast<EntryFrame*>(m_value); }
     operator Register*() { return bitwise_cast<Register*>(m_value); }
     operator VM*() { return bitwise_cast<VM*>(m_value); }
     operator CallLinkInfo*() { return bitwise_cast<CallLinkInfo*>(m_value); }
@@ -244,7 +244,7 @@ static void decodeResult(SlowPathReturnType result, CLoopRegister& t0, CLoopRegi
 // The llint C++ interpreter loop:
 //
 
-JSValue CLoop::execute(OpcodeID entryOpcodeID, void* executableAddress, VM* vm, ProtoCallFrame* protoCallFrame, bool isInitializationPass)
+JSValue CLoop::execute(OpcodeID entryOpcodeID, void* executableAddress, VM* vm, EntryFrame* entryFrame, bool isInitializationPass)
 {
 #define CAST bitwise_cast
 
@@ -328,37 +328,19 @@ JSValue CLoop::execute(OpcodeID entryOpcodeID, void* executableAddress, VM* vm, 
     CLoopRegister metadataTable;
     CLoopDoubleRegister d0, d1;
 
-    struct StackPointerScope {
-        StackPointerScope(CLoopStack& stack)
-            : m_stack(stack)
-            , m_originalStackPointer(stack.currentStackPointer())
-        { }
-
-        ~StackPointerScope()
-        {
-            m_stack.setCurrentStackPointer(m_originalStackPointer);
-        }
-
-    private:
-        CLoopStack& m_stack;
-        void* m_originalStackPointer;
-    };
-
     CLoopStack& cloopStack = vm->interpreter.cloopStack();
-    StackPointerScope stackPointerScope(cloopStack);
 
     lr = getOpcode(llint_return_to_host);
     sp = cloopStack.currentStackPointer();
-    cfr = vm->topCallFrame;
-#ifndef NDEBUG
-    void* startSP = sp.vp();
+    cfr = entryFrame->prevTopCallFrame();
+#if ASSERT_ENABLED
     CallFrame* startCFR = cfr.callFrame();
 #endif
 
     // Initialize the incoming args for doVMEntryToJavaScript:
     t0 = executableAddress;
     t1 = vm;
-    t2 = protoCallFrame;
+    t2 = entryFrame;
 
 #if USE(JSVALUE64)
     // For the ASM llint, JITStubs takes care of this initialization. We do
@@ -434,8 +416,9 @@ JSValue CLoop::execute(OpcodeID entryOpcodeID, void* executableAddress, VM* vm, 
 
         OFFLINE_ASM_GLUE_LABEL(llint_return_to_host)
         {
-            ASSERT(startSP == sp.vp());
             ASSERT(startCFR == cfr.callFrame());
+            ASSERT(sp.i8p() == bitwise_cast<int8_t*>(entryFrame) + kVMEntryFrameAlignedSize);
+            cloopStack.setCurrentStackPointer(sp.vp());
 #if USE(JSVALUE32_64)
             return JSValue(t1.i(), t0.i()); // returning JSValue(tag, payload);
 #else

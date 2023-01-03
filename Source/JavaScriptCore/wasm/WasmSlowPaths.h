@@ -34,7 +34,6 @@
 namespace JSC {
 
 class CallFrame;
-struct ProtoCallFrame;
 
 template<typename> struct BaseInstruction;
 struct WasmOpcodeTraits;

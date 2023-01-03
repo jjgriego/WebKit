@@ -41,14 +41,15 @@ inline bool CLoopStack::ensureCapacityFor(Register* newTopOfStack)
     return grow(newTopOfStack);
 }
 
-inline void* CLoopStack::currentStackPointer() const
+template<typename T>
+inline T CLoopStack::currentStackPointer() const
 {
     // One might be tempted to assert that m_currentStackPointer <= m_topCallFrame->topOfFrame()
     // here. That assertion would be incorrect because this function may be called from function
     // prologues (e.g. during a stack check) where m_currentStackPointer may be higher than
     // m_topCallFrame->topOfFrame() because the stack pointer has not been initialized to point
     // to frame top yet.
-    return m_currentStackPointer;
+    return bitwise_cast<T>(m_currentStackPointer);
 }
 
 inline void CLoopStack::setCLoopStackLimit(Register* newTopOfStack)

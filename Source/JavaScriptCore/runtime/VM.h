@@ -704,9 +704,10 @@ public:
 #endif
 
     inline bool isSafeToRecurseSoft() const;
+    inline bool isSafeToRecurseSoft(void* stackPointer) const;
     bool isSafeToRecurse() const
     {
-        return isSafeToRecurse(m_stackLimit);
+        return currentStackPointer() >= m_stackLimit;
     }
 
     void* lastStackTop() { return m_lastStackTop; }
@@ -929,12 +930,6 @@ private:
     JSPropertyNameEnumerator* emptyPropertyNameEnumeratorSlow();
 
     void updateStackLimits();
-
-    bool isSafeToRecurse(void* stackLimit) const
-    {
-        void* curr = currentStackPointer();
-        return curr >= stackLimit;
-    }
 
     Exception* exception() const
     {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,12 +32,11 @@
 
 namespace JSC {
 
-struct ProtoCallFrame;
 typedef int64_t EncodedJSValue;
 
 extern "C" {
-    EncodedJSValue vmEntryToJavaScript(void*, VM*, ProtoCallFrame*);
-    EncodedJSValue vmEntryToNative(void*, VM*, ProtoCallFrame*);
+    EncodedJSValue vmEntryToJavaScript(void*, VM*, EntryFrame*);
+    EncodedJSValue vmEntryToNative(void*, VM*, EntryFrame*);
     EncodedJSValue vmEntryCustomGetter(CPURegister, CPURegister, CPURegister, CPURegister);
     EncodedJSValue vmEntryCustomSetter(CPURegister, CPURegister, CPURegister, CPURegister, CPURegister);
     EncodedJSValue vmEntryHostFunction(JSGlobalObject*, CallFrame*, void*);
@@ -54,15 +53,6 @@ extern "C" {
     void llint_function_for_construct_arity_checkTagGateAfter(void);
 }
 #endif
-
-inline EncodedJSValue vmEntryToWasm(void* code, VM* vm, ProtoCallFrame* frame)
-{
-    auto clobberizeValidator = makeScopeExit([&] {
-        vm->didEnterVM = true;
-    });
-    code = retagCodePtr<WasmEntryPtrTag, JSEntryPtrTag>(code);
-    return vmEntryToJavaScript(code, vm, frame);
-}
 
 namespace LLInt {
 

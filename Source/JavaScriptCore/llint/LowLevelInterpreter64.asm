@@ -1,4 +1,4 @@
-# Copyright (C) 2011-2021 Apple Inc. All rights reserved.
+# Copyright (C) 2011-2022 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -206,154 +206,60 @@ macro cCall4(function)
 end
 
 macro doVMEntry(makeCall)
-    functionPrologue()
-    pushCalleeSaves()
-
     const entry = a0
     const vm = a1
-    const protoCallFrame = a2
+    const entryFrame = a2
 
-    vmEntryRecord(cfr, sp)
+    if ARM64 or ARM64E
+        addp VMEntryFrameAlignedSize, entryFrame, t4
+        tagReturnAddress t4
+        storepairq cfr, lr, [entryFrame]
+    elsif X86_64 or X86_64_WIN
+        storep cfr, CallerFrame[entryFrame]
+        pop t4
+        storep t4, ReturnPC[entryFrame]
+        storep t4, EntryFrame::copyOfReturnPCForReturning+ReturnPC[entryFrame]
+    else
+        functionPrologueWithoutSettingFramePointer()
+        pop t4
+        storep t4, CallerFrame[entryFrame]
+        pop t4
+        storep t4, ReturnPC[entryFrame]
+    end
+    move entryFrame, cfr
+
+    preserveCalleeSaveRegistersForValidationForVMEntry(entryFrame, t4)
+    preserveCalleeSavesInEntryFrame(entryFrame, t4)
 
     checkStackPointerAlignment(t4, 0xbad0dc01)
 
     loadi VM::disallowVMEntryCount[vm], t4
     btinz t4, .checkVMEntryPermission
 
-    storep vm, VMEntryRecord::m_vm[sp]
-    loadp VM::topCallFrame[vm], t4
-    storep t4, VMEntryRecord::m_prevTopCallFrame[sp]
-    loadp VM::topEntryFrame[vm], t4
-    storep t4, VMEntryRecord::m_prevTopEntryFrame[sp]
-    loadp ProtoCallFrame::calleeValue[protoCallFrame], t4
-    storep t4, VMEntryRecord::m_callee[sp]
+    makeCall(entry, entryFrame, t3, t4)
 
-    loadi ProtoCallFrame::paddedArgCount[protoCallFrame], t4
-    addp CallFrameHeaderSlots, t4, t4
-    lshiftp 3, t4
-    subp sp, t4, t3
-    bqbeq sp, t3, .throwStackOverflow
+    checkStackPointerAlignment(t2, 0xbad0dc02)
 
-    # Ensure that we have enough additional stack capacity for the incoming args,
-    # and the frame for the JS code we're executing. We need to do this check
-    # before we start copying the args from the protoCallFrame below.
-    if C_LOOP or C_LOOP_WIN
-        bpaeq t3, VM::m_cloopStackLimit[vm], .stackHeightOK
-        move entry, t4
-        move vm, t5
-        cloopCallSlowPath _llint_stack_check_at_vm_entry, vm, t3
-        bpeq t0, 0, .stackCheckFailed
-        move t4, entry
-        move t5, vm
-        jmp .stackHeightOK
-
-.stackCheckFailed:
-        move t4, entry
-        move t5, vm
-        jmp .throwStackOverflow
-    else
-        bpb t3, VM::m_softStackLimit[vm], .throwStackOverflow
-    end
-
-.stackHeightOK:
-    move t3, sp
-    move (constexpr ProtoCallFrame::numberOfRegisters), t3
-
-.copyHeaderLoop:
-    # Copy the CodeBlock/Callee/ArgumentCountIncludingThis/|this| from protoCallFrame into the callee frame.
-    subi 1, t3
-    loadq [protoCallFrame, t3, 8], extraTempReg
-    storeq extraTempReg, CodeBlock[sp, t3, 8]
-    btinz t3, .copyHeaderLoop
-
-    loadi PayloadOffset + ProtoCallFrame::argCountAndCodeOriginValue[protoCallFrame], t4
-    subi 1, t4
-    loadi ProtoCallFrame::paddedArgCount[protoCallFrame], extraTempReg
-    subi 1, extraTempReg
-
-    bieq t4, extraTempReg, .copyArgs
-    move ValueUndefined, t3
-.fillExtraArgsLoop:
-    subi 1, extraTempReg
-    storeq t3, ThisArgumentOffset + 8[sp, extraTempReg, 8]
-    bineq t4, extraTempReg, .fillExtraArgsLoop
-
-.copyArgs:
-    loadp ProtoCallFrame::args[protoCallFrame], t3
-
-.copyArgsLoop:
-    btiz t4, .copyArgsDone
-    subi 1, t4
-    loadq [t3, t4, 8], extraTempReg
-    storeq extraTempReg, ThisArgumentOffset + 8[sp, t4, 8]
-    jmp .copyArgsLoop
-
-.copyArgsDone:
-    if ARM64 or ARM64E
-        move sp, t4
-        storep t4, VM::topCallFrame[vm]
-    else
-        storep sp, VM::topCallFrame[vm]
-    end
-    storep cfr, VM::topEntryFrame[vm]
-
-    checkStackPointerAlignment(extraTempReg, 0xbad0dc02)
-
-    makeCall(entry, protoCallFrame, t3, t4)
-
-    # We may have just made a call into a JS function, so we can't rely on sp
-    # for anything but the fact that our own locals (ie the VMEntryRecord) are
-    # not below it. It also still has to be aligned, though.
-    checkStackPointerAlignment(t2, 0xbad0dc03)
-
-    vmEntryRecord(cfr, t4)
-
-    loadp VMEntryRecord::m_vm[t4], vm
-    loadp VMEntryRecord::m_prevTopCallFrame[t4], t2
-    storep t2, VM::topCallFrame[vm]
-    loadp VMEntryRecord::m_prevTopEntryFrame[t4], t2
-    storep t2, VM::topEntryFrame[vm]
-
-    subp cfr, CalleeRegisterSaveSize, sp
-
-    popCalleeSaves()
+.exitVM:
+    restoreCalleeSavesFromEntryFrame(cfr, t3)
+    validateCalleeSaveRegistersForVMEntry(cfr, t3)
+    move cfr, sp
     functionEpilogue()
-    ret
-
-.throwStackOverflow:
-    move vm, a0
-    move protoCallFrame, a1
-    cCall2(_llint_throw_stack_overflow_error)
-
-    vmEntryRecord(cfr, t4)
-
-    loadp VMEntryRecord::m_vm[t4], vm
-    loadp VMEntryRecord::m_prevTopCallFrame[t4], extraTempReg
-    storep extraTempReg, VM::topCallFrame[vm]
-    loadp VMEntryRecord::m_prevTopEntryFrame[t4], extraTempReg
-    storep extraTempReg, VM::topEntryFrame[vm]
-
-    subp cfr, CalleeRegisterSaveSize, sp
-
-    popCalleeSaves()
-    functionEpilogue()
+    addp VMEntryFrameAlignedSize - CallerFrameAndPCSize, sp
     ret
 
 .checkVMEntryPermission:
     move vm, a0
-    move protoCallFrame, a1
+    // arg1 is unused
     cCall2(_llint_check_vm_entry_permission)
-    move ValueUndefined, r0
 
-    subp cfr, CalleeRegisterSaveSize, sp
-    popCalleeSaves()
-    functionEpilogue()
-    ret
+    move ValueUndefined, r0
+    jmp .exitVM
 end
 
 # a0, a2, t3, t4
-macro makeJavaScriptCall(entry, protoCallFrame, temp1, temp2)
-    addp 16, sp
+macro makeJavaScriptCall(entry, entryFrame, temp1, temp2)
+    addp CallerFrameAndPCSize, sp
     if C_LOOP or C_LOOP_WIN
         cloopCallJSFunction entry
     elsif ARM64E
@@ -370,14 +276,14 @@ macro makeJavaScriptCall(entry, protoCallFrame, temp1, temp2)
         global _vmEntryToJavaScriptGateAfter
         _vmEntryToJavaScriptGateAfter:
     end
-    subp 16, sp
+    subp CallerFrameAndPCSize, sp
 end
 
 # a0, a2, t3, t4
-macro makeHostFunctionCall(entry, protoCallFrame, temp1, temp2)
+macro makeHostFunctionCall(entry, entryFrame, temp1, temp2)
     move entry, temp1
     storep cfr, [sp]
-    loadp ProtoCallFrame::globalObject[protoCallFrame], a0
+    loadp EntryFrame::globalObject[entryFrame], a0
     move sp, a1
     if C_LOOP or C_LOOP_WIN
         storep lr, 8[sp]
@@ -398,19 +304,14 @@ op(llint_handle_uncaught_exception, macro ()
     restoreCalleeSavesFromVMEntryFrameCalleeSavesBuffer(t3, t0)
     storep 0, VM::callFrameForCatch[t3]
 
+    move ValueUndefined, r0
+
     loadp VM::topEntryFrame[t3], cfr
-    vmEntryRecord(cfr, t2)
-
-    loadp VMEntryRecord::m_vm[t2], t3
-    loadp VMEntryRecord::m_prevTopCallFrame[t2], extraTempReg
-    storep extraTempReg, VM::topCallFrame[t3]
-    loadp VMEntryRecord::m_prevTopEntryFrame[t2], extraTempReg
-    storep extraTempReg, VM::topEntryFrame[t3]
-
-    subp cfr, CalleeRegisterSaveSize, sp
-
-    popCalleeSaves()
+    restoreCalleeSavesFromEntryFrame(cfr, t3)
+    validateCalleeSaveRegistersForVMEntry(cfr, t3)
+    move cfr, sp
     functionEpilogue()
+    addp VMEntryFrameAlignedSize - CallerFrameAndPCSize, sp
     ret
 end)
 

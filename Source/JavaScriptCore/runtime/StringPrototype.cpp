@@ -31,7 +31,6 @@
 #include "InterpreterInlines.h"
 #include "IntlCollator.h"
 #include "IntlObjectInlines.h"
-#include "JITCodeInlines.h"
 #include "JSArray.h"
 #include "JSCInlines.h"
 #include "JSStringIterator.h"
@@ -430,8 +429,12 @@ static ALWAYS_INLINE JSString* replaceUsingRegExpSearch(
         if (hasNamedCaptures)
             ++argCount;
         JSFunction* func = jsCast<JSFunction*>(replaceValue);
+
+        // Note: CachedCall contains a VMEntryScope, and also ensures that we have enough stack
+        // space for this call. Otherwise, it will throw a StackOverflowError.
         CachedCall cachedCall(globalObject, func, argCount);
         RETURN_IF_EXCEPTION(scope, nullptr);
+
         while (true) {
             int* ovector;
             MatchResult result = globalObject->regExpGlobalData().performMatch(globalObject, regExp, string, source, startPosition, &ovector);
@@ -442,41 +445,45 @@ static ALWAYS_INLINE JSString* replaceUsingRegExpSearch(
             if (UNLIKELY(!sourceRanges.tryConstructAndAppend(lastIndex, result.start)))
                 OUT_OF_MEMORY(globalObject, scope);
 
-            cachedCall.clearArguments();
-            JSObject* groups = hasNamedCaptures ? constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure()) : nullptr;
+#if COMPILER(MSVC)
+#pragma warning(push)
+#pragma warning(disable:4750)
+#endif
+            JSValue jsResult = cachedCall.call([&] (CachedCall& cachedCall) {
+                cachedCall.clearArguments();
+                JSObject* groups = hasNamedCaptures ? constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure()) : nullptr;
 
-            for (unsigned i = 0; i < regExp->numSubpatterns() + 1; ++i) {
-                int matchStart = ovector[i * 2];
-                int matchLen = ovector[i * 2 + 1] - matchStart;
+                for (unsigned i = 0; i < regExp->numSubpatterns() + 1; ++i) {
+                    int matchStart = ovector[i * 2];
+                    int matchLen = ovector[i * 2 + 1] - matchStart;
 
-                JSValue patternValue;
+                    JSValue patternValue;
 
-                if (matchStart < 0)
-                    patternValue = jsUndefined();
-                else
-                    patternValue = jsSubstring(vm, source, matchStart, matchLen);
+                    if (matchStart < 0)
+                        patternValue = jsUndefined();
+                    else
+                        patternValue = jsSubstring(vm, source, matchStart, matchLen);
 
-                cachedCall.appendArgument(patternValue);
+                    cachedCall.appendArgument(patternValue);
 
-                if (i && hasNamedCaptures) {
-                    String groupName = regExp->getCaptureGroupName(i);
-                    if (!groupName.isEmpty())
-                        groups->putDirect(vm, Identifier::fromString(vm, groupName), patternValue);
+                    if (i && hasNamedCaptures) {
+                        String groupName = regExp->getCaptureGroupName(i);
+                        if (!groupName.isEmpty())
+                            groups->putDirect(vm, Identifier::fromString(vm, groupName), patternValue);
+                    }
                 }
-            }
 
-            cachedCall.appendArgument(jsNumber(result.start));
-            cachedCall.appendArgument(string);
-            if (hasNamedCaptures)
-                cachedCall.appendArgument(groups);
+                cachedCall.appendArgument(jsNumber(result.start));
+                cachedCall.appendArgument(string);
+                if (hasNamedCaptures)
+                    cachedCall.appendArgument(groups);
 
-            cachedCall.setThis(jsUndefined());
-            if (UNLIKELY(cachedCall.hasOverflowedArguments())) {
-                throwOutOfMemoryError(globalObject, scope);
-                return nullptr;
-            }
+                cachedCall.finalizeCall(jsUndefined());
+            });
+#if COMPILER(MSVC)
+#pragma warning(pop)
+#endif
 
-            JSValue jsResult = cachedCall.call();
             RETURN_IF_EXCEPTION(scope, nullptr);
             replacements.append(jsResult.toWTFString(globalObject));
             RETURN_IF_EXCEPTION(scope, nullptr);

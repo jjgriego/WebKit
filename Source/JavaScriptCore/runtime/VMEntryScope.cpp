@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,6 +29,7 @@
 #include "Options.h"
 #include "SamplingProfiler.h"
 #include "VM.h"
+#include "VMEntryScopeInlines.h"
 #include "WasmCapabilities.h"
 #include "WasmMachineThreads.h"
 #include "Watchdog.h"
@@ -36,10 +37,14 @@
 
 namespace JSC {
 
-VMEntryScope::VMEntryScope(VM& vm, JSGlobalObject* globalObject)
-    : m_vm(vm)
-    , m_globalObject(globalObject)
+VMEntryScope::VMEntryScope(JSGlobalObject* globalObject)
+    : m_globalObject(globalObject)
 {
+    VM& vm = globalObject->vm();
+
+    m_prevTopEntryFrame = vm.topEntryFrame;
+    m_prevTopCallFrame = vm.topCallFrame;
+
     if (!vm.entryScope) {
         vm.entryScope = this;
 
@@ -87,18 +92,23 @@ void VMEntryScope::addDidPopListener(Function<void ()>&& listener)
 
 VMEntryScope::~VMEntryScope()
 {
-    if (m_vm.entryScope != this)
+    VM& vm = m_globalObject->vm();
+    vm.topEntryFrame = m_prevTopEntryFrame;
+    vm.topCallFrame = m_prevTopCallFrame;
+    vm.didEnterVM = true;
+
+    if (vm.entryScope != this)
         return;
 
-    ASSERT_WITH_MESSAGE(!m_vm.hasCheckpointOSRSideState(), "Exitting the VM but pending checkpoint side state still available");
+    ASSERT_WITH_MESSAGE(!vm.hasCheckpointOSRSideState(), "Exitting the VM but pending checkpoint side state still available");
 
     if (UNLIKELY(Options::useTracePoints()))
         tracePoint(VMEntryScopeEnd);
     
-    if (UNLIKELY(m_vm.watchdog()))
-        m_vm.watchdog()->exitedVM();
+    if (UNLIKELY(vm.watchdog()))
+        vm.watchdog()->exitedVM();
 
-    m_vm.entryScope = nullptr;
+    vm.entryScope = nullptr;
 
     for (auto& listener : m_didPopListeners)
         listener();
@@ -114,9 +124,72 @@ VMEntryScope::~VMEntryScope()
     // requested (after all, the request came from the client). However, this is how the
     // client code currently works. Changing that will take some significant effort to hunt
     // down all the places in client code that currently rely on this behavior.
-    if (!m_vm.traps().needHandling(VMTraps::NeedTermination))
-        m_vm.setTerminationInProgress(false);
-    m_vm.clearScratchBuffers();
+    if (!vm.traps().needHandling(VMTraps::NeedTermination))
+        vm.setTerminationInProgress(false);
+    vm.clearScratchBuffers();
+}
+
+void VMEntryScope::initializeCall(CodeBlock* codeBlock, unsigned incomingArgCount)
+{
+    m_codeBlock = codeBlock;
+    m_incomingArgCount = incomingArgCount;
+
+    // Compute arg count after arity check and padding for alignment:
+    unsigned argsCount = incomingArgCount + 1; // Add one for the thisValue.
+    if (codeBlock)
+        argsCount = std::max(argsCount, codeBlock->numParameters());
+    m_arityCheckedArgsCountIncludingThis = roundArgumentCountToAlignFrame(argsCount);
+
+    // Compute stack size needed for allocation:
+    unsigned size = 0;
+    size += CallFrame::headerSizeInRegisters * sizeof(Register); // Target JS frame header.
+    size += m_arityCheckedArgsCountIncludingThis * sizeof(JSValue); // Target JS frame args.
+    size += kVMEntryFrameAlignedSize; // The EntryFrame.
+    m_stackBufferSize = size;
+}
+
+void VMEntryScope::finalizeCall(JSObject* callee, JSValue thisValue, JSValue* incomingArgs)
+{
+    VM& vm = m_globalObject->vm();
+
+    // Fill in the JS frame header.
+    auto* callFrame = reinterpret_cast<CallFrame*>(m_stackBuffer);
+    RELEASE_ASSERT(WTF::roundDownToMultipleOf<stackAlignmentBytes()>(callFrame) == callFrame); // mlam make ASSERT
+    callFrame->setCodeBlock(m_codeBlock);
+    callFrame->setCallee(callee);
+    callFrame->setArgumentCountIncludingThis(m_incomingArgCount + 1);
+    callFrame->setThisValue(thisValue);
+
+    // Populate the JS frame args if needed.
+    // Note: the client may choose to populate the arguments itself instead. For example,
+    // see uses of CachedCall and appendArgument in replaceUsingRegExpSearch.
+    auto* args = callFrame->addressOfArgumentsStart();
+    unsigned arityCheckedArgsCount = m_arityCheckedArgsCountIncludingThis - 1;
+    unsigned i = 0;
+    if (hasAppendedArguments()) {
+        ASSERT(numberOfAppendedArguments() == m_incomingArgCount);
+        i = numberOfAppendedArguments();
+    } else {
+        if (incomingArgs) {
+            for (; i < m_incomingArgCount; ++i)
+                args[i] = incomingArgs[i];
+        }
+    }
+    for (; i < arityCheckedArgsCount; ++i)
+        args[i] = jsUndefined();
+
+    // Fill in the EntryFrame.
+    // The EntryFrame header will be filled in by vmEntryToJavaScript and friends.
+    auto* entryFrame = bitwise_cast<EntryFrame*>(&args[arityCheckedArgsCount]);
+    entryFrame->entryScope = this;
+    entryFrame->globalObject = m_globalObject;
+
+    m_vmEntryFrame = entryFrame;
+    RELEASE_ASSERT(WTF::roundDownToMultipleOf<stackAlignmentBytes()>(entryFrame) == entryFrame); // mlam make ASSERT
+
+    // The VMEntryScope serves as an RAII that will restore these.
+    vm.topCallFrame = callFrame;
+    vm.topEntryFrame = m_vmEntryFrame;
 }
 
 } // namespace JSC

@@ -685,53 +685,122 @@ end
 #
 # Here's an example of how it's used:
 #
-#     probe(
-#         macro()
-#             move cfr, a0 # pass the CallFrame* as arg0.
-#             move t0, a1 # pass the value of register t0 as arg1.
-#             call _cProbeCallbackFunction # to do whatever you want.
-#         end
-#     )
+#     probe(macro()
+#         move cfr, a0 # pass the CallFrame* as arg0.
+#         move t0, a1 # pass the value of register t0 as arg1.
+#         call _cProbeCallbackFunction # to do whatever you want.
+#     end)
 #
 if X86_64 or ARM64 or ARM64E or ARMv7
     macro probe(action)
         # save all the registers that the LLInt may use.
-        if ARM64 or ARM64E or ARMv7
-            push cfr, lr
-        end
-        push a0, a1
-        push a2, a3
-        push t0, t1
-        push t2, t3
-        push t4, t5
-        if ARM64 or ARM64E
-            push csr0, csr1
-            push csr2, csr3
-            push csr4, csr5
-            push csr6, csr7
-            push csr8, csr9
+        if X86_64
+            push a0, a1
+            push a2, a3
+            push t0, t1
+            push t2, t3
+            push t4, t5
+        elsif ARM64 or ARM64E
+            emit "stp fp, lr, [sp, #-16]!"
+            emit "stp x0, x1, [sp, #-16]!"
+            emit "stp x2, x3, [sp, #-16]!"
+            emit "stp x4, x5, [sp, #-16]!"
+            emit "stp x6, x7, [sp, #-16]!"
+            emit "stp x8, x9, [sp, #-16]!"
+            emit "stp x10, x11, [sp, #-16]!"
+            emit "stp x12, x13, [sp, #-16]!"
+            emit "stp x14, x15, [sp, #-16]!"
+            emit "stp x16, x17, [sp, #-16]!"
+            emit "stp x19, x20, [sp, #-16]!"
+            emit "stp x21, x22, [sp, #-16]!"
+            emit "stp x23, x24, [sp, #-16]!"
+            emit "stp x25, x26, [sp, #-16]!"
+            emit "stp x27, x28, [sp, #-16]!"
+
+            emit "mrs x27, nzcv"
+            emit "mrs x28, fpsr"
+            emit "stp x27, x28, [sp, #-16]!"
+            emit "ldp x27, x28, [sp, #16]"
+
+            emit "stp q0, q1, [sp, #-16]!"
+            emit "stp q2, q3, [sp, #-16]!"
+            emit "stp q4, q5, [sp, #-16]!"
+            emit "stp q6, q7, [sp, #-16]!"
+            emit "stp q8, q9, [sp, #-16]!"
+            emit "stp q10, q11, [sp, #-16]!"
+            emit "stp q12, q13, [sp, #-16]!"
+            emit "stp q14, q15, [sp, #-16]!"
+            emit "stp q16, q17, [sp, #-16]!"
+            emit "stp q18, q19, [sp, #-16]!"
+            emit "stp q20, q21, [sp, #-16]!"
+            emit "stp q22, q23, [sp, #-16]!"
+            emit "stp q24, q25, [sp, #-16]!"
+            emit "stp q26, q27, [sp, #-16]!"
+            emit "stp q28, q29, [sp, #-16]!"
+            emit "stp q30, q31, [sp, #-16]!"
         elsif ARMv7
+            push cfr, lr
+            push a0, a1
+            push a2, a3
+            push t0, t1
+            push t2, t3
+            push t4, t5
             push csr0, csr1
         end
 
         action()
 
         # restore all the registers we saved previously.
-        if ARM64 or ARM64E
-            pop csr9, csr8
-            pop csr7, csr6
-            pop csr5, csr4
-            pop csr3, csr2
-            pop csr1, csr0
+        if X86_64
+            pop t5, t4
+            pop t3, t2
+            pop t1, t0
+            pop a3, a2
+            pop a1, a0
+        elsif ARM64 or ARM64E
+            emit "ldp q30, q31, [sp], #16"
+            emit "ldp q28, q29, [sp], #16"
+            emit "ldp q26, q27, [sp], #16"
+            emit "ldp q24, q25, [sp], #16"
+            emit "ldp q22, q23, [sp], #16"
+            emit "ldp q20, q21, [sp], #16"
+            emit "ldp q18, q19, [sp], #16"
+            emit "ldp q16, q17, [sp], #16"
+            emit "ldp q14, q15, [sp], #16"
+            emit "ldp q12, q13, [sp], #16"
+            emit "ldp q10, q11, [sp], #16"
+            emit "ldp q8, q9, [sp], #16"
+            emit "ldp q6, q7, [sp], #16"
+            emit "ldp q4, q5, [sp], #16"
+            emit "ldp q2, q3, [sp], #16"
+            emit "ldp q0, q1, [sp], #16"
+
+            emit "ldp x27, x28, [sp], #16"
+            emit "msr nzcv, x27"
+            emit "msr fpsr, x28"
+
+            emit "ldp x27, x28, [sp], #16"
+            emit "ldp x25, x26, [sp], #16"
+            emit "ldp x23, x24, [sp], #16"
+            emit "ldp x21, x22, [sp], #16"
+            emit "ldp x19, x20, [sp], #16"
+            emit "ldp x16, x17, [sp], #16"
+            emit "ldp x14, x15, [sp], #16"
+            emit "ldp x12, x13, [sp], #16"
+            emit "ldp x10, x11, [sp], #16"
+            emit "ldp x8, x9, [sp], #16"
+            emit "ldp x6, x7, [sp], #16"
+            emit "ldp x4, x5, [sp], #16"
+            emit "ldp x2, x3, [sp], #16"
+            emit "ldp x0, x1, [sp], #16"
+            emit "ldp fp, lr, [sp], #16"
         elsif ARMv7
             pop csr1, csr0
-        end
-        pop t5, t4
-        pop t3, t2
-        pop t1, t0
-        pop a3, a2
-        pop a1, a0
-        if ARM64 or ARM64E or ARMv7
+            pop t5, t4
+            pop t3, t2
+            pop t1, t0
+            pop a3, a2
+            pop a1, a0
             pop lr, cfr
         end
     end
@@ -762,21 +831,73 @@ macro checkStackPointerAlignment(tempReg, location)
     end
 end
 
-if C_LOOP or C_LOOP_WIN or ARM64 or ARM64E or X86_64 or X86_64_WIN or RISCV64
-    const CalleeSaveRegisterCount = 0
-elsif ARMv7
-    const CalleeSaveRegisterCount = 5 + 2 * 1 // 5 32-bit GPRs + 1 64-bit FPR
-elsif MIPS
-    const CalleeSaveRegisterCount = 3
-elsif X86 or X86_WIN
-    const CalleeSaveRegisterCount = 3
+const VMEntryFrameAlignedSize = constexpr kVMEntryFrameAlignedSize
+const VMEntryCalleeSavesCount = constexpr EntryFrame::vmEntryCalleeSavesCount
+
+macro preserveCalleeSaveRegistersForValidation(preservedBuffer)
+    # mlam if ASSERT_ENABLED and JIT
+    if JIT
+        if ARM64 or ARM64E
+            storepairq csr0, csr1, 0[preservedBuffer]
+            storepairq csr2, csr3, 16[preservedBuffer]
+            storepairq csr4, csr5, 32[preservedBuffer]
+            storepairq csr6, csr7, 48[preservedBuffer]
+            storepairq csr8, csr9, 64[preservedBuffer]
+            storepaird csfr0, csfr1, 80[preservedBuffer]
+            storepaird csfr2, csfr3, 96[preservedBuffer]
+            storepaird csfr4, csfr5, 112[preservedBuffer]
+            storepaird csfr6, csfr7, 128[preservedBuffer]
+        elsif X86_64
+            storeq csr0, 0[preservedBuffer]
+            storeq csr1, 8[preservedBuffer]
+            storeq csr2, 16[preservedBuffer]
+            storeq csr3, 24[preservedBuffer]
+            storeq csr4, 32[preservedBuffer]
+        end
+    end
 end
 
-const CalleeRegisterSaveSize = CalleeSaveRegisterCount * MachineRegisterSize
+macro preserveCalleeSaveRegistersForValidationForVMEntry(entryFrame, temp)
+    # mlam if ASSERT_ENABLED and JIT
+    if JIT
+        leap EntryFrame::calleeSaveRegistersValidationBuffer[entryFrame], temp
+        preserveCalleeSaveRegistersForValidation(temp)
+    end
+end
 
-# VMEntryTotalFrameSize includes the space for struct VMEntryRecord and the
-# callee save registers rounded up to keep the stack aligned
-const VMEntryTotalFrameSize = (CalleeRegisterSaveSize + sizeof VMEntryRecord + StackAlignment - 1) & ~StackAlignmentMask
+macro validateCalleeSaveRegisters(preservedBuffer)
+    # mlam if ASSERT_ENABLED and JIT
+    if JIT
+        if ARM64 or ARM64E
+            const BufferSizeForCalleeSaveRegisters = constexpr (NUMBER_OF_CALLEE_SAVES_REGISTERS * sizeof(CPURegister))
+            push a0, a1
+            subp BufferSizeForCalleeSaveRegisters, sp
+            storepairq csr0, csr1, 0[sp]
+            storepairq csr2, csr3, 16[sp]
+            storepairq csr4, csr5, 32[sp]
+            storepairq csr6, csr7, 48[sp]
+            storepairq csr8, csr9, 64[sp]
+            storepaird csfr0, csfr1, 80[sp]
+            storepaird csfr2, csfr3, 96[sp]
+            storepaird csfr4, csfr5, 112[sp]
+            storepaird csfr6, csfr7, 128[sp]
+            move preservedBuffer, a0
+            move sp, a1
+            cCall2(_llint_validate_callee_save_registers)
+            addp BufferSizeForCalleeSaveRegisters, sp
+            pop a1, a0
+        elsif X86_64
+        end
+    end
+end
+
+macro validateCalleeSaveRegistersForVMEntry(entryFrame, temp)
+    # mlam if ASSERT_ENABLED and JIT
+    if JIT
+        leap EntryFrame::calleeSaveRegistersValidationBuffer[entryFrame], temp
+        validateCalleeSaveRegisters(temp)
+    end
+end
 
 macro pushCalleeSaves()
     # Note: Only registers that are in RegisterSetBuilder::calleeSaveRegisters(),
@@ -823,6 +944,83 @@ macro popCalleeSaves()
         emit "pop ebx"
         emit "pop edi"
         emit "pop esi"
+    end
+end
+
+macro preserveCalleeSavesInEntryFrame(entryFrame, temp)
+    pushCalleeSaves()
+
+    # temp might be one of the callee save registers. But since we've already
+    # pushed them, it's save to use it.
+    if C_LOOP or C_LOOP_WIN or ARM64 or ARM64E or X86_64 or X86_64_WIN or RISCV64
+    elsif ARMv7
+        loadp 0[sp], temp
+        storep temp, EntryFrame::vmEntryCalleeSavesBuffer + 0[entryFrame]
+        loadp 4[sp], temp
+        storep temp, EntryFrame::vmEntryCalleeSavesBuffer + 4[entryFrame]
+        loadp 8[sp], temp
+        storep temp, EntryFrame::vmEntryCalleeSavesBuffer + 8[entryFrame]
+        loadp 12[sp], temp
+        storep temp, EntryFrame::vmEntryCalleeSavesBuffer + 12[entryFrame]
+        loadp 16[sp], temp
+        storep temp, EntryFrame::vmEntryCalleeSavesBuffer + 16[entryFrame]
+        loadp 20[sp], temp
+        storep temp, EntryFrame::vmEntryCalleeSavesBuffer + 20[entryFrame]
+        loadp 24[sp], temp
+        storep temp, EntryFrame::vmEntryCalleeSavesBuffer + 24[entryFrame]
+        addp VMEntryCalleeSavesCount * SlotSize, sp
+    elsif MIPS or X86 or X86_WIN
+        loadp 0[sp], temp
+        storep temp, EntryFrame::vmEntryCalleeSavesBuffer + 0[entryFrame]
+        loadp 4[sp], temp
+        storep temp, EntryFrame::vmEntryCalleeSavesBuffer + 4[entryFrame]
+        loadp 8[sp], temp
+        storep temp, EntryFrame::vmEntryCalleeSavesBuffer + 8[entryFrame]
+        addp VMEntryCalleeSavesCount * SlotSize, sp
+    end
+end
+
+macro restoreCalleeSavesFromEntryFrame(entryFrame, temp)
+    if C_LOOP or C_LOOP_WIN or ARM64 or ARM64E or X86_64 or X86_64_WIN or RISCV64
+    elsif ARMv7
+        subp VMEntryCalleeSavesCount * SlotSize, sp
+        loadp EntryFrame::vmEntryCalleeSavesBuffer + 0[entryFrame], temp
+        storep temp, 0[sp]
+        loadp EntryFrame::vmEntryCalleeSavesBuffer + 4[entryFrame], temp
+        storep temp, 4[sp]
+        loadp EntryFrame::vmEntryCalleeSavesBuffer + 8[entryFrame], temp
+        storep temp, 8[sp]
+        loadp EntryFrame::vmEntryCalleeSavesBuffer + 12[entryFrame], temp
+        storep temp, 12[sp]
+        loadp EntryFrame::vmEntryCalleeSavesBuffer + 16[entryFrame], temp
+        storep temp, 16[sp]
+        loadp EntryFrame::vmEntryCalleeSavesBuffer + 20[entryFrame], temp
+        storep temp, 20[sp]
+        loadp EntryFrame::vmEntryCalleeSavesBuffer + 24[entryFrame], temp
+        storep temp, 24[sp]
+        popCalleeSaves()
+    elsif MIPS
+        subp VMEntryCalleeSavesCount * SlotSize, sp
+        loadp EntryFrame::vmEntryCalleeSavesBuffer + 0[entryFrame], temp
+        storep temp, 0[sp]
+        loadp EntryFrame::vmEntryCalleeSavesBuffer + 4[entryFrame], temp
+        storep temp, 4[sp]
+        loadp EntryFrame::vmEntryCalleeSavesBuffer + 8[entryFrame], temp
+        storep temp, 8[sp]
+        popCalleeSaves()
+    elsif X86 or X86_WIN
+        # For X86, we can't use it just any arbitrary temp. The temp might be a register to be restored.
+        # So, instead, we'll use the result register r0 after preserving it on the stack.
+        push r0
+        subp VMEntryCalleeSavesCount * SlotSize, sp
+        loadp EntryFrame::vmEntryCalleeSavesBuffer + 0[entryFrame], r0
+        storep r0, 0[sp]
+        loadp EntryFrame::vmEntryCalleeSavesBuffer + 4[entryFrame], r0
+        storep r0, 4[sp]
+        loadp EntryFrame::vmEntryCalleeSavesBuffer + 8[entryFrame], r0
+        storep r0, 8[sp]
+        popCalleeSaves()
+        pop r0
     end
 end
 
@@ -913,8 +1111,7 @@ end
 
 macro copyCalleeSavesToEntryFrameCalleeSavesBuffer(entryFrame)
     if ARM64 or ARM64E or X86_64 or X86_64_WIN or ARMv7 or MIPS or RISCV64
-        vmEntryRecord(entryFrame, entryFrame)
-        leap VMEntryRecord::calleeSaveRegistersBuffer[entryFrame], entryFrame
+        leap EntryFrame::calleeSaveRegistersBuffer[entryFrame], entryFrame
         if ARM64 or ARM64E
             storepairq csr0, csr1, [entryFrame]
             storepairq csr2, csr3, 16[entryFrame]
@@ -990,8 +1187,7 @@ end
 macro restoreCalleeSavesFromVMEntryFrameCalleeSavesBuffer(vm, temp)
     if ARM64 or ARM64E or X86_64 or X86_64_WIN or ARMv7 or MIPS or RISCV64
         loadp VM::topEntryFrame[vm], temp
-        vmEntryRecord(temp, temp)
-        leap VMEntryRecord::calleeSaveRegistersBuffer[temp], temp
+        leap EntryFrame::calleeSaveRegistersBuffer[temp], temp
         if ARM64 or ARM64E
             loadpairq [temp], csr0, csr1
             loadpairq 16[temp], csr2, csr3
@@ -1068,7 +1264,7 @@ macro preserveReturnAddressAfterCall(destinationRegister)
     end
 end
 
-macro functionPrologue()
+macro functionPrologueWithoutSettingFramePointer()
     tagReturnAddress sp
     if X86 or X86_WIN or X86_64 or X86_64_WIN
         push cfr
@@ -1078,6 +1274,10 @@ macro functionPrologue()
         push lr
         push cfr
     end
+end
+
+macro functionPrologue()
+    functionPrologueWithoutSettingFramePointer()
     move sp, cfr
 end
 
@@ -1090,10 +1290,6 @@ macro functionEpilogue()
         pop cfr
         pop lr
     end
-end
-
-macro vmEntryRecord(entryFramePointer, resultReg)
-    subp entryFramePointer, VMEntryTotalFrameSize, resultReg
 end
 
 macro getFrameRegisterSizeForCodeBlock(codeBlock, size)
@@ -1670,8 +1866,8 @@ macro doReturn()
 end
 
 # stub to call into JavaScript or Native functions
-# EncodedJSValue vmEntryToJavaScript(void* code, VM* vm, ProtoCallFrame* protoFrame)
-# EncodedJSValue vmEntryToNativeFunction(void* code, VM* vm, ProtoCallFrame* protoFrame)
+# EncodedJSValue vmEntryToJavaScript(void* code, VM*, EntryFrame*)
+# EncodedJSValue vmEntryToNativeFunction(void* code, VM*, EntryFrame*)
 
 if C_LOOP or C_LOOP_WIN
     _llint_vm_entry_to_javascript:
@@ -1793,17 +1989,6 @@ if not (C_LOOP or C_LOOP_WIN)
 
     .zeroFillDone:
         move a0, sp
-        ret
-
-    # VMEntryRecord* vmEntryRecord(const EntryFrame* entryFrame)
-    global _vmEntryRecord
-    _vmEntryRecord:
-        tagReturnAddress sp
-        if X86 or X86_WIN
-            loadp 4[sp], a0
-        end
-
-        vmEntryRecord(a0, r0)
         ret
 end
 

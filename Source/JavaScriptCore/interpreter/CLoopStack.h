@@ -59,7 +59,8 @@ namespace JSC {
         void gatherConservativeRoots(ConservativeRoots&, JITStubRoutineSet&, CodeBlockSet&);
         void sanitizeStack();
 
-        inline void* currentStackPointer() const;
+        template<typename T = void*>
+        inline T currentStackPointer() const;
         void setCurrentStackPointer(void* sp) { m_currentStackPointer = sp; }
 
         size_t size() const { return highAddress() - lowAddress(); }

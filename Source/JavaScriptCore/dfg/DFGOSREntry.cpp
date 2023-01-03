@@ -300,7 +300,7 @@ void* prepareOSREntry(VM& vm, CallFrame* callFrame, CodeBlock* codeBlock, Byteco
     auto dontSaveRegisters = RegisterSetBuilder::stackRegisters();
 
     unsigned registerCount = registerSaveLocations->registerCount();
-    VMEntryRecord* record = vmEntryRecord(vm.topEntryFrame);
+    const EntryFrame* entryFrame = vm.topEntryFrame;
     for (unsigned i = 0; i < registerCount; i++) {
         RegisterAtOffset currentEntry = registerSaveLocations->at(i);
         ASSERT(dontSaveRegisters.contains(currentEntry.reg(), IgnoreVectors) == dontSaveRegisters.contains(currentEntry.reg(), Width128));
@@ -310,7 +310,7 @@ void* prepareOSREntry(VM& vm, CallFrame* callFrame, CodeBlock* codeBlock, Byteco
         RegisterAtOffset* calleeSavesEntry = allCalleeSaves->find(currentEntry.reg());
         
         if constexpr (CallerFrameAndPC::sizeInRegisters == 2)
-            *(bitwise_cast<intptr_t*>(pivot - 1) - currentEntry.offsetAsIndex()) = record->calleeSaveRegistersBuffer[calleeSavesEntry->offsetAsIndex()];
+            *(bitwise_cast<intptr_t*>(pivot - 1) - currentEntry.offsetAsIndex()) = entryFrame->calleeSaveRegistersBuffer[calleeSavesEntry->offsetAsIndex()];
         else {
             // We need to adjust 4-bytes on 32-bits, otherwise we will clobber some parts of
             // pivot[-1] when currentEntry.offsetAsIndex() returns -1. This region contains
@@ -332,7 +332,7 @@ void* prepareOSREntry(VM& vm, CallFrame* callFrame, CodeBlock* codeBlock, Byteco
 
             int offsetAsIndex = currentEntry.offsetAsIndex();
             int properIndex = offsetAsIndex % 2 ? offsetAsIndex - 1 : offsetAsIndex + 1;
-            *(bitwise_cast<intptr_t*>(pivot - 1) + 1 - properIndex) = record->calleeSaveRegistersBuffer[calleeSavesEntry->offsetAsIndex()];
+            *(bitwise_cast<intptr_t*>(pivot - 1) + 1 - properIndex) = entryFrame->calleeSaveRegistersBuffer[calleeSavesEntry->offsetAsIndex()];
         }
     }
 #endif

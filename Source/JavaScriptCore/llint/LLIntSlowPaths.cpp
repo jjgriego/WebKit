@@ -59,9 +59,9 @@
 #include "LLIntExceptions.h"
 #include "LLIntPrototypeLoadAdaptiveStructureWatchpoint.h"
 #include "LLIntThunks.h"
+#include "MacroAssembler.h"
 #include "ObjectConstructor.h"
 #include "ObjectPropertyConditionSet.h"
-#include "ProtoCallFrameInlines.h"
 #include "RegExpObject.h"
 #include "RepatchInlines.h"
 #include "ShadowChicken.h"
@@ -2591,34 +2591,13 @@ extern "C" SlowPathReturnType llint_slow_path_checkpoint_osr_exit(CallFrame* cal
     return dispatchToNextInstructionDuringExit(scope, codeBlock, pc);
 }
 
-extern "C" SlowPathReturnType llint_throw_stack_overflow_error(VM* vm, ProtoCallFrame* protoFrame)
-{
-    CallFrame* callFrame = vm->topCallFrame;
-    auto scope = DECLARE_THROW_SCOPE(*vm);
-    JSGlobalObject* globalObject = nullptr;
-    if (callFrame)
-        globalObject = callFrame->lexicalGlobalObject(*vm);
-    else
-        globalObject = protoFrame->callee()->globalObject();
-    throwStackOverflowError(globalObject, scope);
-    return encodeResult(nullptr, nullptr);
-}
-
-#if ENABLE(C_LOOP)
-extern "C" SlowPathReturnType llint_stack_check_at_vm_entry(VM* vm, Register* newTopOfStack)
-{
-    bool success = vm->ensureStackCapacityFor(newTopOfStack);
-    return encodeResult(reinterpret_cast<void*>(success), 0);
-}
-#endif
-
 extern "C" void llint_write_barrier_slow(CallFrame* callFrame, JSCell* cell)
 {
     VM& vm = callFrame->codeBlock()->vm();
     vm.writeBarrier(cell);
 }
 
-extern "C" SlowPathReturnType llint_check_vm_entry_permission(VM* vm, ProtoCallFrame*)
+extern "C" SlowPathReturnType llint_check_vm_entry_permission(VM* vm, Register*)
 {
     ASSERT_UNUSED(vm, vm->disallowVMEntryCount);
     if (Options::crashOnDisallowedVMEntry())
@@ -2638,5 +2617,32 @@ extern "C" NO_RETURN_DUE_TO_CRASH void llint_crash()
 {
     CRASH();
 }
+
+#if 1 || ASSERT_ENABLED // mlam TEST
+extern "C" void llint_validate_callee_save_registers(CPURegister* expected, CPURegister* actual)
+{
+    UNUSED_PARAM(expected);
+    UNUSED_PARAM(actual);
+#if ENABLE(ASSEMBLER)
+#if CPU(ARM64)
+    constexpr unsigned numScalarCSRs = 10;
+    bool foundCorruptedCalleeSaveRegister = false;
+    for (unsigned i = 0; i < NUMBER_OF_CALLEE_SAVES_REGISTERS; ++i) {
+        if (actual[i] != expected[i]) {
+            foundCorruptedCalleeSaveRegister = true;
+            if (i < numScalarCSRs) {
+                GPRReg gpr = static_cast<GPRReg>(i + GPRInfo::regCS0);
+                dataLogLn("Corrupted CS", i, "/", MacroAssembler::gprName(gpr), ": expected ", RawHex(expected[i]), " actual ", RawHex(actual[i]));
+            } else {
+                FPRReg fpr = static_cast<FPRReg>(i - numScalarCSRs + FPRInfo::fpRegCS0);
+                dataLogLn("Corrupted fpCS", i - numScalarCSRs, "/", MacroAssembler::fprName(fpr), ": expected ", RawHex(expected[i]), " actual ", RawHex(actual[i]));
+            }
+        }
+    }
+    RELEASE_ASSERT(!foundCorruptedCalleeSaveRegister);
+#endif
+#endif // ENABLE(ASSEMBLER)
+}
+#endif // ASSERT_ENABLED
 
 } } // namespace JSC::LLInt

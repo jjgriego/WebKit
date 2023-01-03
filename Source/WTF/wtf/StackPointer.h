@@ -27,14 +27,15 @@
 
 namespace WTF {
 
-#if defined(NDEBUG) && COMPILER(GCC_COMPATIBLE) \
-    && (CPU(X86_64) || CPU(X86) || CPU(ARM64) || CPU(ARM_THUMB2) || CPU(ARM_TRADITIONAL))
+#if defined(NDEBUG)
 
 // We can only use the inline asm implementation on release builds because it
 // needs to be inlinable in order to be correct.
-ALWAYS_INLINE void* currentStackPointer()
+template<typename T = void*>
+ALWAYS_INLINE T currentStackPointer()
 {
     void* stackPointer = nullptr;
+#if COMPILER(GCC_COMPATIBLE)
 #if CPU(X86_64)
     __asm__ volatile ("movq %%rsp, %0" : "=r"(stackPointer) ::);
 #elif CPU(X86)
@@ -46,15 +47,27 @@ ALWAYS_INLINE void* currentStackPointer()
 #elif CPU(ARM64) || CPU(ARM_THUMB2) || CPU(ARM_TRADITIONAL)
     __asm__ volatile ("mov %0, sp" : "=r"(stackPointer) ::);
 #endif
-    return stackPointer;
+#endif // COMPILER(GCC_COMPATIBLE)
+    return bitwise_cast<T>(stackPointer);
 }
 
+#else // not defined(NDEBUG)
+
+template<typename T = void*>
+T currentStackPointer()
+{
+    void* stackPointer = nullptr;
+    constexpr size_t sizeOfFrameHeader = 2 * sizeof(void*);
+#if COMPILER(GCC_COMPATIBLE)
+    stackPointer = reinterpret_cast<uint8_t*>(__builtin_frame_address(0)) + sizeOfFrameHeader;
 #else
-
-#define USE_GENERIC_CURRENT_STACK_POINTER 1
-WTF_EXPORT_PRIVATE void* currentStackPointer();
-
+    // Make sure that sp is the only local variable declared in this function.
+    stackPointer = reinterpret_cast<uint8_t*>(&sp) + sizeOfFrameHeader + sizeof(stackPointer);
 #endif
+    return bitwise_cast<T>(stackPointer);
+}
+
+#endif // defined(NDEBUG)
 
 } // namespace WTF
 

@@ -59,9 +59,14 @@ bool VM::ensureStackCapacityFor(Register* newTopOfStack)
     
 }
 
-bool VM::isSafeToRecurseSoft() const
+ALWAYS_INLINE bool VM::isSafeToRecurseSoft() const
 {
-    bool safe = isSafeToRecurse(m_softStackLimit);
+    return isSafeToRecurseSoft(currentStackPointer());
+}
+
+ALWAYS_INLINE bool VM::isSafeToRecurseSoft(void* stackPointer) const
+{
+    bool safe = stackPointer >= m_softStackLimit;
 #if ENABLE(C_LOOP)
     safe = safe && isSafeToRecurseSoftCLoop();
 #endif

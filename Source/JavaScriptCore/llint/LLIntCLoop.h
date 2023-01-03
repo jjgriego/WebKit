@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012, 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,15 +29,17 @@
 
 #include "JSCJSValue.h"
 #include "Opcode.h"
-#include "ProtoCallFrame.h"
 
 namespace JSC {
+
+struct EntryFrame;
+
 namespace LLInt {
 
 class CLoop {
 public:
     static void initialize();
-    static JSValue execute(OpcodeID entryOpcodeID, void* executableAddress, VM*, ProtoCallFrame*, bool isInitializationPass = false);
+    static JSValue execute(OpcodeID entryOpcodeID, void* executableAddress, VM*, EntryFrame*, bool isInitializationPass = false);
 };
 
 } } // namespace JSC::LLInt

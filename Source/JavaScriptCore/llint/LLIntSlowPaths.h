@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,7 +32,6 @@
 namespace JSC {
 
 class CallFrame;
-struct ProtoCallFrame;
 
 namespace LLInt {
 
@@ -150,13 +149,13 @@ LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_super_sampler_begin);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_super_sampler_end);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_out_of_line_jump_target);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_arityCheck);
-extern "C" SlowPathReturnType llint_throw_stack_overflow_error(VM*, ProtoCallFrame*) REFERENCED_FROM_ASM WTF_INTERNAL;
 extern "C" SlowPathReturnType llint_slow_path_checkpoint_osr_exit(CallFrame* callFrame, EncodedJSValue unused) REFERENCED_FROM_ASM WTF_INTERNAL;
 extern "C" SlowPathReturnType llint_slow_path_checkpoint_osr_exit_from_inlined_call(CallFrame* callFrame, EncodedJSValue callResult) REFERENCED_FROM_ASM WTF_INTERNAL;
-#if ENABLE(C_LOOP)
-extern "C" SlowPathReturnType llint_stack_check_at_vm_entry(VM*, Register*) REFERENCED_FROM_ASM WTF_INTERNAL;
-#endif
-extern "C" SlowPathReturnType llint_check_vm_entry_permission(VM*, ProtoCallFrame*) REFERENCED_FROM_ASM WTF_INTERNAL;
+extern "C" SlowPathReturnType llint_check_vm_entry_permission(VM*, Register* unused) REFERENCED_FROM_ASM WTF_INTERNAL;
 extern "C" NO_RETURN_DUE_TO_CRASH void llint_crash() REFERENCED_FROM_ASM WTF_INTERNAL;
+
+#if 1 || ASSERT_ENABLED // mlam TEST
+extern "C" void llint_validate_callee_save_registers(CPURegister* expected, CPURegister* actual);
+#endif
 
 } } // namespace JSC::LLInt

@@ -861,6 +861,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     inspector/remote/RemoteInspector.h
 
     interpreter/CLoopStack.h
+    interpreter/CachedCall.h
+    interpreter/CachedCallInlines.h
     interpreter/CallFrame.h
     interpreter/CallFrameInlines.h
     interpreter/CalleeBits.h
@@ -871,7 +873,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     interpreter/RegisterInlines.h
     interpreter/ShadowChicken.h
     interpreter/StackVisitor.h
-    interpreter/VMEntryRecord.h
 
     jit/AssemblyHelpers.h
     jit/AssemblyHelpersSpoolers.h
@@ -1248,6 +1249,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/Uint8ClampedArray.h
     runtime/VM.h
     runtime/VMEntryScope.h
+    runtime/VMEntryScopeInlines.h
     runtime/VMInlines.h
     runtime/VMTraps.h
     runtime/VMTrapsInlines.h

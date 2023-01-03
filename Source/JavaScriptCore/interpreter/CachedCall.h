@@ -25,63 +25,50 @@
 
 #pragma once
 
-#include "CallFrameClosure.h"
-#include "ExceptionHelpers.h"
-#include "JSFunction.h"
-#include "Interpreter.h"
-#include "ProtoCallFrame.h"
+#include "JSCJSValue.h"
 #include "VMEntryScope.h"
-#include "VMInlines.h"
-#include <wtf/ForbidHeapAllocation.h>
 
 namespace JSC {
+
+class JSFunction;
+class JSGlobalObject;
+
+struct EntryFrame;
+
     class CachedCall {
         WTF_MAKE_NONCOPYABLE(CachedCall);
         WTF_FORBID_HEAP_ALLOCATION;
     public:
-        CachedCall(JSGlobalObject* globalObject, JSFunction* function, int argumentCount)
-            : m_vm(globalObject->vm())
-            , m_interpreter(m_vm.interpreter)
-            , m_entryScope(m_vm, function->scope()->globalObject())
-        {
-            VM& vm = m_entryScope.vm();
-            auto scope = DECLARE_THROW_SCOPE(vm);
+        CachedCall(JSGlobalObject*, JSFunction*, unsigned argumentCount);
 
-            ASSERT(!function->isHostFunctionNonInline());
-            if (LIKELY(vm.isSafeToRecurseSoft())) {
-                m_arguments.ensureCapacity(argumentCount);
-                if (LIKELY(!m_arguments.hasOverflowed()))
-                    m_closure = m_interpreter.prepareForRepeatCall(function->jsExecutable(), &m_protoCallFrame, function, argumentCount + 1, function->scope(), m_arguments);
-                else
-                    throwOutOfMemoryError(globalObject, scope);
-            } else
-                throwStackOverflowError(globalObject, scope);
-#if ASSERT_ENABLED
-            m_valid = !scope.exception();
-#endif
+        ALWAYS_INLINE VMEntryScope& entryScope() { return m_entryScope; }
+
+        ALWAYS_INLINE void finalizeCall(JSValue thisValue)
+        {
+            m_entryScope.finalizeCall(m_function, thisValue);
         }
 
-        ALWAYS_INLINE JSValue call()
-        {
-            ASSERT(m_valid);
-            ASSERT(m_arguments.size() == static_cast<size_t>(m_protoCallFrame.argumentCount()));
-            return m_interpreter.execute(m_closure);
-        }
-        void setThis(JSValue v) { m_protoCallFrame.setThisValue(v); }
+        template<typename Functor>
+        ALWAYS_INLINE JSValue call(Functor initalizeArgs);
 
-        void clearArguments() { m_arguments.clear(); }
-        void appendArgument(JSValue v) { m_arguments.append(v); }
-        bool hasOverflowedArguments() { return m_arguments.hasOverflowed(); }
+        ALWAYS_INLINE void clearArguments() { m_entryScope.clearArguments(); }
+        ALWAYS_INLINE void appendArgument(JSValue v) { m_entryScope.appendArgument(v); }
+        ALWAYS_INLINE unsigned numberOfAppendedArguments() const { return m_entryScope.numberOfAppendedArguments(); }
+
+        EntryFrame* vmEntryFrame() const { return m_entryScope.vmEntryFrame(); }
+
+        VM& vm() const { return m_vm; }
+        JSFunction* function() const { return m_function; }
+        FunctionExecutable* functionExecutable() const { return m_functionExecutable; };
 
     private:
 #if ASSERT_ENABLED
         bool m_valid { false };
 #endif
         VM& m_vm;
-        Interpreter& m_interpreter;
+        JSFunction* m_function { nullptr };
+        FunctionExecutable* m_functionExecutable { nullptr };
         VMEntryScope m_entryScope;
-        ProtoCallFrame m_protoCallFrame;
-        MarkedArgumentBuffer m_arguments;
-        CallFrameClosure m_closure;
     };
-}
+
+} // namespace JSC

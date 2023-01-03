@@ -31,7 +31,6 @@
 #include "LLIntCLoop.h"
 #include "LLIntData.h"
 #include "LinkBuffer.h"
-#include "VMEntryRecord.h"
 #include "WasmCallingConvention.h"
 #include "WasmContextInlines.h"
 #include <wtf/NeverDestroyed.h>
@@ -685,24 +684,16 @@ MacroAssemblerCodeRef<JSEntryPtrTag> returnLocationThunk(OpcodeID opcodeID, Opco
 #if ENABLE(C_LOOP)
 // Non-JIT (i.e. C Loop LLINT) case:
 
-EncodedJSValue vmEntryToJavaScript(void* executableAddress, VM* vm, ProtoCallFrame* protoCallFrame)
+EncodedJSValue vmEntryToJavaScript(void* executableAddress, VM* vm, EntryFrame* entryFrame)
 {
-    JSValue result = CLoop::execute(llint_vm_entry_to_javascript, executableAddress, vm, protoCallFrame);
+    JSValue result = CLoop::execute(llint_vm_entry_to_javascript, executableAddress, vm, entryFrame);
     return JSValue::encode(result);
 }
 
-EncodedJSValue vmEntryToNative(void* executableAddress, VM* vm, ProtoCallFrame* protoCallFrame)
+EncodedJSValue vmEntryToNative(void* executableAddress, VM* vm, EntryFrame* entryFrame)
 {
-    JSValue result = CLoop::execute(llint_vm_entry_to_native, executableAddress, vm, protoCallFrame);
+    JSValue result = CLoop::execute(llint_vm_entry_to_native, executableAddress, vm, entryFrame);
     return JSValue::encode(result);
-}
-
-extern "C" VMEntryRecord* vmEntryRecord(EntryFrame* entryFrame)
-{
-    // The C Loop doesn't have any callee save registers, so the VMEntryRecord is allocated at the base of the frame.
-    intptr_t stackAlignment = stackAlignmentBytes();
-    intptr_t VMEntryTotalFrameSize = (sizeof(VMEntryRecord) + (stackAlignment - 1)) & ~(stackAlignment - 1);
-    return reinterpret_cast<VMEntryRecord*>(reinterpret_cast<char*>(entryFrame) - VMEntryTotalFrameSize);
 }
 
 #endif // ENABLE(C_LOOP)

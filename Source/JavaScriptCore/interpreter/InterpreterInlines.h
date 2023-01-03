@@ -26,7 +26,7 @@
 
 #pragma once
 
-#include "CallFrameClosure.h"
+#include "CachedCallInlines.h"
 #include "Exception.h"
 #include "FunctionCodeBlock.h"
 #include "FunctionExecutable.h"
@@ -34,13 +34,31 @@
 #include "Interpreter.h"
 #include "JSCPtrTag.h"
 #include "LLIntData.h"
-#include "ProtoCallFrameInlines.h"
+#include "LLIntThunks.h"
 #include "StackAlignment.h"
 #include "UnlinkedCodeBlock.h"
 #include "VMTrapsInlines.h"
+#include <wtf/Scope.h>
 #include <wtf/UnalignedAccess.h>
 
 namespace JSC {
+
+ALWAYS_INLINE VM& Interpreter::vm()
+{
+    return *bitwise_cast<VM*>(bitwise_cast<uintptr_t>(this) - OBJECT_OFFSETOF(VM, interpreter));
+}
+
+ALWAYS_INLINE JSValue Interpreter::checkedReturn(JSValue returnValue)
+{
+    ASSERT(returnValue || vm().exceptionForInspection());
+    return returnValue;
+}
+
+ALWAYS_INLINE JSObject* Interpreter::checkedReturn(JSObject* returnValue)
+{
+    ASSERT(returnValue || vm().exceptionForInspection());
+    return returnValue;
+}
 
 inline CallFrame* calleeFrameForVarargs(CallFrame* callFrame, unsigned numUsedStackSlots, unsigned argumentCountIncludingThis)
 {
@@ -87,10 +105,15 @@ inline OpcodeID Interpreter::getOpcodeID(Opcode opcode)
 #endif
 }
 
-ALWAYS_INLINE JSValue Interpreter::execute(CallFrameClosure& closure)
+template<typename Functor>
+ALWAYS_INLINE JSValue Interpreter::executeCachedCall(CachedCall& cachedCall, Functor initalizeArgs)
 {
-    VM& vm = *closure.vm;
+    VM& vm = cachedCall.vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto clobberizeValidator = makeScopeExit([&] {
+        vm.didEnterVM = true;
+    });
 
     ASSERT(!vm.isCollectorBusyOnCurrentThread());
     ASSERT(vm.currentThreadIsHoldingAPILock());
@@ -102,25 +125,34 @@ ALWAYS_INLINE JSValue Interpreter::execute(CallFrameClosure& closure)
             return throwScope.exception();
     }
 
-    {
+#if 1 || ASSERT_ENABLED // mlam TEST
+    void* oldSP = CURRENT_STACK_POINTER_FOR_VM_ENTRY_STACK_CHECK(cachedCall.entryScope());
+#endif
+
+    // We allocate stack space here for the VMEntry. The call below will pop it off.
+    // So, we need to allocate each time before we append arguments and make the call.
+    ALLOCATE_ENTRY_FRAME_ON_STACK(cachedCall.entryScope());
+    initalizeArgs(cachedCall);
+
+    auto& entryScope = cachedCall.entryScope();
+    auto* functionExecutable = cachedCall.functionExecutable();
+    CodeBlock* executableCodeBlock = functionExecutable->codeBlockForCall();
+    if (UNLIKELY(entryScope.codeBlock() != executableCodeBlock)) {
         DeferTraps deferTraps(vm); // We can't jettison this code if we're about to run it.
-
-        // Reload CodeBlock since GC can replace CodeBlock owned by Executable.
-        CodeBlock* codeBlock;
-        closure.functionExecutable->prepareForExecution<FunctionExecutable>(vm, closure.function, closure.scope, CodeForCall, codeBlock);
-        RETURN_IF_EXCEPTION(throwScope, checkedReturn(throwScope.exception()));
-
-        ASSERT(codeBlock);
-        codeBlock->m_shouldAlwaysBeInlined = false;
-        {
-            DisallowGC disallowGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
-            closure.protoCallFrame->setCodeBlock(codeBlock);
+        if (!executableCodeBlock) {
+            auto* function = cachedCall.function();
+            functionExecutable->prepareForExecution<FunctionExecutable>(vm, function, function->scope(), CodeForCall, executableCodeBlock);
+            RETURN_IF_EXCEPTION(throwScope, checkedReturn(throwScope.exception()));
+            RELEASE_ASSERT(executableCodeBlock == functionExecutable->codeBlockForCall());
         }
+        entryScope.updateCodeBlock(executableCodeBlock);
     }
 
     // Execute the code:
     throwScope.release();
-    JSValue result = closure.functionExecutable->generatedJITCodeForCall()->execute(&vm, closure.protoCallFrame);
+    JSValue result = JSValue::decode(vmEntryToJavaScript(functionExecutable->generatedJITCodeForCall()->addressForCall(), &vm, cachedCall.vmEntryFrame()));
+    RELEASE_ASSERT(oldSP == CURRENT_STACK_POINTER_FOR_VM_ENTRY_STACK_CHECK(cachedCall.entryScope())); // mlam make ASSERT
+
     return checkedReturn(result);
 }
 

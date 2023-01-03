@@ -58,6 +58,7 @@ using WasmInstruction = BaseInstruction<WasmOpcodeTraits>;
 using JSOrWasmInstruction = std::variant<const JSInstruction*, const WasmInstruction*>;
 
     class ArgList;
+    class CachedCall;
     class CodeBlock;
     class EvalExecutable;
     class Exception;
@@ -76,9 +77,7 @@ using JSOrWasmInstruction = std::variant<const JSInstruction*, const WasmInstruc
     class SourceCode;
     class StackFrame;
     enum class HandlerType : uint8_t;
-    struct CallFrameClosure;
     struct HandlerInfo;
-    struct ProtoCallFrame;
 
     enum DebugHookType {
         WillExecuteProgram,
@@ -143,7 +142,7 @@ using JSOrWasmInstruction = std::variant<const JSInstruction*, const WasmInstruc
         JSValue executeModuleProgram(JSModuleRecord*, ModuleProgramExecutable*, JSGlobalObject*, JSModuleEnvironment*, JSValue sentValue, JSValue resumeMode);
         JSValue executeCall(JSGlobalObject*, JSObject* function, const CallData&, JSValue thisValue, const ArgList&);
         JSObject* executeConstruct(JSGlobalObject*, JSObject* function, const CallData&, const ArgList&, JSValue newTarget);
-        JSValue execute(EvalExecutable*, JSGlobalObject*, JSValue thisValue, JSScope*);
+        JSValue executeEval(EvalExecutable*, JSGlobalObject*, JSValue thisValue, JSScope*);
 
         void getArgumentsData(CallFrame*, JSFunction*&, ptrdiff_t& firstParameterIndex, Register*& argv, int& argc);
 
@@ -157,21 +156,11 @@ using JSOrWasmInstruction = std::variant<const JSInstruction*, const WasmInstruc
     private:
         enum ExecutionFlag { Normal, InitializeAndReturn };
         
-        static JSValue checkedReturn(JSValue returnValue)
-        {
-            ASSERT(returnValue);
-            return returnValue;
-        }
-        
-        static JSObject* checkedReturn(JSObject* returnValue)
-        {
-            ASSERT(returnValue);
-            return returnValue;
-        }
+        JSValue checkedReturn(JSValue returnValue);
+        JSObject* checkedReturn(JSObject* returnValue);
 
-        CallFrameClosure prepareForRepeatCall(FunctionExecutable*, ProtoCallFrame*, JSFunction*, int argumentCountIncludingThis, JSScope*, const ArgList&);
-
-        JSValue execute(CallFrameClosure&);
+        template<typename Functor>
+        JSValue executeCachedCall(CachedCall&, Functor initalizeArgs);
 
         inline VM& vm();
 #if ENABLE(C_LOOP)

@@ -36,7 +36,6 @@
 namespace JSC {
 
 class JSGlobalObject;
-struct ProtoCallFrame;
 class WebAssemblyInstance;
 
 class WebAssemblyFunction final : public WebAssemblyFunctionBase {

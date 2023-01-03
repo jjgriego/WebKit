@@ -328,7 +328,7 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
         {
             void* rawThis = this;
             if (!!rawThis)
-                RELEASE_ASSERT(callee().isCell());
+                RELEASE_ASSERT(callee().isCell() || callee().isWasm());
             StackVisitor::visit<action, Functor>(this, vm, functor);
         }
 

@@ -27,12 +27,12 @@
 #include "CallFrame.h"
 
 #include "CodeBlock.h"
+#include "EntryFrame.h"
 #include "ExecutableAllocator.h"
 #include "InlineCallFrame.h"
 #include "JSCInlines.h"
 #include "JSWebAssemblyInstance.h"
 #include "LLIntPCRanges.h"
-#include "VMEntryRecord.h"
 #include "VMEntryScope.h"
 #include "WasmContextInlines.h"
 #include "WasmInstance.h"
@@ -176,9 +176,9 @@ bool CallFrame::isAnyWasmCallee() const
 CallFrame* CallFrame::callerFrame(EntryFrame*& currEntryFrame) const
 {
     if (callerFrameOrEntryFrame() == currEntryFrame) {
-        VMEntryRecord* currVMEntryRecord = vmEntryRecord(currEntryFrame);
-        currEntryFrame = currVMEntryRecord->prevTopEntryFrame();
-        return currVMEntryRecord->prevTopCallFrame();
+        auto* prevTopCallFrame = currEntryFrame->prevTopCallFrame();
+        currEntryFrame = currEntryFrame->prevTopEntryFrame();
+        return prevTopCallFrame;
     }
     return static_cast<CallFrame*>(callerFrameOrEntryFrame());
 }
@@ -186,9 +186,9 @@ CallFrame* CallFrame::callerFrame(EntryFrame*& currEntryFrame) const
 SUPPRESS_ASAN CallFrame* CallFrame::unsafeCallerFrame(EntryFrame*& currEntryFrame) const
 {
     if (unsafeCallerFrameOrEntryFrame() == currEntryFrame) {
-        VMEntryRecord* currVMEntryRecord = vmEntryRecord(currEntryFrame);
-        currEntryFrame = currVMEntryRecord->unsafePrevTopEntryFrame();
-        return currVMEntryRecord->unsafePrevTopCallFrame();
+        auto* prevTopCallFrame = currEntryFrame->unsafePrevTopCallFrame();
+        currEntryFrame = currEntryFrame->unsafePrevTopEntryFrame();
+        return prevTopCallFrame;
     }
     return static_cast<CallFrame*>(unsafeCallerFrameOrEntryFrame());
 }
@@ -342,8 +342,8 @@ void CallFrame::convertToStackOverflowFrame(VM& vm, CodeBlock* codeBlockToKeepAl
         throwOriginFrame = throwOriginFrame->callerFrame(entryFrame);
     } while (throwOriginFrame && throwOriginFrame->callee().isWasm());
 
-    JSObject* originCallee = throwOriginFrame ? throwOriginFrame->jsCallee() : vmEntryRecord(vm.topEntryFrame)->callee();
-    JSObject* stackOverflowCallee = originCallee->globalObject()->stackOverflowFrameCallee();
+    JSGlobalObject* globalObject = throwOriginFrame ? throwOriginFrame->jsCallee()->globalObject() : vm.topEntryFrame->globalObject;
+    JSObject* stackOverflowCallee = globalObject->stackOverflowFrameCallee();
 
     setCodeBlock(codeBlockToKeepAliveUntilFrameIsUnwound);
     setCallee(stackOverflowCallee);
