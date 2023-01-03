@@ -968,7 +968,7 @@ macro preserveCalleeSavesInEntryFrame(entryFrame, temp)
         storep temp, EntryFrame::vmEntryCalleeSavesBuffer + 20[entryFrame]
         loadp 24[sp], temp
         storep temp, EntryFrame::vmEntryCalleeSavesBuffer + 24[entryFrame]
-        addp VMEntryCalleeSavesCount * SlotSize, sp
+        addp VMEntryCalleeSavesCount * MachineRegisterSize, sp
     elsif MIPS or X86 or X86_WIN
         loadp 0[sp], temp
         storep temp, EntryFrame::vmEntryCalleeSavesBuffer + 0[entryFrame]
@@ -976,14 +976,14 @@ macro preserveCalleeSavesInEntryFrame(entryFrame, temp)
         storep temp, EntryFrame::vmEntryCalleeSavesBuffer + 4[entryFrame]
         loadp 8[sp], temp
         storep temp, EntryFrame::vmEntryCalleeSavesBuffer + 8[entryFrame]
-        addp VMEntryCalleeSavesCount * SlotSize, sp
+        addp VMEntryCalleeSavesCount * MachineRegisterSize, sp
     end
 end
 
 macro restoreCalleeSavesFromEntryFrame(entryFrame, temp)
     if C_LOOP or C_LOOP_WIN or ARM64 or ARM64E or X86_64 or X86_64_WIN or RISCV64
     elsif ARMv7
-        subp VMEntryCalleeSavesCount * SlotSize, sp
+        subp VMEntryCalleeSavesCount * MachineRegisterSize, sp
         loadp EntryFrame::vmEntryCalleeSavesBuffer + 0[entryFrame], temp
         storep temp, 0[sp]
         loadp EntryFrame::vmEntryCalleeSavesBuffer + 4[entryFrame], temp
@@ -1000,7 +1000,7 @@ macro restoreCalleeSavesFromEntryFrame(entryFrame, temp)
         storep temp, 24[sp]
         popCalleeSaves()
     elsif MIPS
-        subp VMEntryCalleeSavesCount * SlotSize, sp
+        subp VMEntryCalleeSavesCount * MachineRegisterSize, sp
         loadp EntryFrame::vmEntryCalleeSavesBuffer + 0[entryFrame], temp
         storep temp, 0[sp]
         loadp EntryFrame::vmEntryCalleeSavesBuffer + 4[entryFrame], temp
@@ -1012,7 +1012,7 @@ macro restoreCalleeSavesFromEntryFrame(entryFrame, temp)
         # For X86, we can't use it just any arbitrary temp. The temp might be a register to be restored.
         # So, instead, we'll use the result register r0 after preserving it on the stack.
         push r0
-        subp VMEntryCalleeSavesCount * SlotSize, sp
+        subp VMEntryCalleeSavesCount * MachineRegisterSize, sp
         loadp EntryFrame::vmEntryCalleeSavesBuffer + 0[entryFrame], r0
         storep r0, 0[sp]
         loadp EntryFrame::vmEntryCalleeSavesBuffer + 4[entryFrame], r0
