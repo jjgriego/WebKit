@@ -37,6 +37,8 @@ class VM;
 
 struct EntryFrame;
 
+using EntryTrampolineFn = EncodedJSValue (*)(void*, VM*, EntryFrame*);
+
 class VMEntryScope {
     WTF_MAKE_NONCOPYABLE(VMEntryScope);
     WTF_FORBID_HEAP_ALLOCATION;
@@ -67,6 +69,9 @@ public:
 
     EntryFrame* vmEntryFrame() const { return m_vmEntryFrame; }
 
+    __attribute__((noinline)) void initializeBuffer();
+    __attribute__((noinline)) EncodedJSValue go(EntryTrampolineFn, VM&, void*);
+
 #if ENABLE(C_LOOP)
     inline void* currentCLoopStackPointer();
     inline void allocateEntryFrameOnCLoopStack();
@@ -83,6 +88,10 @@ private:
     // Initialized in by client for call.
     CodeBlock* m_codeBlock { nullptr };
     unsigned m_incomingArgCount { 0 };
+
+    JSObject* m_callee;
+    JSValue m_thisValue;
+    JSValue* m_incomingArgs;
 
     // Computed for call after the above has been initialized.
     void* m_stackBuffer { nullptr };

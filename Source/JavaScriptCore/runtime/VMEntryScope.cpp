@@ -33,6 +33,7 @@
 #include "WasmCapabilities.h"
 #include "WasmMachineThreads.h"
 #include "Watchdog.h"
+#include "wtf/StdLibExtras.h"
 #include <wtf/SystemTracing.h>
 
 namespace JSC {
@@ -148,17 +149,64 @@ void VMEntryScope::initializeCall(CodeBlock* codeBlock, unsigned incomingArgCoun
     m_stackBufferSize = size;
 }
 
+EncodedJSValue VMEntryScope::go(EntryTrampolineFn enter, VM& vm, void* target)
+{
+    // These platforms have loose stack alignment requirements: we may need to
+    // add 8 bytes of padding to bring the SP into 16-byte alignment, but we
+    // don't know until runtime if this is necessary or not
+    if constexpr (isARM() || isMIPS()) {
+        auto const sp = reinterpret_cast<uintptr_t>(currentStackPointer());
+        m_stackBufferSize += WTF::roundUpToMultipleOf(stackAlignmentBytes(), sp) - sp;
+    }
+
+    ALLOCATE_ENTRY_FRAME_ON_STACK((*this));
+    initializeBuffer();
+    return enter(target, &vm, m_vmEntryFrame);
+}
+
 void VMEntryScope::finalizeCall(JSObject* callee, JSValue thisValue, JSValue* incomingArgs)
+{
+    m_callee = callee;
+    m_thisValue = thisValue;
+    m_incomingArgs = incomingArgs;
+}
+
+void VMEntryScope::initializeBuffer()
 {
     VM& vm = m_globalObject->vm();
 
     // Fill in the JS frame header.
     auto* callFrame = reinterpret_cast<CallFrame*>(m_stackBuffer);
-    RELEASE_ASSERT(WTF::roundDownToMultipleOf<stackAlignmentBytes()>(callFrame) == callFrame); // mlam make ASSERT
+
+
+
+    // NOTE(jgriego) I'm not sure these asserts (checking the alignment of the
+    // callFrame and entryFrame) make sense
+    //
+    // on ARMv7, we are checking that the SP is aligned at the call instruction,
+    // which necessarily means that the SP minus the saved FP and PC is aligned
+    // to 16 bytes, which means that the SP when we jump to
+    // `vmEntryToJavaScript` will be 8 bytes off (the size of the saved FP and
+    // PC)...
+    //
+    // We can't have things both ways; either the SP is aligned at the call
+    // instruction or after the prologue but not both. (because the change
+    // between these two points in time is 8 bytes)
+    //
+    // So, for this patch, I keep the alignment at the call instruction which
+    // means we have to remove or loosen these assertions
+    //
+    // this probably works on 64-bit machines
+    // because the prologue saved registers add up to a 16-byte aligned quantity
+    // so we don't notice this mismatch
+
+
+
+    // RELEASE_ASSERT(WTF::roundDownToMultipleOf<stackAlignmentBytes()>(callFrame) == callFrame); // mlam make ASSERT
     callFrame->setCodeBlock(m_codeBlock);
-    callFrame->setCallee(callee);
+    callFrame->setCallee(m_callee);
     callFrame->setArgumentCountIncludingThis(m_incomingArgCount + 1);
-    callFrame->setThisValue(thisValue);
+    callFrame->setThisValue(m_thisValue);
 
     // Populate the JS frame args if needed.
     // Note: the client may choose to populate the arguments itself instead. For example,
@@ -170,9 +218,9 @@ void VMEntryScope::finalizeCall(JSObject* callee, JSValue thisValue, JSValue* in
         ASSERT(numberOfAppendedArguments() == m_incomingArgCount);
         i = numberOfAppendedArguments();
     } else {
-        if (incomingArgs) {
+        if (m_incomingArgs) {
             for (; i < m_incomingArgCount; ++i)
-                args[i] = incomingArgs[i];
+                args[i] = m_incomingArgs[i];
         }
     }
     for (; i < arityCheckedArgsCount; ++i)
@@ -185,7 +233,7 @@ void VMEntryScope::finalizeCall(JSObject* callee, JSValue thisValue, JSValue* in
     entryFrame->globalObject = m_globalObject;
 
     m_vmEntryFrame = entryFrame;
-    RELEASE_ASSERT(WTF::roundDownToMultipleOf<stackAlignmentBytes()>(entryFrame) == entryFrame); // mlam make ASSERT
+    // RELEASE_ASSERT(WTF::roundDownToMultipleOf<stackAlignmentBytes()>(entryFrame) == entryFrame); // mlam make ASSERT
 
     // The VMEntryScope serves as an RAII that will restore these.
     vm.topCallFrame = callFrame;

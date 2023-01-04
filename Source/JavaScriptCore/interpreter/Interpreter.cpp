@@ -1016,8 +1016,6 @@ failedJSONP:
         if (UNLIKELY(!entryScope.isSafeToRecurseSoft(vm)))
             return checkedReturn(throwStackOverflowError(globalObject, throwScope));
 
-        ALLOCATE_ENTRY_FRAME_ON_STACK(entryScope);
-
         {
             DisallowGC disallowGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             jitCode = program->generatedJITCode();
@@ -1028,7 +1026,7 @@ failedJSONP:
     // Execute the code:
     throwScope.release();
     ASSERT(jitCode == program->generatedJITCode().ptr());
-    EncodedJSValue result = vmEntryToJavaScript(jitCode->addressForCall(), &vm, entryScope.vmEntryFrame());
+    EncodedJSValue result = entryScope.go(vmEntryToJavaScript, vm, jitCode->addressForCall());
     RELEASE_ASSERT(oldSP == CURRENT_STACK_POINTER_FOR_VM_ENTRY_STACK_CHECK(entryScope)); // mlam make ASSERT
 
     return checkedReturn(JSValue::decode(result));
@@ -1085,8 +1083,6 @@ JSValue Interpreter::executeCall(JSGlobalObject* lexicalGlobalObject, JSObject* 
         if (UNLIKELY(!entryScope.isSafeToRecurseSoft(vm) || args.size() > maxArguments))
             return checkedReturn(throwStackOverflowError(globalObject, throwScope));
 
-        ALLOCATE_ENTRY_FRAME_ON_STACK(entryScope);
-
         {
             DisallowGC disallowGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             if (isJSCall)
@@ -1100,9 +1096,9 @@ JSValue Interpreter::executeCall(JSGlobalObject* lexicalGlobalObject, JSObject* 
     throwScope.release();
     if (isJSCall) {
         ASSERT(jitCode == callData.js.functionExecutable->generatedJITCodeForCall().ptr());
-        result = vmEntryToJavaScript(jitCode->addressForCall(), &vm, entryScope.vmEntryFrame());
+        result = entryScope.go(vmEntryToJavaScript, vm, jitCode->addressForCall());
     } else
-        result = vmEntryToNative(callData.native.function.taggedPtr(), &vm, entryScope.vmEntryFrame());
+        result = entryScope.go(vmEntryToNative, vm, callData.native.function.taggedPtr());
     RELEASE_ASSERT(oldSP == CURRENT_STACK_POINTER_FOR_VM_ENTRY_STACK_CHECK(entryScope)); // mlam make ASSERT
 
     return checkedReturn(JSValue::decode(result));
@@ -1165,8 +1161,6 @@ JSObject* Interpreter::executeConstruct(JSGlobalObject* lexicalGlobalObject, JSO
             return nullptr;
         }
 
-        ALLOCATE_ENTRY_FRAME_ON_STACK(entryScope);
-
         {
             DisallowGC disallowGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             if (isJSConstruct)
@@ -1179,9 +1173,9 @@ JSObject* Interpreter::executeConstruct(JSGlobalObject* lexicalGlobalObject, JSO
     // Execute the code.
     if (isJSConstruct) {
         ASSERT(jitCode == constructData.js.functionExecutable->generatedJITCodeForConstruct().ptr());
-        result = vmEntryToJavaScript(jitCode->addressForCall(), &vm, entryScope.vmEntryFrame());
+        result = entryScope.go(vmEntryToJavaScript, vm, jitCode->addressForCall());
     } else
-        result = vmEntryToNative(constructData.native.function.taggedPtr(), &vm, entryScope.vmEntryFrame());
+        result = entryScope.go(vmEntryToNative, vm, constructData.native.function.taggedPtr());
     RELEASE_ASSERT(oldSP == CURRENT_STACK_POINTER_FOR_VM_ENTRY_STACK_CHECK(entryScope)); // mlam make ASSERT
 
     // We need to do an explicit exception check so that we don't return a non-null JSObject*
@@ -1354,8 +1348,6 @@ JSValue Interpreter::executeEval(EvalExecutable* eval, JSGlobalObject* lexicalGl
         if (UNLIKELY(!entryScope.isSafeToRecurseSoft(vm)))
             return checkedReturn(throwStackOverflowError(globalObject, throwScope));
 
-        ALLOCATE_ENTRY_FRAME_ON_STACK(entryScope);
-
         {
             DisallowGC disallowGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             jitCode = eval->generatedJITCode();
@@ -1366,7 +1358,7 @@ JSValue Interpreter::executeEval(EvalExecutable* eval, JSGlobalObject* lexicalGl
     // Execute the code:
     throwScope.release();
     ASSERT(jitCode == eval->generatedJITCode().ptr());
-    EncodedJSValue result = vmEntryToJavaScript(jitCode->addressForCall(), &vm, entryScope.vmEntryFrame());
+    EncodedJSValue result = entryScope.go(vmEntryToJavaScript, vm, jitCode->addressForCall());
     RELEASE_ASSERT(oldSP == CURRENT_STACK_POINTER_FOR_VM_ENTRY_STACK_CHECK(entryScope)); // mlam make ASSERT
 
     return checkedReturn(JSValue::decode(result));
@@ -1427,8 +1419,6 @@ JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, ModuleProgramE
         if (UNLIKELY(!entryScope.isSafeToRecurseSoft(vm)))
             return checkedReturn(throwStackOverflowError(globalObject, throwScope));
 
-        ALLOCATE_ENTRY_FRAME_ON_STACK(entryScope);
-
         {
             DisallowGC disallowGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             jitCode = executable->generatedJITCode();
@@ -1445,7 +1435,7 @@ JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, ModuleProgramE
     // Execute the code:
     throwScope.release();
     ASSERT(jitCode == executable->generatedJITCode().ptr());
-    EncodedJSValue result = vmEntryToJavaScript(jitCode->addressForCall(), &vm, entryScope.vmEntryFrame());
+    EncodedJSValue result = entryScope.go(vmEntryToJavaScript, vm, jitCode->addressForCall());
     RELEASE_ASSERT(oldSP == CURRENT_STACK_POINTER_FOR_VM_ENTRY_STACK_CHECK(entryScope)); // mlam make ASSERT
 
     return checkedReturn(JSValue::decode(result));
