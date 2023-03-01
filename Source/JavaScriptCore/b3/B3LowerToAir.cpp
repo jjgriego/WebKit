@@ -69,8 +69,55 @@ namespace JSC { namespace B3 {
 
 namespace {
 
+#if CPU(ARM_THUMB2)
+struct WideTmp {
+    Tmp lo, hi;
+};
+
+struct SomeTmp {
+    enum class InvalidTag { Invalid };
+
+    SomeTmp() = default;
+    template <typename T, typename Enable = std::enable_if_t<!std::is_same_v<std::remove_reference_t<T>, SomeTmp>>>
+    /* implicit */ SomeTmp(T&& v)
+        : inner(std::forward<T>(v)) {}
+
+    operator bool() const
+    {
+        return inner.index() != 0;
+    }
+
+    void dump(PrintStream& out) const
+    {
+        if (!*this) {
+            out.print("(<none>)");
+        } else if (inner.index() == 1) {
+            out.print("(", std::get<1>(inner), ")");
+        } else {
+            auto const& wide = std::get<2>(inner);
+            out.print("(", wide.hi, ",", wide.lo, ")");
+        }
+    }
+
+    std::variant<InvalidTag, Tmp, WideTmp> inner;
+};
+
+Tmp loTmp(const SomeTmp& t) { return std::get<2>(t.inner).lo; }
+Tmp hiTmp(const SomeTmp& t) { return std::get<2>(t.inner).hi; }
+Tmp theTmp(const SomeTmp& t) { return std::get<1>(t.inner); }
+
+#else
+using SomeTmp = Tmp;
+
+Tmp loTmp(const SomeTmp&) { UNREACHABLE_FOR_PLATFORM(); }
+Tmp hiTmp(const SomeTmp&) { UNREACHABLE_FOR_PLATFORM(); }
+Tmp theTmp(const SomeTmp& t) { return t; }
+
+#endif
+
 namespace B3LowerToAirInternal {
-static constexpr bool verbose = false;
+static constexpr bool verbose = true;
+
 }
 
 using Arg = Air::Arg;
@@ -399,7 +446,7 @@ private:
     // doesn't prevent us from trying loadPromise on the same value.
     Tmp tmp(Value* value)
     {
-        Tmp& tmp = m_valueToTmp[value];
+        auto& tmp = m_valueToTmp[value];
         if (!tmp) {
             while (shouldCopyPropagate(value))
                 value = value->child(0);
@@ -407,15 +454,33 @@ private:
             if (value->opcode() == FramePointer)
                 return Tmp(GPRInfo::callFrameRegister);
 
-            Tmp& realTmp = m_valueToTmp[value];
+            auto& realTmp = m_valueToTmp[value];
             if (!realTmp) {
                 realTmp = m_code.newTmp(value->resultBank());
+
+                // FIXME(jgriego) is this coercion correct?
                 if (m_procedure.isFastConstant(value->key()))
-                    m_code.addFastTmp(realTmp);
+                    m_code.addFastTmp(theTmp(realTmp));
                 if (B3LowerToAirInternal::verbose)
                     dataLog("Tmp for ", *value, ": ", realTmp, "\n");
             }
             tmp = realTmp;
+        }
+        return theTmp(tmp);
+    }
+
+    SomeTmp someTmp(Value* value) {
+        if constexpr (!isARM_THUMB2()) return tmp(value);
+        if (value->type().kind() != Int64) return tmp(value);
+        auto& tmp = m_valueToTmp[value];
+        if (!tmp) {
+            while (shouldCopyPropagate(value))
+                value = value->child(0);
+
+            tmp = WideTmp(m_code.newTmp(Bank::GP),
+                          m_code.newTmp(Bank::GP));
+            if (B3LowerToAirInternal::verbose)
+                dataLog("Tmp for ", *value, ": ", tmp, "\n");
         }
         return tmp;
     }
@@ -2742,8 +2807,8 @@ private:
             
         case Load: {
             MemoryValue* memory = m_value->as<MemoryValue>();
-            Air::Kind kind = moveForType(memory->type());
             bool needsFullDataFence = false;
+            Air::Kind kind = moveForType(Int32);
             if (memory->hasFence()) {
                 if (isX86())
                     kind.effects = true;
@@ -2761,6 +2826,18 @@ private:
                     }
                 } else {
                     needsFullDataFence = true;
+                }
+            }
+
+            if constexpr (isARM_THUMB2()) {
+                // FIXME(jgriego) can we preserve the appendIncrementAddress optimization below for the i64 case?
+                if (memory->type().kind() == Int64) {
+                    auto* base = memory->lastChild();
+                    auto lsw = effectiveAddr(base, memory->offset(), Width32);
+                    auto msw = effectiveAddr(base, memory->offset() + 4, Width32);
+                    append(trappingInst(m_value, moveForType(Int32), m_value, lsw, loTmp(someTmp(m_value))));
+                    append(trappingInst(m_value, moveForType(Int32), m_value, msw, hiTmp(someTmp(m_value))));
+                    return;
                 }
             }
 
@@ -4660,10 +4737,11 @@ private:
         }
 
         case Upsilon: {
+            // FIXME(jgriego) handle bare i64 phi/upsilon ?
             Value* value = m_value->child(0);
             Value* phi = m_value->as<UpsilonValue>()->phi();
             if (value->type().isNumeric()) {
-                append(relaxedMoveForType(value->type()), immOrTmp(value), m_phiToTmp[phi]);
+                append(relaxedMoveForType(value->type()), immOrTmp(value), theTmp(m_phiToTmp[phi]));
                 return;
             }
 
@@ -4682,8 +4760,9 @@ private:
             // Upsilon(@x, ^a)
             // @a => this should get the value of the Phi before the Upsilon, i.e. not @x.
 
+            // FIXME(jgriego) handle bare i64 phi/upsilon ?
             if (m_value->type().isNumeric()) {
-                append(relaxedMoveForType(m_value->type()), m_phiToTmp[m_value], tmp(m_value));
+                append(relaxedMoveForType(m_value->type()), theTmp(m_phiToTmp[m_value]), tmp(m_value));
                 return;
             }
 
@@ -4872,8 +4951,16 @@ private:
                 append(Ret32, returnValueGPR);
                 break;
             case Int64:
-                append(Move, immOrTmp(value), returnValueGPR);
-                append(Ret64, returnValueGPR);
+                if constexpr (is32Bit()) {
+                    auto const returnHi = Tmp(GPRInfo::returnValueGPR);
+                    auto const returnLo = Tmp(GPRInfo::returnValueGPR2);
+                    append(Move, loTmp(someTmp(value)), returnHi);
+                    append(Move, hiTmp(someTmp(value)), returnLo);
+                    append(Ret64, returnHi, returnLo);
+                } else {
+                    append(Move, immOrTmp(value), returnValueGPR);
+                    append(Ret64, returnValueGPR);
+                }
                 break;
             case Float:
                 append(MoveFloat, tmp(value), returnValueFPR);
@@ -5012,10 +5099,11 @@ private:
         dataLog("FATAL: could not lower ", deepDump(m_procedure, m_value), "\n");
         RELEASE_ASSERT_NOT_REACHED();
     }
-    
+
+
     IndexSet<Value*> m_locked; // These are values that will have no Tmp in Air.
-    IndexMap<Value*, Tmp> m_valueToTmp; // These are values that must have a Tmp in Air. We say that a Value* with a non-null Tmp is "pinned".
-    IndexMap<Value*, Tmp> m_phiToTmp; // Each Phi gets its own Tmp.
+    IndexMap<Value*, SomeTmp> m_valueToTmp; // These are values that must have a Tmp in Air. We say that a Value* with a non-null Tmp is "pinned".
+    IndexMap<Value*, SomeTmp> m_phiToTmp; // Each Phi gets its own Tmp.
     HashMap<Value*, Vector<Tmp>> m_tupleValueToTmps; // This is the same as m_valueToTmp for Values that are Tuples.
     HashMap<Value*, Vector<Tmp>> m_tuplePhiToTmps; // This is the same as m_phiToTmp for Phis that are Tuples.
     IndexMap<B3::BasicBlock*, Air::BasicBlock*> m_blockToBlock;

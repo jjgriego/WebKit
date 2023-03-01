@@ -1669,6 +1669,9 @@ Ret32 U:G:32 /return
 64: Ret64 U:G:64 /return
     Tmp
 
+32: Ret64 U:G:32, U:G:32 /return
+    Tmp, Tmp
+
 RetFloat U:F:32 /return
     Tmp
 

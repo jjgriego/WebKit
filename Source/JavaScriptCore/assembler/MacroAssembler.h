@@ -59,7 +59,7 @@
 #define TARGET_ASSEMBLER ARMv7Assembler
 #define TARGET_MACROASSEMBLER MacroAssemblerARMv7
 #include "MacroAssemblerARMv7.h"
-namespace JSC { typedef MacroAssemblerARMv7 MacroAssemblerBase; };
+// namespace JSC { typedef MacroAssemblerARMv7 MacroAssemblerBase; };
 
 #elif CPU(ARM64E)
 #define TARGET_ASSEMBLER ARM64EAssembler
@@ -548,7 +548,11 @@ public:
     // consumes some register in some way.
     void retVoid() { ret(); }
     void ret32(RegisterID) { ret(); }
+#if CPU(ARM_THUMB2)
+    void ret64(RegisterID, RegisterID) { ret(); }
+#else
     void ret64(RegisterID) { ret(); }
+#endif
     void retFloat(FPRegisterID) { ret(); }
     void retDouble(FPRegisterID) { ret(); }
 
