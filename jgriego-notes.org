@@ -34,14 +34,14 @@ The concern here is balancing fiddling with old code (changing types in isel
 state means potentially changing a lot of code) with tricky new code
 (recalling the discarded Tuple structure in the right places)
 
-At present, B3 tuples must contain integer types as their elements, so as long
+At present, B3 tuples must contain numeric types as their elements, so as long
 as we have the original B3::Procedure and know which tuple it is, we should
 always be able to figure out a canonical map from e.g.
 
 #+begin_example
-   ( Int32, Int64,   Int64,   Int32 )    <- B3 view    ( Vector<Type> ts s.t. forall t ∈ ts, t.isNumeric() )
-      |     /  \      /  \      / \
-   { Tmp, Tmp, Tmp, Tmp, Tmp, Tmp, Tmp } <- isel view  ( Vector<Tmp> tmps s.t. forall tmp ∈ tmps, tmp )
+   ( Int32, Int64,   Int64,  Int32 ) <- B3 view    ( Vector<Type> ts s.t. forall t ∈ ts, t.isNumeric() )
+      |     /  \      /  \     |
+   { Tmp, Tmp, Tmp, Tmp, Tmp, Tmp }  <- isel view  ( Vector<Tmp> tmps s.t. forall tmp ∈ tmps, tmp )
 #+end_example
 
 ... which means we don't have to change the representation of tuples in the isel
