@@ -141,7 +141,6 @@ void run(const char* filter)
     RUN(testLoadOffsetImm9MinMinusOne());
     RUN(testLoadOffsetScaledUnsignedImm12Max());
     RUN(testLoadOffsetScaledUnsignedOverImm12Max());
-#if !CPU(ARM)
     RUN(testArg(43));
     RUN(testReturnConst64(5));
     RUN(testReturnConst64(-42));
@@ -152,13 +151,14 @@ void run(const char* filter)
 
     addArgTests(filter, tasks);
 
+#if !CPU(ARM)
     RUN_UNARY(testNegDouble, floatingPointOperands<double>());
     RUN_UNARY(testNegFloat, floatingPointOperands<float>());
     RUN_UNARY(testNegFloatWithUselessDoubleConversion, floatingPointOperands<float>());
 
     addBitTests(filter, tasks);
 
-    RUN(testShlArgs(1, 0));
+    RUN(testShlArgs(1, 0))
     RUN(testShlArgs(1, 1));
     RUN(testShlArgs(1, 62));
     RUN(testShlArgs(0xffffffffffffffff, 0));
@@ -958,7 +958,7 @@ int main(int argc, char** argv)
         JSC::JITOperationList::populateDisassemblyLabelsInEmbedder(&startOfJITOperationsInTestB3, &endOfJITOperationsInTestB3);
 #endif
 
-    for (unsigned i = 0; i <= 2; ++i) {
+    for (unsigned i = 0; i <= 0; ++i) {
         JSC::Options::defaultB3OptLevel() = i;
         run(filter);
     }

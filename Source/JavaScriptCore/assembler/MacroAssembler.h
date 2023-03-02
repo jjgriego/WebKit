@@ -185,9 +185,11 @@ public:
     using MacroAssemblerBase::urshift32;
     using MacroAssemblerBase::xor32;
 
+#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(ARM_THUMB2)
+    using MacroAssemblerBase::convertInt32ToDouble;
+#endif
 #if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64)
     using MacroAssemblerBase::and64;
-    using MacroAssemblerBase::convertInt32ToDouble;
     using MacroAssemblerBase::store64;
 #endif
 

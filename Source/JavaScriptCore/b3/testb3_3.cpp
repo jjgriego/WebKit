@@ -26,7 +26,7 @@
 #include "config.h"
 #include "testb3.h"
 
-#if ENABLE(B3_JIT) && !CPU(ARM)
+#if ENABLE(B3_JIT)
 
 
 void testLoadPreIndex32()
@@ -3499,6 +3499,7 @@ void testStore8Imm()
     }
 }
 
+#if !CPU(ARM_THUMB2)
 void testStorePartial8BitRegisterOnX86()
 {
     Procedure proc;
@@ -3549,6 +3550,8 @@ void testStorePartial8BitRegisterOnX86()
     CHECK(compileAndRun<int64_t>(proc, 0x12345678abcdef12, &storage) == 0x12345678abcdef12);
     CHECK(!storage);
 }
+
+#endif // !CPU(ARM_THUMB2)
 
 void testStore16Arg()
 {
@@ -3746,6 +3749,8 @@ void addArgTests(const char* filter, Deque<RefPtr<SharedTask<void()>>>& tasks)
     RUN(testAddImmArg(1, 2));
     RUN(testAddImmArg(0, 2));
     RUN(testAddImmArg(1, 0));
+
+#if !CPU(ARM_THUMB2)
     RUN_BINARY(testAddArgMem, int64Operands(), int64Operands());
     RUN_BINARY(testAddMemArg, int64Operands(), int64Operands());
     RUN_BINARY(testAddImmMem, int64Operands(), int64Operands());
@@ -3988,6 +3993,7 @@ void addArgTests(const char* filter, Deque<RefPtr<SharedTask<void()>>>& tasks)
     RUN_UNARY(testSubArgFloatWithUselessDoubleConversion, floatingPointOperands<float>());
     RUN_BINARY(testSubArgsFloatWithUselessDoubleConversion, floatingPointOperands<float>(), floatingPointOperands<float>());
     RUN_BINARY(testSubArgsFloatWithEffectfulDoubleConversion, floatingPointOperands<float>(), floatingPointOperands<float>());
+#endif // CPU(ARM_THUMB2)
 }
 
 void addCallTests(const char* filter, Deque<RefPtr<SharedTask<void()>>>& tasks)

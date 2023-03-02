@@ -125,6 +125,7 @@ enum Opcode : uint8_t {
     SExt32,
     ZExt32,
     // Does a bitwise truncation of Int64->Int32 and Double->Float:
+    // FIXME(jgriego) [maybe] allow Trunc to validate if its argument is Int32 already
     Trunc,
     // Takes ints and returns floating point value. Note that we don't currently provide the opposite operation,
     // because double-to-int conversions have weirdly different semantics on different platforms. Use

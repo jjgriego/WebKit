@@ -1691,6 +1691,12 @@ public:
         m_assembler.vcvt_signedToFloatingPoint(dest, fpTempRegisterAsSingle(), /* toDouble: */ false);
     }
 
+    void convertInt32ToDouble(TrustedImm32 imm, FPRegisterID dest)
+    {
+        move(imm, dataTempRegister);
+        convertInt32ToDouble(dataTempRegister, dest);
+    }
+
     void convertInt32ToDouble(RegisterID src, FPRegisterID dest)
     {
         m_assembler.vmov(fpTempRegister, src, src);

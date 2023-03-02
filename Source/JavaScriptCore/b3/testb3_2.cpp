@@ -141,8 +141,6 @@ void testLoadOffsetScaledUnsignedOverImm12Max()
     testLoadWithOffsetImpl(32768, 16384);
 }
 
-#if !CPU(ARM)
-
 static void testBitXorTreeArgs(int64_t a, int64_t b)
 {
     Procedure proc;
@@ -192,7 +190,9 @@ void testAddTreeArg32(int32_t a)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     Value* argA = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-    argA = root->appendNew<Value>(proc, Trunc, Origin(), argA);
+    // NOTE(jgriego) fixing ArgumentRegValue size mismatch
+    if (argA->type() != Int32)
+        argA = root->appendNew<Value>(proc, Trunc, Origin(), argA);
     Value* node = argA;
     int32_t expectedResult = a;
     for (unsigned i = 0; i < 20; ++i) {
@@ -218,7 +218,9 @@ void testMulTreeArg32(int32_t a)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     Value* argA = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-    argA = root->appendNew<Value>(proc, Trunc, Origin(), argA);
+    // NOTE(jgriego) fixing ArgumentRegValue size mismatch
+    if (argA->type() != Int32)
+        argA = root->appendNew<Value>(proc, Trunc, Origin(), argA);
     Value* nodeA = argA;
     Value* nodeB = argA;
     int32_t expectedA = a, expectedResult = a;
@@ -637,11 +639,19 @@ void testAddArgImm(int a, int b)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+
+    Value* arg = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+
+    // NOTE(jgriego) fixing ArgumentRegValue size mismatch
+    // FIXME(jgriego) should be sign-extension, but that's annoying to implement and requires shifts
+    if (arg->type() != Int64)
+        arg = root->appendNew<Value>(proc, ZExt32, Origin(), arg);
+
     root->appendNewControlValue(
         proc, Return, Origin(),
         root->appendNew<Value>(
             proc, Add, Origin(),
-            root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0),
+            arg,
             root->appendNew<Const64Value>(proc, Origin(), b)));
 
     CHECK(compileAndRun<int>(proc, a) == a + b);
@@ -651,12 +661,20 @@ void testAddImmArg(int a, int b)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    Value* arg = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+
+    // NOTE(jgriego) fixing ArgumentRegValue size mismatch
+    // FIXME(jgriego) should be sign-extension, but that's annoying to implement and requires shifts
+    if (arg->type() != Int64)
+        arg = root->appendNew<Value>(proc, ZExt32, Origin(), arg);
+
     root->appendNewControlValue(
         proc, Return, Origin(),
         root->appendNew<Value>(
             proc, Add, Origin(),
             root->appendNew<Const64Value>(proc, Origin(), a),
-            root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)));
+            arg));
+            
 
     CHECK(compileAndRun<int>(proc, b) == a + b);
 }
@@ -7135,6 +7153,7 @@ static void testBitOrImmArg32(int a, int b)
     CHECK(compileAndRun<int>(proc, b) == (a | b));
 }
 
+#if !CPU(ARM_THUMB2)
 void addBitTests(const char* filter, Deque<RefPtr<SharedTask<void()>>>& tasks)
 {
     RUN(testUbfx32ShiftAnd());
@@ -7420,6 +7439,6 @@ void addBitTests(const char* filter, Deque<RefPtr<SharedTask<void()>>>& tasks)
     RUN(testStoreZeroExtendIndexAddress());
     RUN(testStoreSignExtendIndexAddress());
 }
+#endif // !CPU(ARM_THUMB2)
 
-#endif
 #endif // ENABLE(B3_JIT)

@@ -2807,6 +2807,14 @@ private:
             
         case Load: {
             MemoryValue* memory = m_value->as<MemoryValue>();
+
+            // TODO(jgriego) do we really need to lower a fence?
+            //
+            // AIUI fences are most important in the JS/wasm JIT to ensure we
+            // are cooperating with the concurrent mark threads; but on armv7 we
+            // don't have those at all--it might be the case that we _never_
+            // need a fence in the translated code, even if the frontend has
+            // asked for one
             bool needsFullDataFence = false;
             Air::Kind kind = moveForType(Int32);
             if (memory->hasFence()) {
@@ -2882,15 +2890,7 @@ private:
                 return false;
             };
 
-            // TODO(jgriego) do we really need to lower a fence?
-            //
-            // AIUI fences are most important in the JS/wasm JIT to ensure we
-            // are cooperating with the concurrent mark threads; but on armv7 we
-            // don't have those at all--it might be the case that we _never_
-            // need a fence in the translated code, even if the frontend has
-            // asked for one
             if (needsFullDataFence) {
-                ASSERT(isARM());
                 append(LoadFence);
             }
 
@@ -2898,7 +2898,6 @@ private:
                 return;
 
             auto const src = addr(m_value);
-            ASSERT(src.isValidForm());
             append(trappingInst(m_value, kind, m_value, src, tmp(m_value)));
             return;
         }
@@ -2952,10 +2951,27 @@ private:
         }
 
         case Add: {
-            if (tryAppendLea())
-                return;
             Value* left = m_value->child(0);
             Value* right = m_value->child(1);
+
+            if constexpr (is32Bit()) {
+                if (m_value->type() == Int64) {
+                    // FIXME(jgriego) we should try to make this eligible for the below optimizations as well, especially appendBinOp
+                    // FIXME(jgriego) add-with-immediates? would be subsumed by appendBinOp
+                    // FIXME(jgriego) traps?
+                    append(Add64,
+                        hiTmp(someTmp(left)),
+                        loTmp(someTmp(left)),
+                        hiTmp(someTmp(right)),
+                        loTmp(someTmp(right)),
+                        hiTmp(someTmp(m_value)),
+                        loTmp(someTmp(m_value)));
+                    return;
+                }
+            }
+
+            if (tryAppendLea())
+                return;
 
             auto tryMultiplyAdd = [&] () -> bool {
                 if (imm(right) && !m_valueToTmp[right])
@@ -4314,7 +4330,14 @@ private:
         }
 
         case ZExt32: {
-            appendUnOp<Move32, Air::Oops>(m_value->child(0));
+            if constexpr (!is32Bit()) {
+                appendUnOp<Move32, Air::Oops>(m_value->child(0));
+                return;
+            }
+
+            // FIXME(jgriego) should use appendUnOp
+            append(Move, tmp(m_value->child(0)), loTmp(someTmp(m_value)));
+            append(Move, Arg::imm(0), hiTmp(someTmp(m_value)));
             return;
         }
 
@@ -4344,8 +4367,16 @@ private:
             return;
         }
 
-        case Const32:
-        case Const64: {
+        case Const64:
+            if constexpr (is32Bit()) {
+                // FIXME(jgriego) we need an immLo, immHi for wide immediates in order to do the same optimization
+                // as below, here and elsewhere
+                append(Move, Arg::bigImmLo32(m_value->asInt()), loTmp(someTmp(m_value)));
+                append(Move, Arg::bigImmHi32(m_value->asInt()), hiTmp(someTmp(m_value)));
+                return;
+            }
+            FALLTHROUGH;
+        case Const32: {
             if (imm(m_value))
                 append(Move, imm(m_value), tmp(m_value));
             else

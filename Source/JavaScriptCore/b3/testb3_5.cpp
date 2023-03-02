@@ -26,7 +26,7 @@
 #include "config.h"
 #include "testb3.h"
 
-#if ENABLE(B3_JIT) && !CPU(ARM)
+#if ENABLE(B3_JIT)
 
 void testPatchpointManyWarmAnyImms()
 {
@@ -710,6 +710,7 @@ void testCheckAdd()
     CHECK(invoke<double>(*code, 2147483647, 42) == 2147483689.0);
 }
 
+#if !CPU(ARM_THUMB2) // FIXME(jgriego)
 void testCheckAdd64()
 {
     Procedure proc;
@@ -744,6 +745,7 @@ void testCheckAdd64()
     CHECK(invoke<double>(*code, 42ll, 42ll) == 84.0);
     CHECK(invoke<double>(*code, 9223372036854775807ll, 42ll) == static_cast<double>(9223372036854775807ll) + 42.0);
 }
+#endif // !CPU(ARM_THUMB2)
 
 void testCheckAddFold(int a, int b)
 {
@@ -1162,6 +1164,7 @@ NEVER_INLINE double doubleSub(double a, double b)
     return a - b;
 }
 
+#if !CPU(ARM_THUMB2) // FIXME(jgriego)
 void testCheckSub64()
 {
     Procedure proc;
@@ -1196,6 +1199,7 @@ void testCheckSub64()
     CHECK(invoke<double>(*code, 42ll, 42ll) == 0.0);
     CHECK(invoke<double>(*code, -9223372036854775807ll, 42ll) == doubleSub(static_cast<double>(-9223372036854775807ll), 42.0));
 }
+#endif // !CPU(ARM_THUMB2)
 
 void testCheckSubFold(int a, int b)
 {
@@ -1274,6 +1278,8 @@ void testCheckNeg()
     CHECK(invoke<double>(*code, -2147483647 - 1) == 2147483648.0);
 }
 
+#if !CPU(ARM_THUMB2) // FIXME(jgriego)
+
 void testCheckNeg64()
 {
     Procedure proc;
@@ -1305,6 +1311,7 @@ void testCheckNeg64()
     CHECK(invoke<double>(*code, 42ll) == -42.0);
     CHECK(invoke<double>(*code, -9223372036854775807ll - 1) == 9223372036854775808.0);
 }
+#endif
 
 void testCheckMul()
 {
@@ -1437,6 +1444,7 @@ void testCheckMul2()
     CHECK(invoke<double>(*code, 2147483647) == 2147483647.0 * 2.0);
 }
 
+#if !CPU(ARM_THUMB2)
 void testCheckMul64()
 {
     Procedure proc;
@@ -1471,6 +1479,7 @@ void testCheckMul64()
     CHECK(invoke<double>(*code, 42, 42) == 42.0 * 42.0);
     CHECK(invoke<double>(*code, 9223372036854775807ll, 42) == static_cast<double>(9223372036854775807ll) * 42.0);
 }
+#endif
 
 void testCheckMulFold(int a, int b)
 {
@@ -1595,6 +1604,7 @@ void testCheckMulArgumentAliasing32()
     CHECK(compileAndRun<int32_t>(proc, 2, 3, 4) == 72);
 }
 
+#if !CPU(ARM_THUMB2) // FIXME(jgriego)
 void testCheckMul64SShr()
 {
     Procedure proc;
@@ -1635,6 +1645,7 @@ void testCheckMul64SShr()
     CHECK(invoke<double>(*code, 42ll, 42ll) == (42.0 / 2.0) * (42.0 / 2.0));
     CHECK(invoke<double>(*code, 10000000000ll, 10000000000ll) == 25000000000000000000.0);
 }
+#endif
 
 template<typename LeftFunctor, typename RightFunctor, typename InputType>
 void genericTestCompare(
