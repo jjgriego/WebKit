@@ -54,15 +54,25 @@ bits should be contained to Patchpoints and lowering Extract.
 However, I might just be underestimating the inconvenience and we should just do
 the work to change the representation
   
-
 ** TODO Would it be useful to have a passing/failing list for testb3?
 Upstream probably won't care--it seems they only ever added tests as things
 started to pass but it's quite slow to modify the test files with preprocessor
 directives and might be easier to just have a text file of passing or failing tests.
-
 
 ** TODO Is there any way to save work preserving isel optimizations for the 64-bit ops we're adding?
 My guess is not--they seem pretty idiosyncratic, but many of them should still
 work for us, it's just more effort to port
 
 
+
+Punt on this!
+* Meeting 2023-03-03: Work items
+** 64-bit ops, find lowering (we can use wasm backend for this) (angelos)
+- Mod / UMod 
+- Sqrt, etc [get called out]
+- Abs
+- CAS, other atomics
+- SIMD things
+** Change test harness to --keep-going (angelos)
+** Flatten SomeTmp phis/tuples in isel (jgriego)
+** Change test suite to use fixed-width integers, support for register-pair arguments in B3::Procedure (jgriego)

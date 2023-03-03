@@ -458,7 +458,6 @@ private:
             if (!realTmp) {
                 realTmp = m_code.newTmp(value->resultBank());
 
-                // FIXME(jgriego) is this coercion correct?
                 if (m_procedure.isFastConstant(value->key()))
                     m_code.addFastTmp(theTmp(realTmp));
                 if (B3LowerToAirInternal::verbose)
