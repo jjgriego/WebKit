@@ -66,6 +66,10 @@ static std::optional<AuthenticatorTransport> convertStringToAuthenticatorTranspo
         return AuthenticatorTransport::Internal;
     if (transport == authenticatorTransportCable)
         return AuthenticatorTransport::Cable;
+    if (transport == authenticatorTransportHybrid)
+        return AuthenticatorTransport::Hybrid;
+    if (transport == authenticatorTransportSmartCard)
+        return AuthenticatorTransport::SmartCard;
     return std::nullopt;
 }
 

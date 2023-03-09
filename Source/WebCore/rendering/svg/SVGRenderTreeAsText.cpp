@@ -31,16 +31,16 @@
 
 #include "ColorSerialization.h"
 #include "GraphicsTypes.h"
+#include "LegacyRenderSVGImage.h"
 #include "LegacyRenderSVGRoot.h"
 #include "LegacyRenderSVGShapeInlines.h"
 #include "NodeRenderStyle.h"
+#include "NullGraphicsContext.h"
 #include "RenderImage.h"
 #include "RenderIterator.h"
 #include "RenderSVGContainer.h"
 #include "RenderSVGGradientStopInlines.h"
-#include "RenderSVGImage.h"
 #include "RenderSVGInlineText.h"
-#include "RenderSVGPath.h"
 #include "RenderSVGResourceClipperInlines.h"
 #include "RenderSVGResourceFilterInlines.h"
 #include "RenderSVGResourceLinearGradientInlines.h"
@@ -218,7 +218,7 @@ static void writeSVGStrokePaintingResource(TextStream& ts, const RenderElement& 
     ts << "}]";
 }
 
-static void writeStyle(TextStream& ts, const RenderElement& renderer)
+void writeSVGPaintingFeatures(TextStream& ts, const RenderElement& renderer, OptionSet<RenderAsTextFlag>)
 {
     const RenderStyle& style = renderer.style();
     const SVGRenderStyle& svgStyle = style.svgStyle();
@@ -256,9 +256,18 @@ static void writeStyle(TextStream& ts, const RenderElement& renderer)
     }
 #endif
 
-    writeIfNotEmpty(ts, "start marker", svgStyle.markerStartResource());
-    writeIfNotEmpty(ts, "middle marker", svgStyle.markerMidResource());
-    writeIfNotEmpty(ts, "end marker", svgStyle.markerEndResource());
+    auto writeMarker = [&](const char* name, const String& value) {
+        auto* element = renderer.element();
+        if (!element)
+            return;
+
+        auto fragment = SVGURIReference::fragmentIdentifierFromIRIString(value, element->document());
+        writeIfNotEmpty(ts, name, fragment);
+    };
+
+    writeMarker("start marker", svgStyle.markerStartResource());
+    writeMarker("middle marker", svgStyle.markerMidResource());
+    writeMarker("end marker", svgStyle.markerEndResource());
 }
 
 static TextStream& writePositionAndStyle(TextStream& ts, const RenderElement& renderer, OptionSet<RenderAsTextFlag> behavior = { })
@@ -274,11 +283,11 @@ static TextStream& writePositionAndStyle(TextStream& ts, const RenderElement& re
 
     ts << " " << enclosingIntRect(renderer.absoluteClippedOverflowRectForRepaint());
 
-    writeStyle(ts, renderer);
+    writeSVGPaintingFeatures(ts, renderer, behavior);
     return ts;
 }
 
-static void writeSVGGraphicsElement(TextStream& ts, SVGGraphicsElement& svgElement)
+void writeSVGGraphicsElement(TextStream& ts, const SVGGraphicsElement& svgElement)
 {
     SVGLengthContext lengthContext(&svgElement);
 
@@ -324,15 +333,6 @@ static TextStream& operator<<(TextStream& ts, const LegacyRenderSVGShape& shape)
     writeSVGGraphicsElement(ts, shape.graphicsElement());
     return ts;
 }
-
-#if ENABLE(LAYER_BASED_SVG_ENGINE)
-static TextStream& operator<<(TextStream& ts, const RenderSVGShape& shape)
-{
-    writePositionAndStyle(ts, shape);
-    writeSVGGraphicsElement(ts, shape.graphicsElement());
-    return ts;
-}
-#endif
 
 static void writeRenderSVGTextBox(TextStream& ts, const RenderSVGText& text)
 {
@@ -477,7 +477,7 @@ void writeSVGResourceContainer(TextStream& ts, const RenderSVGResourceContainer&
         // Creating a placeholder filter which is passed to the builder.
         FloatRect dummyRect;
         FloatSize dummyScale(1, 1);
-        auto dummyFilter = SVGFilter::create(filter.filterElement(), RenderingMode::Unaccelerated, dummyScale, Filter::ClipOperation::Intersect, dummyRect, dummyRect, NullGraphicsContext());
+        auto dummyFilter = SVGFilter::create(filter.filterElement(), FilterRenderingMode::Software, dummyScale, Filter::ClipOperation::Intersect, dummyRect, dummyRect, NullGraphicsContext());
         if (dummyFilter) {
             TextStream::IndentScope indentScope(ts);
             dummyFilter->externalRepresentation(ts, FilterRepresentation::TestOutput);
@@ -540,17 +540,6 @@ void writeSVGResourceContainer(TextStream& ts, const RenderSVGResourceContainer&
     writeChildren(ts, resource, behavior);
 }
 
-#if ENABLE(LAYER_BASED_SVG_ENGINE)
-void writeSVGContainer(TextStream& ts, const RenderSVGContainer& container, OptionSet<RenderAsTextFlag> behavior)
-{
-    writeStandardPrefix(ts, container, behavior);
-    writePositionAndStyle(ts, container, behavior);
-    ts << "\n";
-    writeResources(ts, container, behavior);
-    writeChildren(ts, container, behavior);
-}
-#endif
-
 void writeSVGContainer(TextStream& ts, const LegacyRenderSVGContainer& container, OptionSet<RenderAsTextFlag> behavior)
 {
     // Currently RenderSVGResourceFilterPrimitive has no meaningful output.
@@ -562,16 +551,6 @@ void writeSVGContainer(TextStream& ts, const LegacyRenderSVGContainer& container
     writeResources(ts, container, behavior);
     writeChildren(ts, container, behavior);
 }
-
-#if ENABLE(LAYER_BASED_SVG_ENGINE)
-void write(TextStream& ts, const RenderSVGRoot& root, OptionSet<RenderAsTextFlag> behavior)
-{
-    writeStandardPrefix(ts, root, behavior);
-    writePositionAndStyle(ts, root, behavior);
-    ts << "\n";
-    writeChildren(ts, root, behavior);
-}
-#endif
 
 void write(TextStream& ts, const LegacyRenderSVGRoot& root, OptionSet<RenderAsTextFlag> behavior)
 {
@@ -598,22 +577,13 @@ void writeSVGInlineText(TextStream& ts, const RenderSVGInlineText& text, OptionS
     writeSVGInlineTextBoxes(ts, text);
 }
 
-void writeSVGImage(TextStream& ts, const RenderSVGImage& image, OptionSet<RenderAsTextFlag> behavior)
+void writeSVGImage(TextStream& ts, const LegacyRenderSVGImage& image, OptionSet<RenderAsTextFlag> behavior)
 {
     writeStandardPrefix(ts, image, behavior);
     writePositionAndStyle(ts, image, behavior);
     ts << "\n";
     writeResources(ts, image, behavior);
 }
-
-#if ENABLE(LAYER_BASED_SVG_ENGINE)
-void write(TextStream& ts, const RenderSVGShape& shape, OptionSet<RenderAsTextFlag> behavior)
-{
-    writeStandardPrefix(ts, shape, behavior);
-    ts << shape << "\n";
-    writeResources(ts, shape, behavior);
-}
-#endif
 
 void write(TextStream& ts, const LegacyRenderSVGShape& shape, OptionSet<RenderAsTextFlag> behavior)
 {
@@ -663,7 +633,7 @@ void writeResources(TextStream& ts, const RenderObject& renderer, OptionSet<Rend
         const FilterOperations& filterOperations = style.filter();
         if (filterOperations.size() == 1) {
             const FilterOperation& filterOperation = *filterOperations.at(0);
-            if (filterOperation.type() == FilterOperation::REFERENCE) {
+            if (filterOperation.type() == FilterOperation::Type::Reference) {
                 const auto& referenceFilterOperation = downcast<ReferenceFilterOperation>(filterOperation);
                 AtomString id = SVGURIReference::fragmentIdentifierFromIRIString(referenceFilterOperation.url(), renderer.document());
                 if (RenderSVGResourceFilter* filter = getRenderSVGResourceById<RenderSVGResourceFilter>(renderer.document(), id)) {

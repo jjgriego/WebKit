@@ -26,8 +26,13 @@
 #import "config.h"
 #import "WebCoreCALayerExtras.h"
 
+#import "TransformationMatrix.h"
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
+
+#if ENABLE(CG_DISPLAY_LIST_BACKED_IMAGE_BUFFER)
+#import <WebKitAdditions/CGDisplayListImageBufferAdditions.h>
+#endif
 
 @implementation CALayer (WebCoreCALayerExtras)
 
@@ -79,13 +84,14 @@
     [self setPosition:newPosition];
 }
 
-+ (CALayer *)_web_renderLayerWithContextID:(uint32_t)contextID
++ (CALayer *)_web_renderLayerWithContextID:(uint32_t)contextID shouldPreserveFlip:(BOOL)preservesFlip
 {
     CALayerHost *layerHost = [CALayerHost layer];
 #ifndef NDEBUG
     [layerHost setName:@"Hosting layer"];
 #endif
     layerHost.contextId = contextID;
+    layerHost.preservesFlip = preservesFlip;
     return layerHost;
 }
 
@@ -117,4 +123,63 @@
     return CGRectIntersectsRect(self.mask.bounds, rectInMask);
 }
 
+- (void)_web_clearContents
+{
+    self.contents = nil;
+    self.contentsOpaque = NO;
+
+#if ENABLE(CG_DISPLAY_LIST_BACKED_IMAGE_BUFFER)
+    if ([self valueForKeyPath:WKCGDisplayListContentsKey]) {
+        // FIXME: Remove this workaround (and the -setNeedsDisplay call) once rdar://105807616 is fixed.
+        auto emptyCommandsContext = adoptCF(WKCGCommandsContextCreate(CGSizeZero, nil));
+        auto emptyCommandsData = adoptCF(RECGCommandsContextCopyEncodedData(emptyCommandsContext.get()));
+        [self setValue:(id)emptyCommandsData.get() forKeyPath:WKCGDisplayListContentsKey];
+        [self setValue:nil forKeyPath:WKCGDisplayListPortsKey];
+        [self setNeedsDisplay];
+    }
+#endif
+}
+
 @end
+
+namespace WebCore {
+
+void collectDescendantLayersAtPoint(Vector<LayerAndPoint, 16>& layersAtPoint, CALayer *parent, CGPoint point, const std::function<bool(CALayer *, CGPoint)>& pointInLayerFunction)
+{
+    if (parent.masksToBounds && ![parent containsPoint:point])
+        return;
+
+    if (parent.mask && ![parent _web_maskContainsPoint:point])
+        return;
+
+    for (CALayer *layer in [parent sublayers]) {
+        CALayer *layerWithResolvedAnimations = layer;
+
+        if ([[layer animationKeys] count])
+            layerWithResolvedAnimations = [layer presentationLayer];
+
+        auto transform = TransformationMatrix { [layerWithResolvedAnimations transform] };
+        if (!transform.isInvertible())
+            continue;
+
+        CGPoint subviewPoint = [layerWithResolvedAnimations convertPoint:point fromLayer:parent];
+
+        auto handlesEvent = [&] {
+            if (CGRectIsEmpty([layerWithResolvedAnimations frame]))
+                return false;
+
+            if (![layerWithResolvedAnimations containsPoint:subviewPoint])
+                return false;
+
+            return pointInLayerFunction(layer, subviewPoint);
+        }();
+
+        if (handlesEvent)
+            layersAtPoint.append(std::make_pair(layer, subviewPoint));
+
+        if ([layer sublayers])
+            collectDescendantLayersAtPoint(layersAtPoint, layer, subviewPoint, pointInLayerFunction);
+    };
+}
+
+} // namespace WebCore

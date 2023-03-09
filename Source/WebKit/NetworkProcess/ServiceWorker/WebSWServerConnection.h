@@ -29,6 +29,7 @@
 
 #include "MessageReceiver.h"
 #include "MessageSender.h"
+#include "RetrieveRecordResponseBodyCallbackIdentifier.h"
 #include "ServiceWorkerFetchTask.h"
 #include <WebCore/ExceptionOr.h>
 #include <WebCore/FetchIdentifier.h>
@@ -72,7 +73,8 @@ public:
     ~WebSWServerConnection() final;
 
     using WebCore::SWServer::Connection::weakPtrFactory;
-    using WeakValueType = WebCore::SWServer::Connection::WeakValueType;
+    using WebCore::SWServer::Connection::WeakValueType;
+    using WebCore::SWServer::Connection::WeakPtrImplType;
 
     IPC::Connection& ipcConnection() const { return m_contentConnection.get(); }
 
@@ -84,7 +86,7 @@ public:
     std::unique_ptr<ServiceWorkerFetchTask> createFetchTask(NetworkResourceLoader&, const WebCore::ResourceRequest&);
     void fetchTaskTimedOut(WebCore::ServiceWorkerIdentifier);
 
-    void transferServiceWorkerLoadToNewWebProcess(NetworkResourceLoader&, WebCore::SWServerRegistration&);
+    void transferServiceWorkerLoadToNewWebProcess(NetworkResourceLoader&, WebCore::SWServerRegistration&, WebCore::ProcessIdentifier);
     std::optional<WebCore::SWServer::GatheredClientData> gatherClientData(WebCore::ScriptExecutionContextIdentifier);
 
     void registerServiceWorkerClient(WebCore::ClientOrigin&&, WebCore::ServiceWorkerClientData&&, const std::optional<WebCore::ServiceWorkerRegistrationIdentifier>&, String&& userAgent);
@@ -96,7 +98,6 @@ private:
     void resolveRegistrationJobInClient(WebCore::ServiceWorkerJobIdentifier, const WebCore::ServiceWorkerRegistrationData&, WebCore::ShouldNotifyWhenResolved) final;
     void resolveUnregistrationJobInClient(WebCore::ServiceWorkerJobIdentifier, const WebCore::ServiceWorkerRegistrationKey&, bool unregistrationResult) final;
     void startScriptFetchInClient(WebCore::ServiceWorkerJobIdentifier, const WebCore::ServiceWorkerRegistrationKey&, WebCore::FetchOptions::Cache) final;
-    void refreshImportedScripts(WebCore::ServiceWorkerJobIdentifier, WebCore::FetchOptions::Cache, const Vector<URL>&, WebCore::ServiceWorkerJob::RefreshImportedScriptsCallback&&);
     void updateRegistrationStateInClient(WebCore::ServiceWorkerRegistrationIdentifier, WebCore::ServiceWorkerRegistrationState, const std::optional<WebCore::ServiceWorkerData>&) final;
     void updateWorkerStateInClient(WebCore::ServiceWorkerIdentifier, WebCore::ServiceWorkerState) final;
     void fireUpdateFoundEvent(WebCore::ServiceWorkerRegistrationIdentifier) final;
@@ -121,6 +122,7 @@ private:
     void postMessageToServiceWorkerClient(WebCore::ScriptExecutionContextIdentifier destinationContextIdentifier, const WebCore::MessageWithMessagePorts&, WebCore::ServiceWorkerIdentifier sourceServiceWorkerIdentifier, const String& sourceOrigin) final;
 
     void contextConnectionCreated(WebCore::SWServerToContextConnection&) final;
+    void updateBackgroundFetchRegistration(const WebCore::BackgroundFetchInformation&) final;
 
     bool isThrottleable() const { return m_isThrottleable; }
     bool hasMatchingClient(const WebCore::RegistrableDomain&) const;
@@ -134,7 +136,7 @@ private:
     void getPushPermissionState(WebCore::ServiceWorkerRegistrationIdentifier, CompletionHandler<void(Expected<uint8_t, WebCore::ExceptionData>&&)>&&);
 
     void postMessageToServiceWorker(WebCore::ServiceWorkerIdentifier destination, WebCore::MessageWithMessagePorts&&, const WebCore::ServiceWorkerOrClientIdentifier& source);
-    void controlClient(const NetworkResourceLoadParameters&, WebCore::SWServerRegistration&, const WebCore::ResourceRequest&);
+    void controlClient(const NetworkResourceLoadParameters&, WebCore::SWServerRegistration&, const WebCore::ResourceRequest&, WebCore::ProcessIdentifier);
 
     using ExceptionOrVoidCallback = CompletionHandler<void(std::optional<WebCore::ExceptionData>&&)>;
     void enableNavigationPreload(WebCore::ServiceWorkerRegistrationIdentifier, ExceptionOrVoidCallback&&);
@@ -142,6 +144,8 @@ private:
     void setNavigationPreloadHeaderValue(WebCore::ServiceWorkerRegistrationIdentifier, String&&, ExceptionOrVoidCallback&&);
     using ExceptionOrNavigationPreloadStateCallback = CompletionHandler<void(Expected<WebCore::NavigationPreloadState, WebCore::ExceptionData>&&)>;
     void getNavigationPreloadState(WebCore::ServiceWorkerRegistrationIdentifier, ExceptionOrNavigationPreloadStateCallback&&);
+
+    void retrieveRecordResponseBody(WebCore::BackgroundFetchRecordIdentifier, RetrieveRecordResponseBodyCallbackIdentifier);
 
     URL clientURLFromIdentifier(WebCore::ServiceWorkerOrClientIdentifier);
 

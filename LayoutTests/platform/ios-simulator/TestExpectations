@@ -8,6 +8,7 @@ accessibility/insert-newline.html [ Pass ]
 accessibility/url-test.html [ Pass ]
 accessibility/keyevents-posted-for-dismiss-action.html [ Pass ]
 accessibility/embedded-image-description.html [ Pass ]
+accessibility/aria-description.html [ Pass ]
 fast/multicol/flexbox-rows.html [ Skip ]
 
 fast/forms/input-text-word-wrap.html [ Skip ]
@@ -37,10 +38,6 @@ webkit.org/b/235765 webrtc/canvas-to-peer-connection-2d.html [ Failure ]
 webkit.org/b/235765 webrtc/canvas-to-peer-connection-vp8.html [ Failure ]
 webkit.org/b/235765 webrtc/canvas-to-peer-connection-vp8-2d.html [ Failure ]
 
-# Simulator doesn't support WebAssembly.
-imported/w3c/web-platform-tests/wasm/wasm_stream_instantiate_test.html  [ Skip ]
-imported/w3c/web-platform-tests/wasm/wasm_stream_compile_test.html  [ Skip ]
-
 # display-p3 canvas and ImageData are not working in the simulator.
 fast/canvas/canvas-color-space-display-p3-ImageData.html [ Failure ]
 fast/canvas/canvas-color-space-display-p3.html [ ImageOnlyFailure ]
@@ -67,6 +64,13 @@ imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.s
 imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toDataURL.jpeg.p3.canvas.html [ Failure ]
 imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toDataURL.with.putImageData.html [ Failure ]
 storage/indexeddb/structured-clone-image-data-display-p3.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/manual/wide-gamut-canvas/2d.color.space.p3.convertToBlobp3.canvas.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.p3.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.p3.worker.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.srgb.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.srgb.worker.html [ Failure ]
+imported/w3c/web-platform-tests/webcodecs/videoFrame-createImageBitmap.any.worker.html [ Failure ]
+imported/w3c/web-platform-tests/webcodecs/videoFrame-drawImage.any.worker.html [ Failure ]
 
 # Imported css-text test suite from WPT
 webkit.org/b/183258 imported/w3c/web-platform-tests/css/css-text/white-space/textarea-pre-wrap-001.html [ ImageOnlyFailure ]
@@ -100,7 +104,7 @@ webkit.org/b/209416 fast/canvas/webgl/out-of-bounds-simulated-vertexAttrib0-draw
 webkit.org/b/226813 webgl/draw-webgl-to-context2d-memory-test.html [ Skip ]
 
 imported/w3c/web-platform-tests/css/css-lists/content-property/marker-text-matches-georgian.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-lists/content-property/marker-text-matches-lower-greek.html [ Pass ]
+webkit.org/b/245593 imported/w3c/web-platform-tests/css/css-lists/content-property/marker-text-matches-lower-greek.html [ ImageOnlyFailure ]
 
 webkit.org/b/195466 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-img-element/sizes/parse-a-sizes-attribute-width-1000px.html [ Pass Failure ]
 webkit.org/b/195466 imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/ready-states/autoplay.html [ Pass Failure ]
@@ -131,3 +135,8 @@ model-element/model-element-ready.html [ Skip ]
 [ arm64 ] webaudio/OfflineAudioContext/bad-buffer-length.html [ Failure ]
 
 webkit.org/b/239990 css3/calc/transitions-dependent.html [ Pass Failure ]
+
+webkit.org/b/242800 fast/css/counters/element-removal-crash.xhtml [ Pass Failure ]
+
+# FairPlay is not supported in the iOS Simulator
+http/tests/media/fairplay [ Skip ]

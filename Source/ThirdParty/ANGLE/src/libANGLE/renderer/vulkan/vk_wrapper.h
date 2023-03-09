@@ -338,6 +338,7 @@ class CommandBuffer : public WrappedObject<CommandBuffer, VkCommandBuffer>
                                 VkFragmentShadingRateCombinerOpKHR ops[2]);
     void setFrontFace(VkFrontFace frontFace);
     void setLineWidth(float lineWidth);
+    void setLogicOp(VkLogicOp logicOp);
     void setPrimitiveRestartEnable(VkBool32 primitiveRestartEnable);
     void setRasterizerDiscardEnable(VkBool32 rasterizerDiscardEnable);
     void setScissor(uint32_t firstScissor, uint32_t scissorCount, const VkRect2D *scissors);
@@ -586,11 +587,8 @@ class PipelineCache final : public WrappedObject<PipelineCache, VkPipelineCache>
     void destroy(VkDevice device);
 
     VkResult init(VkDevice device, const VkPipelineCacheCreateInfo &createInfo);
-    VkResult getCacheData(VkDevice device, size_t *cacheSize, void *cacheData);
-    VkResult merge(VkDevice device,
-                   VkPipelineCache dstCache,
-                   uint32_t srcCacheCount,
-                   const VkPipelineCache *srcCaches);
+    VkResult getCacheData(VkDevice device, size_t *cacheSize, void *cacheData) const;
+    VkResult merge(VkDevice device, uint32_t srcCacheCount, const VkPipelineCache *srcCaches) const;
 };
 
 class DescriptorSetLayout final : public WrappedObject<DescriptorSetLayout, VkDescriptorSetLayout>
@@ -687,8 +685,11 @@ class VirtualBlock final : public WrappedObject<VirtualBlock, VmaVirtualBlock>
     void destroy(VkDevice device);
     VkResult init(VkDevice device, vma::VirtualBlockCreateFlags flags, VkDeviceSize size);
 
-    VkResult allocate(VkDeviceSize size, VkDeviceSize alignment, VkDeviceSize *offsetOut);
-    void free(VkDeviceSize offset);
+    VkResult allocate(VkDeviceSize size,
+                      VkDeviceSize alignment,
+                      VmaVirtualAllocation *allocationOut,
+                      VkDeviceSize *offsetOut);
+    void free(VmaVirtualAllocation allocation, VkDeviceSize offset);
     void calculateStats(vma::StatInfo *pStatInfo) const;
 };
 
@@ -1045,6 +1046,12 @@ ANGLE_INLINE void CommandBuffer::setLineWidth(float lineWidth)
 {
     ASSERT(valid());
     vkCmdSetLineWidth(mHandle, lineWidth);
+}
+
+ANGLE_INLINE void CommandBuffer::setLogicOp(VkLogicOp logicOp)
+{
+    ASSERT(valid());
+    vkCmdSetLogicOpEXT(mHandle, logicOp);
 }
 
 ANGLE_INLINE void CommandBuffer::setPrimitiveRestartEnable(VkBool32 primitiveRestartEnable)
@@ -1731,17 +1738,16 @@ ANGLE_INLINE VkResult PipelineCache::init(VkDevice device,
 }
 
 ANGLE_INLINE VkResult PipelineCache::merge(VkDevice device,
-                                           VkPipelineCache dstCache,
                                            uint32_t srcCacheCount,
-                                           const VkPipelineCache *srcCaches)
+                                           const VkPipelineCache *srcCaches) const
 {
     ASSERT(valid());
-    return vkMergePipelineCaches(device, dstCache, srcCacheCount, srcCaches);
+    return vkMergePipelineCaches(device, mHandle, srcCacheCount, srcCaches);
 }
 
 ANGLE_INLINE VkResult PipelineCache::getCacheData(VkDevice device,
                                                   size_t *cacheSize,
-                                                  void *cacheData)
+                                                  void *cacheData) const
 {
     ASSERT(valid());
 
@@ -1998,14 +2004,15 @@ ANGLE_INLINE VkResult VirtualBlock::init(VkDevice device,
 
 ANGLE_INLINE VkResult VirtualBlock::allocate(VkDeviceSize size,
                                              VkDeviceSize alignment,
+                                             VmaVirtualAllocation *allocationOut,
                                              VkDeviceSize *offsetOut)
 {
-    return vma::VirtualAllocate(mHandle, size, alignment, offsetOut);
+    return vma::VirtualAllocate(mHandle, size, alignment, allocationOut, offsetOut);
 }
 
-ANGLE_INLINE void VirtualBlock::free(VkDeviceSize offset)
+ANGLE_INLINE void VirtualBlock::free(VmaVirtualAllocation allocation, VkDeviceSize offset)
 {
-    vma::VirtualFree(mHandle, offset);
+    vma::VirtualFree(mHandle, allocation, offset);
 }
 
 ANGLE_INLINE void VirtualBlock::calculateStats(vma::StatInfo *pStatInfo) const

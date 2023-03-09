@@ -34,12 +34,48 @@
 #include "JSGlobalObject.h"
 #include "Options.h"
 #include "VMInspectorInlines.h"
+#include <wtf/DataLog.h>
+#include <wtf/OSLogPrintStream.h>
 
 namespace JSC {
 namespace Integrity {
 
 namespace IntegrityInternal {
 static constexpr bool verbose = false;
+}
+
+PrintStream& logFile()
+{
+#if OS(DARWIN)
+    static PrintStream* s_file;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        // We want to use OS_LOG_TYPE_ERROR because we want to guarantee that the log makes it into
+        // the file system, and is not potentially stuck in some memory buffer. Integrity audit logs
+        // are used for debugging error states. So, this is an appropriate use of OS_LOG_TYPE_ERROR.
+        s_file = OSLogPrintStream::open("com.apple.JavaScriptCore", "Integrity", OS_LOG_TYPE_ERROR).release();
+    });
+    return *s_file;
+#else
+    return WTF::dataFile();
+#endif
+}
+
+void logF(const char* format, ...)
+{
+    va_list argList;
+    va_start(argList, format);
+    logFile().vprintf(format, argList);
+    va_end(argList);
+}
+
+void logLnF(const char* format, ...)
+{
+    va_list argList;
+    va_start(argList, format);
+    logFile().vprintf(format, argList);
+    va_end(argList);
+    logFile().println();
 }
 
 Random::Random(VM& vm)
@@ -54,7 +90,7 @@ bool Random::reloadAndCheckShouldAuditSlow(VM& vm)
     if (!Options::randomIntegrityAuditRate()) {
         m_triggerBits = 0; // Never trigger, and don't bother reloading.
         if (IntegrityInternal::verbose)
-            dataLogLn("disabled Integrity audits: trigger bits ", RawPointer(reinterpret_cast<void*>(m_triggerBits)));
+            dataLogLn("disabled Integrity audits: trigger bits ", RawHex(m_triggerBits));
         return false;
     }
 
@@ -67,7 +103,7 @@ bool Random::reloadAndCheckShouldAuditSlow(VM& vm)
         m_triggerBits = m_triggerBits | (static_cast<uint64_t>(trigger) << i);
     }
     if (IntegrityInternal::verbose)
-        dataLogLn("reloaded Integrity trigger bits ", RawPointer(reinterpret_cast<void*>(m_triggerBits)));
+        dataLogLn("reloaded Integrity trigger bits ", RawHex(m_triggerBits));
     ASSERT(m_triggerBits >= (1ull << 63));
     return vm.random().getUint32() <= threshold;
 }
@@ -85,17 +121,25 @@ void auditCellMinimallySlow(VM&, JSCell* cell)
 
 #if USE(JSVALUE64)
 
+#if ENABLE(EXTRA_INTEGRITY_CHECKS)
+// toJS will trigger an audit if ENABLE(EXTRA_INTEGRITY_CHECKS).
+#define DO_AUDIT(value) toJS(value)
+#else
+// Else, we'll need to explicit call doAudit.
+#define DO_AUDIT(value) doAudit(toJS(value))
+#endif
+
 JSContextRef doAudit(JSContextRef ctx)
 {
     IA_ASSERT(ctx, "NULL JSContextRef");
-    toJS(ctx); // toJS will trigger an audit.
+    DO_AUDIT(ctx);
     return ctx;
 }
 
 JSGlobalContextRef doAudit(JSGlobalContextRef ctx)
 {
     IA_ASSERT(ctx, "NULL JSGlobalContextRef");
-    toJS(ctx); // toJS will trigger an audit.
+    DO_AUDIT(ctx);
     return ctx;
 }
 
@@ -103,7 +147,7 @@ JSObjectRef doAudit(JSObjectRef objectRef)
 {
     if (!objectRef)
         return objectRef;
-    toJS(objectRef); // toJS will trigger an audit.
+    DO_AUDIT(objectRef);
     return objectRef;
 }
 
@@ -112,10 +156,12 @@ JSValueRef doAudit(JSValueRef valueRef)
 #if CPU(ADDRESS64)
     if (!valueRef)
         return valueRef;
-    toJS(valueRef); // toJS will trigger an audit.
+    DO_AUDIT(valueRef);
 #endif
     return valueRef;
 }
+
+#undef DO_AUDIT
 
 JSValue doAudit(JSValue value)
 {
@@ -140,19 +186,19 @@ bool Analyzer::analyzeVM(VM& vm, Analyzer::Action action)
 
 #define AUDIT_VERIFY(cond, format, ...) do { \
         IA_ASSERT_WITH_ACTION(cond, { \
-            WTFLogAlways("    cell %p", cell); \
+            Integrity::logLnF("    cell %p", cell); \
             if (action == Action::LogAndCrash) \
-                RELEASE_ASSERT((cond), ##__VA_ARGS__); \
+                RELEASE_ASSERT((cond)); \
             else \
                 return false; \
-        }, format, ##__VA_ARGS__); \
+        }); \
     } while (false)
 
 #else // not (COMPILER(MSVC) || !VA_OPT_SUPPORTED)
 
 #define AUDIT_VERIFY(cond, format, ...) do { \
         IA_ASSERT_WITH_ACTION(cond, { \
-            WTFLogAlways("    cell %p", cell); \
+            Integrity::logLnF("    cell %p", cell); \
             if (action == Action::LogAndCrash) \
                 RELEASE_ASSERT((cond) __VA_OPT__(,) __VA_ARGS__); \
             else \
@@ -290,14 +336,14 @@ JSCell* doAudit(VM& vm, JSCell* cell)
 bool verifyCell(JSCell* cell)
 {
     bool valid = Analyzer::analyzeCell(cell, Analyzer::Action::LogOnly);
-    WTFLogAlways("Cell %p is %s", cell, valid ? "VALID" : "INVALID");
+    Integrity::logLnF("Cell %p is %s", cell, valid ? "VALID" : "INVALID");
     return valid;
 }
 
 bool verifyCell(VM& vm, JSCell* cell)
 {
     bool valid = Analyzer::analyzeCell(vm, cell, Analyzer::Action::LogOnly);
-    WTFLogAlways("Cell %p is %s", cell, valid ? "VALID" : "INVALID");
+    Integrity::logLnF("Cell %p is %s", cell, valid ? "VALID" : "INVALID");
     return valid;
 }
 

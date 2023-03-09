@@ -1,4 +1,4 @@
-# Copyright (C) 2021 Apple Inc. All rights reserved.
+# Copyright (C) 2021-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -139,7 +139,7 @@ class PullRequest(object):
         body=None, author=None,
         head=None, base=None,
         opened=None, generator=None, metadata=None,
-        url=None, draft=None
+        url=None, draft=None, hash=None,
     ):
         self.number = number
         self.title = title
@@ -148,6 +148,7 @@ class PullRequest(object):
         self.head = head
         self.base = base
         self.draft = draft
+        self.hash = hash
         self._opened = opened
         self._reviewers = None
         self._approvers = None
@@ -207,6 +208,11 @@ class PullRequest(object):
         if self._comments is None and self.generator:
             self._comments = list(self.generator.comments(self))
         return self._comments
+
+    def review(self, comment=None, approve=None):
+        if not self.generator:
+            raise self.Exception('No associated pull-request generator')
+        return self.generator.review(self, comment=comment, approve=approve)
 
     def __repr__(self):
         return 'PR {}{}'.format(self.number, ' | {}'.format(self.title) if self.title else '')

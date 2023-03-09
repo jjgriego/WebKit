@@ -36,6 +36,7 @@
 #import "MediaSessionManagerCocoa.h"
 #import "MediaStreamPrivate.h"
 #import "PixelBufferConformerCV.h"
+#import "VideoFrame.h"
 #import "VideoLayerManagerObjC.h"
 #import "VideoTrackPrivateMediaStream.h"
 #import <CoreGraphics/CGAffineTransform.h>
@@ -135,6 +136,7 @@ void MediaPlayerPrivateMediaStreamAVFObjC::setNativeImageCreator(NativeImageCrea
 
 MediaPlayerPrivateMediaStreamAVFObjC::MediaPlayerPrivateMediaStreamAVFObjC(MediaPlayer* player)
     : m_player(player)
+    , m_videoRotation { VideoFrameRotation::None }
     , m_logger(player->mediaPlayerLogger())
     , m_logIdentifier(player->mediaPlayerLogIdentifier())
     , m_videoLayerManager(makeUnique<VideoLayerManagerObjC>(m_logger, m_logIdentifier))
@@ -228,7 +230,7 @@ void MediaPlayerPrivateMediaStreamAVFObjC::getSupportedTypes(HashSet<String, ASC
 
 MediaPlayer::SupportsType MediaPlayerPrivateMediaStreamAVFObjC::supportsType(const MediaEngineSupportParameters& parameters)
 {
-    return parameters.isMediaStream ? MediaPlayer::SupportsType::IsSupported : MediaPlayer::SupportsType::IsNotSupported;
+    return (parameters.isMediaStream && !parameters.requiresRemotePlayback) ? MediaPlayer::SupportsType::IsSupported : MediaPlayer::SupportsType::IsNotSupported;
 }
 
 #pragma mark -
@@ -398,15 +400,10 @@ void MediaPlayerPrivateMediaStreamAVFObjC::ensureLayers()
     if (activeVideoTrack->source().isCaptureSource())
         m_sampleBufferDisplayLayer->setRenderPolicy(SampleBufferDisplayLayer::RenderPolicy::Immediately);
 
-    auto size = snappedIntRect(m_player->playerContentBoxRect()).size();
+    auto size = m_player->presentationSize();
     m_sampleBufferDisplayLayer->initialize(hideRootLayer(), size, [weakThis = WeakPtr { *this }, size](auto didSucceed) {
-        if (weakThis) {
-#if !RELEASE_LOG_DISABLED
-            if (weakThis->m_sampleBufferDisplayLayer)
-                weakThis->m_sampleBufferDisplayLayer->setLogIdentifier(makeString(hex(reinterpret_cast<uintptr_t>(weakThis->logIdentifier()))));
-#endif
+        if (weakThis)
             weakThis->layersAreInitialized(size, didSucceed);
-        }
     });
 }
 
@@ -415,11 +412,13 @@ void MediaPlayerPrivateMediaStreamAVFObjC::layersAreInitialized(IntSize size, bo
     if (!didSucceed) {
         ERROR_LOG(LOGIDENTIFIER, "Initializing the SampleBufferDisplayLayer failed.");
         m_sampleBufferDisplayLayer = nullptr;
+        updateLayersAsNeeded();
         return;
     }
 
     scheduleRenderingModeChanged();
 
+    m_sampleBufferDisplayLayer->setLogIdentifier(makeString(hex(reinterpret_cast<uintptr_t>(logIdentifier()))));
     m_sampleBufferDisplayLayer->updateBoundsAndPosition(m_sampleBufferDisplayLayer->rootLayer().bounds, m_videoRotation);
     m_sampleBufferDisplayLayer->updateDisplayMode(m_displayMode < PausedImage, hideRootLayer());
     m_shouldUpdateDisplayLayer = true;
@@ -490,10 +489,7 @@ MediaStreamTrackPrivate* MediaPlayerPrivateMediaStreamAVFObjC::activeVideoTrack(
 
 bool MediaPlayerPrivateMediaStreamAVFObjC::didPassCORSAccessCheck() const
 {
-    // We are only doing a check on the active video track since the sole consumer of this API is canvas.
-    // FIXME: We should change the name of didPassCORSAccessCheck if it is expected to stay like this.
-    const auto* track = activeVideoTrack();
-    return !track || !track->isIsolated();
+    return true;
 }
 
 void MediaPlayerPrivateMediaStreamAVFObjC::cancelLoad()

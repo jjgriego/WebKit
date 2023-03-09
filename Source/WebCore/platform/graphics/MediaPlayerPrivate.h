@@ -32,7 +32,6 @@
 #include "NativeImage.h"
 #include "PlatformTimeRanges.h"
 #include "ProcessIdentity.h"
-#include "VideoFrame.h"
 #include <optional>
 #include <wtf/CompletionHandler.h>
 
@@ -42,11 +41,13 @@
 
 namespace WebCore {
 
+class VideoFrame;
+
 class MediaPlayerPrivateInterface {
     WTF_MAKE_NONCOPYABLE(MediaPlayerPrivateInterface); WTF_MAKE_FAST_ALLOCATED;
 public:
-    MediaPlayerPrivateInterface() = default;
-    virtual ~MediaPlayerPrivateInterface() = default;
+    WEBCORE_EXPORT MediaPlayerPrivateInterface();
+    WEBCORE_EXPORT virtual ~MediaPlayerPrivateInterface();
 
     virtual void load(const String&) { }
     virtual void load(const URL& url, const ContentType&, const String&) { load(url.string()); }
@@ -80,6 +81,10 @@ public:
     virtual void setVideoFullscreenMode(MediaPlayer::VideoFullscreenMode) { }
     virtual void videoFullscreenStandbyChanged() { }
 #endif
+
+    virtual LayerHostingContextID hostingContextID() const { return 0; }
+    virtual FloatSize videoInlineSize() const { return { }; }
+    virtual void setVideoInlineSizeFenced(const FloatSize&, const WTF::MachSendRight&) { }
 
 #if PLATFORM(IOS_FAMILY)
     virtual NSArray *timedMetadata() const { return nil; }
@@ -174,7 +179,7 @@ public:
     // override didLoadingProgressAsync to create a more proper async implementation.
     virtual void didLoadingProgressAsync(MediaPlayer::DidLoadingProgressCompletionHandler&& callback) const { callback(didLoadingProgress()); }
 
-    virtual void setSize(const IntSize&) { }
+    virtual void setPresentationSize(const IntSize&) { }
 
     virtual void paint(GraphicsContext&, const FloatRect&) = 0;
 
@@ -182,10 +187,16 @@ public:
 #if !USE(AVFOUNDATION)
     virtual bool copyVideoTextureToPlatformTexture(GraphicsContextGL*, PlatformGLObject, GCGLenum, GCGLint, GCGLenum, GCGLenum, GCGLenum, bool, bool) { return false; }
 #endif
-    virtual RefPtr<VideoFrame> videoFrameForCurrentTime() { return nullptr; }
+#if PLATFORM(COCOA) && !HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)
+    virtual void willBeAskedToPaintGL() { }
+#endif
+
+    virtual RefPtr<VideoFrame> videoFrameForCurrentTime();
     virtual RefPtr<NativeImage> nativeImageForCurrentTime() { return nullptr; }
     virtual DestinationColorSpace colorSpace() = 0;
     virtual bool shouldGetNativeImageForCanvasDrawing() const { return true; }
+
+    virtual void setShouldDisableHDR(bool) { }
 
     virtual void setPreload(MediaPlayer::Preload) { }
 
@@ -213,9 +224,8 @@ public:
 
     virtual void setShouldMaintainAspectRatio(bool) { }
 
-    virtual bool hasSingleSecurityOrigin() const { return false; }
     virtual bool didPassCORSAccessCheck() const { return false; }
-    virtual std::optional<bool> wouldTaintOrigin(const SecurityOrigin&) const { return std::nullopt; }
+    virtual std::optional<bool> isCrossOrigin(const SecurityOrigin&) const { return std::nullopt; }
 
     virtual MediaPlayer::MovieLoadType movieLoadType() const { return MediaPlayer::MovieLoadType::Unknown; }
 
@@ -323,7 +333,7 @@ public:
     virtual bool playAtHostTime(const MonotonicTime&) { return false; }
     virtual bool pauseAtHostTime(const MonotonicTime&) { return false; }
 
-    virtual std::optional<VideoFrameMetadata> videoFrameMetadata() { return { }; }
+    virtual std::optional<VideoFrameMetadata> videoFrameMetadata();
     virtual void startVideoFrameMetadataGathering() { }
     virtual void stopVideoFrameMetadataGathering() { }
 
@@ -332,6 +342,8 @@ public:
     virtual void setResourceOwner(const ProcessIdentity&) { }
 
     virtual String errorMessage() const { return { }; }
+
+    virtual void renderVideoWillBeDestroyed() { }
 };
 
 }

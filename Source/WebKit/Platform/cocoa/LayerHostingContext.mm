@@ -47,7 +47,7 @@ std::unique_ptr<LayerHostingContext> LayerHostingContext::createForPort(const Ma
 
     layerHostingContext->m_layerHostingMode = LayerHostingMode::InProcess;
     layerHostingContext->m_context = [CAContext remoteContextWithOptions:options];
-
+    layerHostingContext->m_cachedContextID = layerHostingContext->contextID();
     return layerHostingContext;
 }
 
@@ -58,7 +58,7 @@ std::unique_ptr<LayerHostingContext> LayerHostingContext::createForExternalHosti
     layerHostingContext->m_layerHostingMode = LayerHostingMode::OutOfProcess;
 
 #if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)
-    // Use a very large display ID to ensure that the context is never put on-screen 
+    // Use a very large display ID to ensure that the context is never put on-screen
     // without being explicitly parented. See <rdar://problem/16089267> for details.
     layerHostingContext->m_context = [CAContext remoteContextWithOptions:@{
         kCAContextSecure: @(options.canShowWhileLocked),
@@ -77,7 +77,7 @@ std::unique_ptr<LayerHostingContext> LayerHostingContext::createForExternalHosti
         kCAContextCIFilterBehavior : @"ignore",
     }];
 #endif
-    
+    layerHostingContext->m_cachedContextID = layerHostingContext->contextID();
     return layerHostingContext;
 }
 
@@ -91,9 +91,17 @@ std::unique_ptr<LayerHostingContext> LayerHostingContext::createForExternalPlugi
 }
 #endif
 
+std::unique_ptr<LayerHostingContext> LayerHostingContext::createTransportLayerForRemoteHosting(LayerHostingContextID contextID)
+{
+    auto layerHostingContext = makeUnique<LayerHostingContext>();
+    layerHostingContext->m_layerHostingMode = LayerHostingMode::OutOfProcess;
+    layerHostingContext->m_cachedContextID = contextID;
+    return layerHostingContext;
+}
+
 RetainPtr<CALayer> LayerHostingContext::createPlatformLayerForHostingContext(LayerHostingContextID contextID)
 {
-    return [CALayer _web_renderLayerWithContextID:contextID];
+    return [CALayer _web_renderLayerWithContextID:contextID shouldPreserveFlip:NO];
 }
 
 #endif // HAVE(OUT_OF_PROCESS_LAYER_HOSTING)
@@ -156,6 +164,16 @@ void LayerHostingContext::setFencePort(mach_port_t fencePort)
 MachSendRight LayerHostingContext::createFencePort()
 {
     return MachSendRight::adopt([m_context createFencePort]);
+}
+
+void LayerHostingContext::updateCachedContextID(LayerHostingContextID contextID)
+{
+    m_cachedContextID = contextID;
+}
+
+LayerHostingContextID LayerHostingContext::cachedContextID()
+{
+    return m_cachedContextID;
 }
 
 } // namespace WebKit

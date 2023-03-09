@@ -53,6 +53,7 @@ extern "C" {
     M(DiskPersistency) \
     M(DragAndDrop) \
     M(EME) \
+    M(Extensions) \
     M(Fullscreen) \
     M(Gamepad) \
     M(IPC) \
@@ -102,7 +103,9 @@ extern "C" {
     M(SharedWorker) \
     M(Storage) \
     M(StorageAPI) \
+    M(SystemPreview) \
     M(TextInput) \
+    M(TextInteraction) \
     M(Translation) \
     M(UIHitTesting) \
     M(ViewGestures) \

@@ -63,6 +63,7 @@ static bool canShareDisplayListWithItem(DisplayList::ItemType itemType)
     case ItemType::ClipToImageBuffer:
     case ItemType::ClipOutToPath:
     case ItemType::ClipPath:
+    case ItemType::DrawControlPart:
     case ItemType::DrawFilteredImageBuffer:
     case ItemType::DrawSystemImage:
     case ItemType::DrawGlyphs:
@@ -121,7 +122,7 @@ struct GlyphDisplayListCacheKey {
 
 static void add(Hasher& hasher, const GlyphDisplayListCacheKey& key)
 {
-    add(hasher, key.textRun, key.font.fonts(), key.context.scaleFactor().width(), key.context.scaleFactor().height(), key.context.shouldSubpixelQuantizeFonts());
+    add(hasher, key.textRun, key.context.scaleFactor().width(), key.context.scaleFactor().height(), key.font.generation(), key.context.shouldSubpixelQuantizeFonts());
 }
 
 struct GlyphDisplayListCacheKeyTranslator {
@@ -133,8 +134,8 @@ struct GlyphDisplayListCacheKeyTranslator {
     static bool equal(GlyphDisplayListCacheEntry* entry, const GlyphDisplayListCacheKey& key)
     {
         return entry->m_textRun == key.textRun
-            && entry->m_font == key.font
             && entry->m_scaleFactor == key.context.scaleFactor()
+            && entry->m_fontCascadeGeneration == key.font.generation()
             && entry->m_shouldSubpixelQuantizeFont == key.context.shouldSubpixelQuantizeFonts();
     }
 };
@@ -173,6 +174,9 @@ DisplayList::DisplayList* GlyphDisplayListCache::get(const void* run, const Font
         }
         return nullptr;
     }
+
+    if (font.isLoadingCustomFonts() || !font.fonts())
+        return nullptr;
 
     if (auto entry = m_entriesForLayoutRun.get(run))
         return &entry->displayList();

@@ -32,6 +32,7 @@
 #import "NetworkProcessCreationParameters.h"
 #import "NetworkResourceLoader.h"
 #import "NetworkSessionCocoa.h"
+#import "NetworkStorageManager.h"
 #import "SandboxExtension.h"
 #import "WebCookieManager.h"
 #import <WebCore/NetworkStorageSession.h>
@@ -120,78 +121,36 @@ std::optional<audit_token_t> NetworkProcess::sourceApplicationAuditToken() const
 #endif
 }
 
-#if !HAVE(HSTS_STORAGE)
-static void filterPreloadHSTSEntry(const void* key, const void* value, void* context)
-{
-    RELEASE_ASSERT(context);
-
-    ASSERT(key);
-    ASSERT(value);
-    if (!key || !value)
-        return;
-
-    ASSERT(key != kCFNull);
-    if (key == kCFNull)
-        return;
-    
-    auto* hostnames = static_cast<HashSet<String>*>(context);
-    auto val = static_cast<CFDictionaryRef>(value);
-    if (CFDictionaryGetValue(val, _kCFNetworkHSTSPreloaded) != kCFBooleanTrue)
-        hostnames->add((CFStringRef)key);
-}
-#endif
-
 HashSet<String> NetworkProcess::hostNamesWithHSTSCache(PAL::SessionID sessionID) const
 {
     HashSet<String> hostNames;
-#if HAVE(HSTS_STORAGE)
     if (auto* networkSession = static_cast<NetworkSessionCocoa*>(this->networkSession(sessionID))) {
         for (NSString *host in networkSession->hstsStorage().nonPreloadedHosts)
             hostNames.add(host);
     }
-#else
-    if (auto* session = storageSession(sessionID)) {
-        if (auto HSTSPolicies = adoptCF(_CFNetworkCopyHSTSPolicies(session->platformSession())))
-            CFDictionaryApplyFunction(HSTSPolicies.get(), filterPreloadHSTSEntry, &hostNames);
-    }
-#endif
     return hostNames;
 }
 
 void NetworkProcess::deleteHSTSCacheForHostNames(PAL::SessionID sessionID, const Vector<String>& hostNames)
 {
-#if HAVE(HSTS_STORAGE)
     if (auto* networkSession = static_cast<NetworkSessionCocoa*>(this->networkSession(sessionID))) {
         for (auto& hostName : hostNames)
             [networkSession->hstsStorage() resetHSTSForHost:hostName];
     }
-#else
-    if (auto* session = storageSession(sessionID)) {
-        for (auto& hostName : hostNames) {
-            auto url = URL({ }, makeString("https://", hostName));
-            _CFNetworkResetHSTS(url.createCFURL().get(), session->platformSession());
-        }
-    }
-#endif
 }
 
-void NetworkProcess::allowSpecificHTTPSCertificateForHost(const WebCore::CertificateInfo& certificateInfo, const String& host)
+void NetworkProcess::allowSpecificHTTPSCertificateForHost(PAL::SessionID, const WebCore::CertificateInfo& certificateInfo, const String& host)
 {
     // FIXME: Remove this once rdar://30655740 is fixed.
-    [NSURLRequest setAllowsSpecificHTTPSCertificate:(NSArray *)certificateInfo.certificateChain() forHost:host];
+    [NSURLRequest setAllowsSpecificHTTPSCertificate:(NSArray *)WebCore::CertificateInfo::certificateChainFromSecTrust(certificateInfo.trust().get()).get() forHost:host];
 }
 
 void NetworkProcess::clearHSTSCache(PAL::SessionID sessionID, WallTime modifiedSince)
 {
     NSTimeInterval timeInterval = modifiedSince.secondsSinceEpoch().seconds();
     NSDate *date = [NSDate dateWithTimeIntervalSince1970:timeInterval];
-#if HAVE(HSTS_STORAGE)
     if (auto* networkSession = static_cast<NetworkSessionCocoa*>(this->networkSession(sessionID)))
         [networkSession->hstsStorage() resetHSTSHostsSinceDate:date];
-#else
-    if (auto* session = storageSession(sessionID))
-        _CFNetworkResetHSTSHostsSinceDate(session->platformSession(), (__bridge CFDateRef)date);
-#endif
 }
 
 void NetworkProcess::clearDiskCache(WallTime modifiedSince, CompletionHandler<void()>&& completionHandler)
@@ -255,5 +214,16 @@ const String& NetworkProcess::uiProcessBundleIdentifier() const
 
     return m_uiProcessBundleIdentifier;
 }
+
+#if PLATFORM(IOS_FAMILY)
+
+void NetworkProcess::setBackupExclusionPeriodForTesting(PAL::SessionID sessionID, Seconds period, CompletionHandler<void()>&& completionHandler)
+{
+    auto callbackAggregator = CallbackAggregator::create(WTFMove(completionHandler));
+    if (auto* session = networkSession(sessionID))
+        session->storageManager().setBackupExclusionPeriodForTesting(period, [callbackAggregator] { });
+}
+
+#endif
 
 } // namespace WebKit

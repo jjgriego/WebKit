@@ -30,7 +30,9 @@
 
 #include "ImageBufferShareableAllocator.h"
 #include "RemoteDisplayListRecorderMessages.h"
+#include "RemoteImageBuffer.h"
 #include <WebCore/BitmapImage.h>
+#include <WebCore/FEImage.h>
 #include <WebCore/FilterResults.h>
 
 #if USE(SYSTEM_PREVIEW)
@@ -45,6 +47,9 @@ RemoteDisplayListRecorder::RemoteDisplayListRecorder(ImageBuffer& imageBuffer, Q
     , m_imageBufferIdentifier(imageBufferIdentifier)
     , m_webProcessIdentifier(webProcessIdentifier)
     , m_renderingBackend(&renderingBackend)
+#if PLATFORM(COCOA) && ENABLE(VIDEO)
+    , m_sharedVideoFrameReader(Ref { renderingBackend.gpuConnectionToWebProcess().videoFrameObjectHeap() }, renderingBackend.gpuConnectionToWebProcess().webProcessIdentity())
+#endif
 {
 }
 
@@ -210,7 +215,7 @@ void RemoteDisplayListRecorder::clipPath(const Path& path, WindRule rule)
     handleItem(DisplayList::ClipPath(path, rule));
 }
 
-void RemoteDisplayListRecorder::drawFilteredImageBuffer(std::optional<RenderingResourceIdentifier> sourceImageIdentifier, const FloatRect& sourceImageRect, IPC::FilterReference filterReference)
+void RemoteDisplayListRecorder::drawFilteredImageBuffer(std::optional<RenderingResourceIdentifier> sourceImageIdentifier, const FloatRect& sourceImageRect, Ref<Filter> filter)
 {
     RefPtr<ImageBuffer> sourceImage;
 
@@ -221,8 +226,6 @@ void RemoteDisplayListRecorder::drawFilteredImageBuffer(std::optional<RenderingR
             return;
         }
     }
-
-    auto filter = filterReference.takeFilter();
 
     for (auto& effect : filter->effectsOfType(FilterEffect::Type::FEImage)) {
         auto& feImage = downcast<FEImage>(effect.get());
@@ -236,7 +239,7 @@ void RemoteDisplayListRecorder::drawFilteredImageBuffer(std::optional<RenderingR
         feImage.setImageSource(WTFMove(*sourceImage));
     }
 
-    FilterResults results(makeUnique<ImageBufferShareableAllocator>());
+    FilterResults results(makeUnique<ImageBufferShareableAllocator>(m_renderingBackend->resourceOwner()));
     handleItem(DisplayList::DrawFilteredImageBuffer(sourceImageIdentifier, sourceImageRect, WTFMove(filter)), sourceImage.get(), results);
 }
 
@@ -257,14 +260,14 @@ void RemoteDisplayListRecorder::drawGlyphsWithQualifiedIdentifier(DisplayList::D
     handleItem(WTFMove(item), *font);
 }
 
-void RemoteDisplayListRecorder::drawDecomposedGlyphs(RenderingResourceIdentifier fontIdentifier, RenderingResourceIdentifier decomposedGlyphsIdentifier, const FloatRect& bounds)
+void RemoteDisplayListRecorder::drawDecomposedGlyphs(RenderingResourceIdentifier fontIdentifier, RenderingResourceIdentifier decomposedGlyphsIdentifier)
 {
     // Immediately turn the RenderingResourceIdentifier (which is error-prone) to a QualifiedRenderingResourceIdentifier,
     // and use a helper function to make sure that don't accidentally use the RenderingResourceIdentifier (because the helper function can't see it).
-    drawDecomposedGlyphsWithQualifiedIdentifiers({ fontIdentifier, m_webProcessIdentifier }, { decomposedGlyphsIdentifier, m_webProcessIdentifier }, bounds);
+    drawDecomposedGlyphsWithQualifiedIdentifiers({ fontIdentifier, m_webProcessIdentifier }, { decomposedGlyphsIdentifier, m_webProcessIdentifier });
 }
 
-void RemoteDisplayListRecorder::drawDecomposedGlyphsWithQualifiedIdentifiers(QualifiedRenderingResourceIdentifier fontIdentifier, QualifiedRenderingResourceIdentifier decomposedGlyphsIdentifier, const FloatRect& bounds)
+void RemoteDisplayListRecorder::drawDecomposedGlyphsWithQualifiedIdentifiers(QualifiedRenderingResourceIdentifier fontIdentifier, QualifiedRenderingResourceIdentifier decomposedGlyphsIdentifier)
 {
     RefPtr font = resourceCache().cachedFont(fontIdentifier);
     if (!font) {
@@ -273,12 +276,12 @@ void RemoteDisplayListRecorder::drawDecomposedGlyphsWithQualifiedIdentifiers(Qua
     }
 
     RefPtr decomposedGlyphs = resourceCache().cachedDecomposedGlyphs(decomposedGlyphsIdentifier);
-    if (!decomposedGlyphsIdentifier) {
+    if (!decomposedGlyphs) {
         ASSERT_NOT_REACHED();
         return;
     }
 
-    handleItem(DisplayList::DrawDecomposedGlyphs(fontIdentifier.object(), decomposedGlyphsIdentifier.object(), bounds), *font, *decomposedGlyphs);
+    handleItem(DisplayList::DrawDecomposedGlyphs(fontIdentifier.object(), decomposedGlyphsIdentifier.object()), *font, *decomposedGlyphs);
 }
 
 void RemoteDisplayListRecorder::drawImageBuffer(RenderingResourceIdentifier imageBufferIdentifier, const FloatRect& destinationRect, const FloatRect& srcRect, const ImagePaintingOptions& options)
@@ -317,11 +320,11 @@ void RemoteDisplayListRecorder::drawNativeImageWithQualifiedIdentifier(Qualified
     handleItem(DisplayList::DrawNativeImage(imageIdentifier.object(), imageSize, destRect, srcRect, options), *image);
 }
 
-void RemoteDisplayListRecorder::drawSystemImage(SystemImage& systemImage, const FloatRect& destinationRect)
+void RemoteDisplayListRecorder::drawSystemImage(Ref<SystemImage> systemImage, const FloatRect& destinationRect)
 {
 #if USE(SYSTEM_PREVIEW)
-    if (is<ARKitBadgeSystemImage>(systemImage)) {
-        ARKitBadgeSystemImage& badge = downcast<ARKitBadgeSystemImage>(systemImage);
+    if (is<ARKitBadgeSystemImage>(systemImage.get())) {
+        ARKitBadgeSystemImage& badge = downcast<ARKitBadgeSystemImage>(systemImage.get());
         RefPtr nativeImage = resourceCache().cachedNativeImage({ badge.imageIdentifier(), m_webProcessIdentifier });
         if (!nativeImage) {
             ASSERT_NOT_REACHED();
@@ -391,14 +394,14 @@ void RemoteDisplayListRecorder::drawPath(const Path& path)
     handleItem(DisplayList::DrawPath(path));
 }
 
-void RemoteDisplayListRecorder::drawFocusRingPath(const Path& path, float width, float offset, const Color& color)
+void RemoteDisplayListRecorder::drawFocusRingPath(const Path& path, float outlineWidth, const Color& color)
 {
-    handleItem(DisplayList::DrawFocusRingPath(path, width, offset, color));
+    handleItem(DisplayList::DrawFocusRingPath(path, outlineWidth, color));
 }
 
-void RemoteDisplayListRecorder::drawFocusRingRects(const Vector<FloatRect>& rects, float width, float offset, const Color& color)
+void RemoteDisplayListRecorder::drawFocusRingRects(const Vector<FloatRect>& rects, float outlineOffset, float outlineWidth, const Color& color)
 {
-    handleItem(DisplayList::DrawFocusRingRects(rects, width, offset, color));
+    handleItem(DisplayList::DrawFocusRingRects(rects, outlineOffset, outlineWidth, color));
 }
 
 void RemoteDisplayListRecorder::fillRect(const FloatRect& rect)
@@ -475,6 +478,7 @@ void RemoteDisplayListRecorder::transformToColorSpace(const WebCore::Destination
     m_imageBuffer->transformToColorSpace(colorSpace);
 }
 
+#if ENABLE(VIDEO)
 void RemoteDisplayListRecorder::paintFrameForMedia(MediaPlayerIdentifier identifier, const FloatRect& destination)
 {
     m_renderingBackend->performWithMediaPlayerOnMainThread(identifier, [imageBuffer = RefPtr { m_imageBuffer.get() }, destination](MediaPlayer& player) {
@@ -482,6 +486,25 @@ void RemoteDisplayListRecorder::paintFrameForMedia(MediaPlayerIdentifier identif
         imageBuffer->context().paintFrameForMedia(player, destination);
     });
 }
+#endif
+
+#if PLATFORM(COCOA) && ENABLE(VIDEO)
+void RemoteDisplayListRecorder::paintVideoFrame(SharedVideoFrame&& frame, const WebCore::FloatRect& destination, bool shouldDiscardAlpha)
+{
+    if (auto videoFrame = m_sharedVideoFrameReader.read(WTFMove(frame)))
+        drawingContext().paintVideoFrame(*videoFrame, destination, shouldDiscardAlpha);
+}
+
+void RemoteDisplayListRecorder::setSharedVideoFrameSemaphore(IPC::Semaphore&& semaphore)
+{
+    m_sharedVideoFrameReader.setSemaphore(WTFMove(semaphore));
+}
+
+void RemoteDisplayListRecorder::setSharedVideoFrameMemory(const SharedMemory::Handle& handle)
+{
+    m_sharedVideoFrameReader.setSharedMemory(handle);
+}
+#endif // PLATFORM(COCOA) && ENABLE(VIDEO)
 
 void RemoteDisplayListRecorder::strokeRect(const FloatRect& rect, float lineWidth)
 {
@@ -492,6 +515,13 @@ void RemoteDisplayListRecorder::strokeRect(const FloatRect& rect, float lineWidt
 
 void RemoteDisplayListRecorder::strokeLine(const LineData& data)
 {
+    handleItem(DisplayList::StrokeLine(data));
+}
+
+void RemoteDisplayListRecorder::strokeLineWithColorAndThickness(WebCore::DisplayList::SetInlineStrokeColor&& item, float thickness, const WebCore::LineData& data)
+{
+    handleItem(WTFMove(item));
+    handleItem(DisplayList::SetStrokeThickness(thickness));
     handleItem(DisplayList::StrokeLine(data));
 }
 
@@ -527,6 +557,14 @@ void RemoteDisplayListRecorder::clearRect(const FloatRect& rect)
     handleItem(DisplayList::ClearRect(rect));
 }
 
+void RemoteDisplayListRecorder::drawControlPart(Ref<ControlPart> part, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle& style)
+{
+    if (!m_controlFactory)
+        m_controlFactory = ControlFactory::createControlFactory();
+    part->setControlFactory(m_controlFactory.get());
+    handleItem(DisplayList::DrawControlPart(WTFMove(part), borderRect, deviceScaleFactor, style));
+}
+
 #if USE(CG)
 
 void RemoteDisplayListRecorder::applyStrokePattern()
@@ -546,10 +584,10 @@ void RemoteDisplayListRecorder::applyDeviceScaleFactor(float scaleFactor)
     handleItem(DisplayList::ApplyDeviceScaleFactor(scaleFactor));
 }
 
-void RemoteDisplayListRecorder::flushContext(GraphicsContextFlushIdentifier identifier)
+void RemoteDisplayListRecorder::flushContext(DisplayListRecorderFlushIdentifier identifier)
 {
     m_imageBuffer->flushContext();
-    m_renderingBackend->didFlush(identifier, m_imageBufferIdentifier);
+    m_renderingBackend->didFlush(identifier);
 }
 
 } // namespace WebKit

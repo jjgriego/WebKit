@@ -29,6 +29,7 @@
 #if ENABLE(INSPECTOR_EXTENSIONS)
 
 #include "APIInspectorExtension.h"
+#include "APISerializedScriptValue.h"
 #include "APIURL.h"
 #include "WebInspectorUIExtensionControllerMessages.h"
 #include "WebInspectorUIExtensionControllerProxyMessages.h"
@@ -209,6 +210,18 @@ void WebInspectorUIExtensionControllerProxy::showExtensionTab(const Inspector::E
         }
 
         weakThis->m_inspectorPage->sendWithAsyncReply(Messages::WebInspectorUIExtensionController::ShowExtensionTab { extensionTabIdentifier }, WTFMove(completionHandler));
+    });
+}
+
+void WebInspectorUIExtensionControllerProxy::navigateTabForExtension(const Inspector::ExtensionTabID& extensionTabIdentifier, const URL& sourceURL, WTF::CompletionHandler<void(const std::optional<Inspector::ExtensionError>)>&& completionHandler)
+{
+    whenFrontendHasLoaded([weakThis = WeakPtr { *this }, extensionTabIdentifier, sourceURL, completionHandler = WTFMove(completionHandler)] () mutable {
+        if (!weakThis || !weakThis->m_inspectorPage) {
+            completionHandler(Inspector::ExtensionError::InvalidRequest);
+            return;
+        }
+
+        weakThis->m_inspectorPage->sendWithAsyncReply(Messages::WebInspectorUIExtensionController::NavigateTabForExtension { extensionTabIdentifier, sourceURL }, WTFMove(completionHandler));
     });
 }
 

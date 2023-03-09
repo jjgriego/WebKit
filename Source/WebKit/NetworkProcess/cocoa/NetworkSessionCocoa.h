@@ -34,6 +34,7 @@ OBJC_CLASS NSOperationQueue;
 OBJC_CLASS WKNetworkSessionDelegate;
 OBJC_CLASS WKNetworkSessionWebSocketDelegate;
 OBJC_CLASS _NSHSTSStorage;
+OBJC_CLASS NSURLCredentialStorage;
 
 #include "DownloadID.h"
 #include "NetworkDataTaskCocoa.h"
@@ -45,6 +46,10 @@ OBJC_CLASS _NSHSTSStorage;
 #include <WebCore/RegistrableDomain.h>
 #include <wtf/HashMap.h>
 #include <wtf/Seconds.h>
+
+namespace WebCore {
+enum class NetworkConnectionIntegrity : uint16_t;
+}
 
 namespace WebKit {
 
@@ -136,6 +141,7 @@ public:
     bool preventsSystemHTTPProxyAuthentication() const { return m_preventsSystemHTTPProxyAuthentication; }
     
     _NSHSTSStorage *hstsStorage() const;
+    NSURLCredentialStorage *nsCredentialStorage() const;
 
     void removeNetworkWebsiteData(std::optional<WallTime>, std::optional<HashSet<WebCore::RegistrableDomain>>&&, CompletionHandler<void()>&&) override;
 
@@ -143,7 +149,10 @@ public:
 
 private:
     void invalidateAndCancel() override;
-    void clearCredentials() override;
+    HashSet<WebCore::SecurityOriginData> originsWithCredentials() final;
+    void removeCredentialsForOrigins(const Vector<WebCore::SecurityOriginData>&) final;
+    void clearCredentials(WallTime) final;
+
     bool shouldLogCookieInformation() const override { return m_shouldLogCookieInformation; }
     SessionWrapper& isolatedSession(WebPageProxyIdentifier, WebCore::StoredCredentialsPolicy, const WebCore::RegistrableDomain&, NavigatingToAppBoundDomain);
 
@@ -158,7 +167,7 @@ private:
     void clearAlternativeServices(WallTime) override;
 
 #if HAVE(NSURLSESSION_WEBSOCKET)
-    std::unique_ptr<WebSocketTask> createWebSocketTask(WebPageProxyIdentifier, NetworkSocketChannel&, const WebCore::ResourceRequest&, const String& protocol, const WebCore::ClientOrigin&, bool hadMainFrameMainResourcePrivateRelayed) final;
+    std::unique_ptr<WebSocketTask> createWebSocketTask(WebPageProxyIdentifier, NetworkSocketChannel&, const WebCore::ResourceRequest&, const String& protocol, const WebCore::ClientOrigin&, bool hadMainFrameMainResourcePrivateRelayed, bool allowPrivacyProxy, OptionSet<WebCore::NetworkConnectionIntegrity>) final;
     void addWebSocketTask(WebPageProxyIdentifier, WebSocketTask&) final;
     void removeWebSocketTask(SessionSet&, WebSocketTask&) final;
 #endif

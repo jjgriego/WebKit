@@ -3499,6 +3499,7 @@ void testStore8Imm()
     }
 }
 
+#if !CPU(ARM_THUMB2)
 void testStorePartial8BitRegisterOnX86()
 {
     Procedure proc;
@@ -3522,12 +3523,12 @@ void testStorePartial8BitRegisterOnX86()
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::regT6) };
 
     // Give the allocator a good reason not to use any other register.
-    RegisterSet clobberSet = RegisterSet::allGPRs();
-    clobberSet.exclude(RegisterSet::stackRegisters());
-    clobberSet.exclude(RegisterSet::reservedHardwareRegisters());
-    clobberSet.clear(GPRInfo::regT3);
-    clobberSet.clear(GPRInfo::regT2);
-    clobberSet.clear(GPRInfo::regT6);
+    RegisterSetBuilder clobberSet = RegisterSetBuilder::allGPRs();
+    clobberSet.exclude(RegisterSetBuilder::stackRegisters());
+    clobberSet.exclude(RegisterSetBuilder::reservedHardwareRegisters());
+    clobberSet.remove(GPRInfo::regT3);
+    clobberSet.remove(GPRInfo::regT2);
+    clobberSet.remove(GPRInfo::regT6);
     patchpoint->clobberLate(clobberSet);
 
     // Set EDI.
@@ -3549,6 +3550,8 @@ void testStorePartial8BitRegisterOnX86()
     CHECK(compileAndRun<int64_t>(proc, 0x12345678abcdef12, &storage) == 0x12345678abcdef12);
     CHECK(!storage);
 }
+
+#endif // !CPU(ARM_THUMB2)
 
 void testStore16Arg()
 {
@@ -3746,6 +3749,8 @@ void addArgTests(const char* filter, Deque<RefPtr<SharedTask<void()>>>& tasks)
     RUN(testAddImmArg(1, 2));
     RUN(testAddImmArg(0, 2));
     RUN(testAddImmArg(1, 0));
+
+#if !CPU(ARM_THUMB2)
     RUN_BINARY(testAddArgMem, int64Operands(), int64Operands());
     RUN_BINARY(testAddMemArg, int64Operands(), int64Operands());
     RUN_BINARY(testAddImmMem, int64Operands(), int64Operands());
@@ -3988,6 +3993,7 @@ void addArgTests(const char* filter, Deque<RefPtr<SharedTask<void()>>>& tasks)
     RUN_UNARY(testSubArgFloatWithUselessDoubleConversion, floatingPointOperands<float>());
     RUN_BINARY(testSubArgsFloatWithUselessDoubleConversion, floatingPointOperands<float>(), floatingPointOperands<float>());
     RUN_BINARY(testSubArgsFloatWithEffectfulDoubleConversion, floatingPointOperands<float>(), floatingPointOperands<float>());
+#endif // CPU(ARM_THUMB2)
 }
 
 void addCallTests(const char* filter, Deque<RefPtr<SharedTask<void()>>>& tasks)

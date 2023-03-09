@@ -45,21 +45,25 @@ public:
 
     bool allowTopNavigationToDataURLs() const { return boolWebPreferenceFeatureValue("AllowTopNavigationToDataURLs", true); }
     bool enableAttachmentElement() const { return boolWebPreferenceFeatureValue("AttachmentElementEnabled", false); }
+    bool enableAttachmentWideLayout() const { return boolWebPreferenceFeatureValue("AttachmentWideLayoutEnabled", false); }
     bool punchOutWhiteBackgroundsInDarkMode() const { return boolWebPreferenceFeatureValue("PunchOutWhiteBackgroundsInDarkMode", false); }
     bool useServiceWorkerShortTimeout() const { return boolWebPreferenceFeatureValue("ShouldUseServiceWorkerShortTimeout", false); }
     bool accessibilityIsolatedTreeMode() const { return boolWebPreferenceFeatureValue("IsAccessibilityIsolatedTreeEnabled", false); }
 
     bool allowsLinkPreview() const { return boolTestRunnerFeatureValue("allowsLinkPreview"); }
+    bool appHighlightsEnabled() const { return boolTestRunnerFeatureValue("appHighlightsEnabled"); }
+    bool allowTestOnlyIPC() const { return boolTestRunnerFeatureValue("allowTestOnlyIPC"); }
     bool dumpJSConsoleLogInStdErr() const { return boolTestRunnerFeatureValue("dumpJSConsoleLogInStdErr"); }
     bool editable() const { return boolTestRunnerFeatureValue("editable"); }
     bool enableInAppBrowserPrivacy() const { return boolTestRunnerFeatureValue("enableInAppBrowserPrivacy"); }
     bool enableProcessSwapOnNavigation() const { return boolTestRunnerFeatureValue("enableProcessSwapOnNavigation"); }
     bool enableProcessSwapOnWindowOpen() const { return boolTestRunnerFeatureValue("enableProcessSwapOnWindowOpen"); }
-    bool appHighlightsEnabled() const { return boolTestRunnerFeatureValue("appHighlightsEnabled"); }
+    bool findInteractionEnabled() const { return boolTestRunnerFeatureValue("findInteractionEnabled") ; }
     bool ignoreSynchronousMessagingTimeouts() const { return boolTestRunnerFeatureValue("ignoreSynchronousMessagingTimeouts"); }
     bool ignoresViewportScaleLimits() const { return boolTestRunnerFeatureValue("ignoresViewportScaleLimits"); }
     bool isAppBoundWebView() const { return boolTestRunnerFeatureValue("isAppBoundWebView"); }
     bool isAppInitiated() const { return boolTestRunnerFeatureValue("isAppInitiated"); }
+    bool networkConnectionIntegrityEnabled() const { return boolTestRunnerFeatureValue("networkConnectionIntegrityEnabled"); }
     bool runSingly() const { return boolTestRunnerFeatureValue("runSingly"); }
     bool shouldHandleRunOpenPanel() const { return boolTestRunnerFeatureValue("shouldHandleRunOpenPanel"); }
     bool shouldPresentPopovers() const { return boolTestRunnerFeatureValue("shouldPresentPopovers"); }
@@ -84,6 +88,7 @@ public:
     std::string contentMode() const { return stringTestRunnerFeatureValue("contentMode"); }
     std::string contentSecurityPolicyExtensionMode() const { return stringTestRunnerFeatureValue("contentSecurityPolicyExtensionMode"); }
     std::string dragInteractionPolicy() const { return stringTestRunnerFeatureValue("dragInteractionPolicy"); }
+    std::string focusStartsInputSessionPolicy() const { return stringTestRunnerFeatureValue("focusStartsInputSessionPolicy"); }
     std::string jscOptions() const { return stringTestRunnerFeatureValue("jscOptions"); }
     std::string standaloneWebApplicationURL() const { return stringTestRunnerFeatureValue("standaloneWebApplicationURL"); }
     std::vector<std::string> overrideLanguages() const { return stringVectorTestRunnerFeatureValue("language"); }

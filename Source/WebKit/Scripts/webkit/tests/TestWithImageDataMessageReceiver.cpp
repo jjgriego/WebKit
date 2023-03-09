@@ -25,42 +25,17 @@
 #include "config.h"
 #include "TestWithImageData.h"
 
-#include "ArgumentCoders.h"
-#include "Decoder.h"
-#include "HandleMessage.h"
-#include "TestWithImageDataMessages.h"
-#include "WebCoreArgumentCoders.h"
-#include <WebCore/ImageData.h>
-#include <wtf/RefCounted.h>
+#include "ArgumentCoders.h" // NOLINT
+#include "Decoder.h" // NOLINT
+#include "HandleMessage.h" // NOLINT
+#include "TestWithImageDataMessages.h" // NOLINT
+#include "WebCoreArgumentCoders.h" // NOLINT
+#include <WebCore/ImageData.h> // NOLINT
+#include <wtf/RefCounted.h> // NOLINT
 
 #if ENABLE(IPC_TESTING_API)
 #include "JSIPCBinding.h"
 #endif
-
-namespace Messages {
-
-namespace TestWithImageData {
-
-void ReceiveImageData::callReply(IPC::Decoder& decoder, CompletionHandler<void(RefPtr<WebCore::ImageData>&&)>&& completionHandler)
-{
-    std::optional<RefPtr<WebCore::ImageData>> r0;
-    decoder >> r0;
-    if (!r0) {
-        ASSERT_NOT_REACHED();
-        cancelReply(WTFMove(completionHandler));
-        return;
-    }
-    completionHandler(WTFMove(*r0));
-}
-
-void ReceiveImageData::cancelReply(CompletionHandler<void(RefPtr<WebCore::ImageData>&&)>&& completionHandler)
-{
-    completionHandler(IPC::AsyncReplyError<RefPtr<WebCore::ImageData>>::create());
-}
-
-} // namespace TestWithImageData
-
-} // namespace Messages
 
 namespace WebKit {
 

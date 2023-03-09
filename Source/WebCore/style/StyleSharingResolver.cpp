@@ -102,7 +102,7 @@ std::unique_ptr<RenderStyle> SharingResolver::resolve(const Styleable& searchSty
         return nullptr;
     if (elementHasDirectionAuto(element))
         return nullptr;
-    if (element.shadowRoot() && !element.shadowRoot()->styleScope().resolver().ruleSets().authorStyle().hostPseudoClassRules().isEmpty())
+    if (element.shadowRoot() && element.shadowRoot()->styleScope().resolver().ruleSets().hasMatchingUserOrAuthorStyle([] (auto& style) { return !style.hostPseudoClassRules().isEmpty(); }))
         return nullptr;
     if (auto* keyframeEffectStack = searchStyleable.keyframeEffectStack()) {
         if (keyframeEffectStack->hasEffectWithImplicitKeyframes())
@@ -229,7 +229,7 @@ bool SharingResolver::canShareStyleWithElement(const Context& context, const Sty
     if (!candidateElementId.isNull() && m_ruleSets.features().idsInRules.contains(candidateElementId))
         return false;
 
-    if (is<HTMLFormControlElement>(candidateElement) || is<HTMLFormControlElement>(element))
+    if (candidateElement.isValidatedFormListedElement() || element.isValidatedFormListedElement())
         return false;
 
     // HTMLFormElement can get the :valid/invalid pseudo classes
@@ -261,6 +261,9 @@ bool SharingResolver::canShareStyleWithElement(const Context& context, const Sty
     if (candidateElement.isLink() && context.elementLinkState != style->insideLink())
         return false;
 
+    if (style->containerType() != ContainerType::Normal)
+        return false;
+
     if (candidateElement.elementData() != element.elementData()) {
         // Attributes that are optimized as "common attribute selectors".
         if (candidateElement.attributeWithoutSynchronization(HTMLNames::readonlyAttr) != element.attributeWithoutSynchronization(HTMLNames::readonlyAttr))
@@ -278,7 +281,7 @@ bool SharingResolver::canShareStyleWithElement(const Context& context, const Sty
             return false;
     }
 
-    if (candidateElement.shadowRoot() && !candidateElement.shadowRoot()->styleScope().resolver().ruleSets().authorStyle().hostPseudoClassRules().isEmpty())
+    if (candidateElement.shadowRoot() && candidateElement.shadowRoot()->styleScope().resolver().ruleSets().hasMatchingUserOrAuthorStyle([] (auto& style) { return !style.hostPseudoClassRules().isEmpty(); }))
         return false;
 
 #if ENABLE(WHEEL_EVENT_REGIONS)
@@ -293,6 +296,7 @@ bool SharingResolver::canShareStyleWithElement(const Context& context, const Sty
     if (&candidateElement == m_document.fullscreenManager().currentFullscreenElement() || &element == m_document.fullscreenManager().currentFullscreenElement())
         return false;
 #endif
+
     return true;
 }
 

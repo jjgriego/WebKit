@@ -80,6 +80,16 @@ static NSDictionary *toNSDictionary(CGRect rect)
     };
 }
 
+static NSDictionary *toNSDictionary(UIEdgeInsets insets)
+{
+    return @{
+        @"top" : @(insets.top),
+        @"left" : @(insets.left),
+        @"bottom" : @(insets.bottom),
+        @"right" : @(insets.right)
+    };
+}
+
 static Vector<String> parseModifierArray(JSContextRef context, JSValueRef arrayValue)
 {
     if (!arrayValue)
@@ -100,6 +110,14 @@ static Vector<String> parseModifierArray(JSContextRef context, JSValueRef arrayV
     return modifiers;
 }
 
+static Class internalClassNamed(NSString *className)
+{
+    auto result = NSClassFromString(className);
+    if (!result)
+        NSLog(@"Warning: an internal class named '%@' does not exist.", className);
+    return result;
+}
+
 Ref<UIScriptController> UIScriptController::create(UIScriptContext& context)
 {
     return adoptRef(*new UIScriptControllerIOS(context));
@@ -114,16 +132,6 @@ void UIScriptControllerIOS::waitForOutstandingCallbacks()
         if ([timeoutDate compare:NSDate.date] == NSOrderedAscending)
             [NSException raise:@"WebKitTestRunnerTestProblem" format:@"The previous test completed before all synthesized events had been handled. Perhaps you're calling notifyDone() too early?"];
     }
-}
-
-void UIScriptControllerIOS::doAfterPresentationUpdate(JSValueRef callback)
-{
-    unsigned callbackID = m_context->prepareForAsyncTask(callback, CallbackTypeNonPersistent);
-    [webView() _doAfterNextPresentationUpdate:makeBlockPtr([this, strongThis = Ref { *this }, callbackID] {
-        if (!m_context)
-            return;
-        m_context->asyncTaskComplete(callbackID);
-    }).get()];
 }
 
 void UIScriptControllerIOS::doAfterNextStablePresentationUpdate(JSValueRef callback)
@@ -679,6 +687,11 @@ double UIScriptControllerIOS::contentOffsetY() const
     return webView().scrollView.contentOffset.y;
 }
 
+JSObjectRef UIScriptControllerIOS::adjustedContentInset() const
+{
+    return JSValueToObject(m_context->jsContext(), [JSValue valueWithObject:toNSDictionary(webView().scrollView.adjustedContentInset) inContext:[JSContext contextWithJSGlobalContextRef:m_context->jsContext()]].JSValueRef, nullptr);
+}
+
 bool UIScriptControllerIOS::scrollUpdatesDisabled() const
 {
     return webView()._scrollingUpdatesDisabledForTesting;
@@ -893,12 +906,56 @@ bool UIScriptControllerIOS::mayContainEditableElementsInRect(unsigned x, unsigne
     return [webView() _mayContainEditableElementsInRect:[webView() convertRect:contentRect fromView:platformContentView()]];
 }
 
-static UIDeviceOrientation toUIDeviceOrientation(DeviceOrientation* orientation)
+void UIScriptControllerIOS::simulateRotation(DeviceOrientation* orientation, JSValueRef callback)
 {
-    if (!orientation)
-        return UIDeviceOrientationPortrait;
-        
-    switch (*orientation) {
+    if (!orientation) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    webView().usesSafariLikeRotation = NO;
+    simulateRotation(*orientation, callback);
+}
+
+void UIScriptControllerIOS::simulateRotationLikeSafari(DeviceOrientation* orientation, JSValueRef callback)
+{
+    if (!orientation) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    webView().usesSafariLikeRotation = YES;
+    simulateRotation(*orientation, callback);
+}
+
+#if HAVE(UI_WINDOW_SCENE_GEOMETRY_PREFERENCES)
+
+static RetainPtr<UIWindowSceneGeometryPreferences> toWindowSceneGeometryPreferences(DeviceOrientation orientation)
+{
+    UIInterfaceOrientationMask orientations = 0;
+    switch (orientation) {
+    case DeviceOrientation::Portrait:
+        orientations = UIInterfaceOrientationMaskPortrait;
+        break;
+    case DeviceOrientation::PortraitUpsideDown:
+        orientations = UIInterfaceOrientationMaskPortraitUpsideDown;
+        break;
+    case DeviceOrientation::LandscapeLeft:
+        orientations = UIInterfaceOrientationMaskLandscapeLeft;
+        break;
+    case DeviceOrientation::LandscapeRight:
+        orientations = UIInterfaceOrientationMaskLandscapeRight;
+        break;
+    }
+    ASSERT(orientations);
+    return adoptNS([[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:orientations]);
+}
+
+#else
+
+static UIDeviceOrientation toUIDeviceOrientation(DeviceOrientation orientation)
+{
+    switch (orientation) {
     case DeviceOrientation::Portrait:
         return UIDeviceOrientationPortrait;
     case DeviceOrientation::PortraitUpsideDown:
@@ -908,40 +965,28 @@ static UIDeviceOrientation toUIDeviceOrientation(DeviceOrientation* orientation)
     case DeviceOrientation::LandscapeRight:
         return UIDeviceOrientationLandscapeRight;
     }
-    
+    ASSERT_NOT_REACHED();
     return UIDeviceOrientationPortrait;
 }
 
-void UIScriptControllerIOS::simulateRotation(DeviceOrientation* orientation, JSValueRef callback)
-{
-    TestRunnerWKWebView *webView = this->webView();
-    webView.usesSafariLikeRotation = NO;
-    
-    unsigned callbackID = m_context->prepareForAsyncTask(callback, CallbackTypeNonPersistent);
-    
-    webView.rotationDidEndCallback = makeBlockPtr([this, strongThis = Ref { *this }, callbackID] {
-        if (!m_context)
-            return;
-        m_context->asyncTaskComplete(callbackID);
-    }).get();
-    
-    [[UIDevice currentDevice] setOrientation:toUIDeviceOrientation(orientation) animated:YES];
-}
+#endif // HAVE(UI_WINDOW_SCENE_GEOMETRY_PREFERENCES)
 
-void UIScriptControllerIOS::simulateRotationLikeSafari(DeviceOrientation* orientation, JSValueRef callback)
+void UIScriptControllerIOS::simulateRotation(DeviceOrientation orientation, JSValueRef callback)
 {
-    TestRunnerWKWebView *webView = this->webView();
-    webView.usesSafariLikeRotation = YES;
-    
-    unsigned callbackID = m_context->prepareForAsyncTask(callback, CallbackTypeNonPersistent);
-    
-    webView.rotationDidEndCallback = makeBlockPtr([this, strongThis = Ref { *this }, callbackID] {
+    auto callbackID = m_context->prepareForAsyncTask(callback, CallbackTypeNonPersistent);
+    webView().rotationDidEndCallback = makeBlockPtr([this, strongThis = Ref { *this }, callbackID] {
         if (!m_context)
             return;
         m_context->asyncTaskComplete(callbackID);
     }).get();
-    
+
+#if HAVE(UI_WINDOW_SCENE_GEOMETRY_PREFERENCES)
+    [webView().window.windowScene requestGeometryUpdateWithPreferences:toWindowSceneGeometryPreferences(orientation).get() errorHandler:^(NSError *error) {
+        NSLog(@"Failed to simulate rotation with error: %@", error);
+    }];
+#else
     [[UIDevice currentDevice] setOrientation:toUIDeviceOrientation(orientation) animated:YES];
+#endif
 }
 
 void UIScriptControllerIOS::setDidStartFormControlInteractionCallback(JSValueRef callback)
@@ -1066,7 +1111,6 @@ JSObjectRef UIScriptControllerIOS::rectForMenuAction(JSStringRef jsAction) const
 WebCore::FloatRect UIScriptControllerIOS::rectForMenuAction(CFStringRef action) const
 {
     UIView *viewForAction = nil;
-    UIWindow *window = webView().window;
 
     if (UIView *calloutBar = UICalloutBar.activeCalloutBar; calloutBar.window) {
         for (UIButton *button in findAllViewsInHierarchyOfType(calloutBar, UIButton.class)) {
@@ -1082,15 +1126,16 @@ WebCore::FloatRect UIScriptControllerIOS::rectForMenuAction(CFStringRef action) 
         }
     }
 
-    if (!viewForAction) {
+    auto searchForLabel = [&](UIWindow *window) -> UILabel * {
         for (UILabel *label in findAllViewsInHierarchyOfType(window, UILabel.class)) {
-            if (![label.text isEqualToString:(__bridge NSString *)action])
-                continue;
-
-            viewForAction = label;
-            break;
+            if ([label.text isEqualToString:(__bridge NSString *)action])
+                return label;
         }
-    }
+        return nil;
+    };
+
+    if (!viewForAction)
+        viewForAction = searchForLabel(webView().window) ?: searchForLabel(webView().textEffectsWindow);
 
     if (!viewForAction)
         return { };
@@ -1101,17 +1146,18 @@ WebCore::FloatRect UIScriptControllerIOS::rectForMenuAction(CFStringRef action) 
 
 JSObjectRef UIScriptControllerIOS::menuRect() const
 {
-    UIView *calloutBar = UICalloutBar.activeCalloutBar;
-    if (!calloutBar.window)
-        return nullptr;
-
-    return toObject([calloutBar convertRect:calloutBar.bounds toView:platformContentView()]);
+    UIView *containerView = nil;
+    if (auto *calloutBar = UICalloutBar.activeCalloutBar; calloutBar.window)
+        containerView = calloutBar;
+    else
+        containerView = findAllViewsInHierarchyOfType(webView().textEffectsWindow, internalClassNamed(@"_UIEditMenuListView")).firstObject;
+    return containerView ? toObject([containerView convertRect:containerView.bounds toView:platformContentView()]) : nullptr;
 }
 
 JSObjectRef UIScriptControllerIOS::contextMenuRect() const
 {
     auto *window = webView().window;
-    auto *contextMenuView = [findAllViewsInHierarchyOfType(window, NSClassFromString(@"_UIContextMenuView")) firstObject];
+    auto *contextMenuView = findAllViewsInHierarchyOfType(window, internalClassNamed(@"_UIContextMenuView")).firstObject;
     if (!contextMenuView)
         return nullptr;
 
@@ -1345,9 +1391,33 @@ void UIScriptControllerIOS::setSuppressSoftwareKeyboard(bool suppressSoftwareKey
     webView()._suppressSoftwareKeyboard = suppressSoftwareKeyboard;
 }
 
+void UIScriptControllerIOS::presentFindNavigator()
+{
+#if HAVE(UIFINDINTERACTION)
+    [webView().findInteraction presentFindNavigatorShowingReplace:NO];
+#endif
+}
+
+void UIScriptControllerIOS::dismissFindNavigator()
+{
+#if HAVE(UIFINDINTERACTION)
+    [webView().findInteraction dismissFindNavigator];
+#endif
+}
+
 bool UIScriptControllerIOS::isWebContentFirstResponder() const
 {
     return [webView() _contentViewIsFirstResponder];
+}
+
+void UIScriptControllerIOS::becomeFirstResponder()
+{
+    [webView() becomeFirstResponder];
+}
+
+void UIScriptControllerIOS::resignFirstResponder()
+{
+    [webView() resignFirstResponder];
 }
 
 }

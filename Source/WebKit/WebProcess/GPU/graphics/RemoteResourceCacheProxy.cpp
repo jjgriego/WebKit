@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,6 +29,7 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "ArgumentCoders.h"
+#include "RemoteImageBufferProxy.h"
 #include "RemoteRenderingBackendProxy.h"
 
 namespace WebKit {
@@ -46,26 +47,39 @@ RemoteResourceCacheProxy::~RemoteResourceCacheProxy()
     clearDecomposedGlyphsMap();
 }
 
-void RemoteResourceCacheProxy::cacheImageBuffer(WebCore::ImageBuffer& imageBuffer)
+void RemoteResourceCacheProxy::clear()
+{
+    clearNativeImageMap();
+    clearImageBufferBackends();
+    m_imageBuffers.clear();
+    clearDecomposedGlyphsMap();
+}
+
+void RemoteResourceCacheProxy::cacheImageBuffer(RemoteImageBufferProxy& imageBuffer)
 {
     auto addResult = m_imageBuffers.add(imageBuffer.renderingResourceIdentifier(), imageBuffer);
     ASSERT_UNUSED(addResult, addResult.isNewEntry);
 }
 
-ImageBuffer* RemoteResourceCacheProxy::cachedImageBuffer(RenderingResourceIdentifier renderingResourceIdentifier) const
+RemoteImageBufferProxy* RemoteResourceCacheProxy::cachedImageBuffer(RenderingResourceIdentifier renderingResourceIdentifier) const
 {
     return m_imageBuffers.get(renderingResourceIdentifier).get();
 }
 
-void RemoteResourceCacheProxy::releaseImageBuffer(RenderingResourceIdentifier renderingResourceIdentifier)
+void RemoteResourceCacheProxy::releaseImageBuffer(RemoteImageBufferProxy& imageBuffer)
 {
-    auto iterator = m_imageBuffers.find(renderingResourceIdentifier);
+    forgetImageBuffer(imageBuffer.renderingResourceIdentifier());
+
+    m_remoteRenderingBackendProxy.releaseRemoteResource(imageBuffer.renderingResourceIdentifier());
+}
+
+void RemoteResourceCacheProxy::forgetImageBuffer(RenderingResourceIdentifier identifier)
+{
+    auto iterator = m_imageBuffers.find(identifier);
     RELEASE_ASSERT(iterator != m_imageBuffers.end());
 
     auto success = m_imageBuffers.remove(iterator);
     ASSERT_UNUSED(success, success);
-
-    m_remoteRenderingBackendProxy.releaseRemoteResource(renderingResourceIdentifier);
 }
 
 inline static RefPtr<ShareableBitmap> createShareableBitmapFromNativeImage(NativeImage& image)
@@ -100,12 +114,11 @@ void RemoteResourceCacheProxy::recordNativeImageUse(NativeImage& image)
     if (!bitmap)
         return;
 
-    ShareableBitmap::Handle handle;
-    bitmap->createHandle(handle);
-    if (handle.isNull())
+    auto handle = bitmap->createHandle();
+    if (!handle)
         return;
 
-    handle.takeOwnershipOfMemory(MemoryLedger::Graphics);
+    handle->takeOwnershipOfMemory(MemoryLedger::Graphics);
     m_nativeImages.add(image.renderingResourceIdentifier(), image);
 
     // Set itself as an observer to NativeImage, so releaseNativeImage()
@@ -113,12 +126,12 @@ void RemoteResourceCacheProxy::recordNativeImageUse(NativeImage& image)
     image.addObserver(*this);
 
     // Tell the GPU process to cache this resource.
-    m_remoteRenderingBackendProxy.cacheNativeImage(handle, image.renderingResourceIdentifier());
+    m_remoteRenderingBackendProxy.cacheNativeImage(*handle, image.renderingResourceIdentifier());
 }
 
 void RemoteResourceCacheProxy::recordFontUse(Font& font)
 {
-    auto result = m_fonts.add(font.renderingResourceIdentifier(), m_remoteRenderingBackendProxy.renderingUpdateID());
+    auto result = m_fonts.add(font.renderingResourceIdentifier(), m_renderingUpdateID);
 
     if (result.isNewEntry) {
         m_remoteRenderingBackendProxy.cacheFont(font);
@@ -127,8 +140,8 @@ void RemoteResourceCacheProxy::recordFontUse(Font& font)
     }
 
     auto& currentState = result.iterator->value;
-    if (currentState != m_remoteRenderingBackendProxy.renderingUpdateID()) {
-        currentState = m_remoteRenderingBackendProxy.renderingUpdateID();
+    if (currentState != m_renderingUpdateID) {
+        currentState = m_renderingUpdateID;
         ++m_numberOfFontsUsedInCurrentRenderingUpdate;
     }
 }
@@ -154,8 +167,8 @@ void RemoteResourceCacheProxy::releaseNativeImage(RenderingResourceIdentifier re
 
 void RemoteResourceCacheProxy::clearNativeImageMap()
 {
-    for (auto& nativeImageState : m_nativeImages.values())
-        nativeImageState->removeObserver(*this);
+    for (auto& nativeImage : m_nativeImages.values())
+        nativeImage.get()->removeObserver(*this);
     m_nativeImages.clear();
 }
 
@@ -169,12 +182,6 @@ void RemoteResourceCacheProxy::releaseDecomposedGlyphs(RenderingResourceIdentifi
     bool removed = m_decomposedGlyphs.remove(renderingResourceIdentifier);
     RELEASE_ASSERT(removed);
     m_remoteRenderingBackendProxy.releaseRemoteResource(renderingResourceIdentifier);
-}
-
-void RemoteResourceCacheProxy::releaseAllRemoteFonts()
-{
-    for (auto& fontState : m_fonts)
-        m_remoteRenderingBackendProxy.releaseRemoteResource(fontState.key);
 }
 
 void RemoteResourceCacheProxy::clearFontMap()
@@ -196,6 +203,8 @@ void RemoteResourceCacheProxy::clearImageBufferBackends()
 
 void RemoteResourceCacheProxy::clearDecomposedGlyphsMap()
 {
+    for (auto& decomposedGlyphs : m_decomposedGlyphs.values())
+        decomposedGlyphs.get()->removeObserver(*this);
     m_decomposedGlyphs.clear();
 }
 
@@ -209,7 +218,7 @@ void RemoteResourceCacheProxy::finalizeRenderingUpdateForFonts()
         return;
 
     HashSet<WebCore::RenderingResourceIdentifier> toRemove;
-    auto renderingUpdateID = m_remoteRenderingBackendProxy.renderingUpdateID();
+    auto renderingUpdateID = m_renderingUpdateID;
     for (auto& item : m_fonts) {
         if (renderingUpdateID - item.value >= minimumRenderingUpdateCountToKeepFontAlive) {
             toRemove.add(item.key);
@@ -222,10 +231,11 @@ void RemoteResourceCacheProxy::finalizeRenderingUpdateForFonts()
     });
 }
 
-void RemoteResourceCacheProxy::finalizeRenderingUpdate()
+void RemoteResourceCacheProxy::didPaintLayers()
 {
     finalizeRenderingUpdateForFonts();
     prepareForNextRenderingUpdate();
+    m_renderingUpdateID++;
 }
 
 void RemoteResourceCacheProxy::remoteResourceCacheWasDestroyed()
@@ -244,9 +254,10 @@ void RemoteResourceCacheProxy::remoteResourceCacheWasDestroyed()
 
 void RemoteResourceCacheProxy::releaseMemory()
 {
-    releaseAllRemoteFonts();
+    clearNativeImageMap();
     clearFontMap();
-    m_remoteRenderingBackendProxy.deleteAllFonts();
+    clearDecomposedGlyphsMap();
+    m_remoteRenderingBackendProxy.releaseAllRemoteResources();
 }
 
 } // namespace WebKit

@@ -50,6 +50,7 @@ class LLIntOffsetsExtractor;
 namespace WTF {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(Vector);
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VectorBuffer);
 
 template <bool needsDestruction, typename T>
 struct VectorDestructor;
@@ -393,7 +394,7 @@ protected:
     unsigned m_size; // Only used by the Vector subclass, but placed here to avoid padding the struct.
 };
 
-template<typename T, size_t inlineCapacity, typename Malloc = VectorMalloc> class VectorBuffer;
+template<typename T, size_t inlineCapacity, typename Malloc = VectorBufferMalloc> class VectorBuffer;
 
 template<typename T, typename Malloc>
 class VectorBuffer<T, 0, Malloc> : private VectorBufferBase<T, Malloc> {
@@ -495,7 +496,7 @@ public:
     template<FailureAction action>
     bool allocateBuffer(size_t newCapacity)
     {
-        // FIXME: This should ASSERT(!m_buffer) to catch misuse/leaks.
+        // FIXME: This should ASSERT(!m_buffer) to catch misuse/leaks. https://bugs.webkit.org/show_bug.cgi?id=250801
         if (newCapacity > inlineCapacity)
             return Base::template allocateBuffer<action>(newCapacity);
         m_buffer = inlineBuffer();
@@ -662,7 +663,7 @@ struct UnsafeVectorOverflow {
 // Template default values are in Forward.h.
 template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
 class Vector : private VectorBuffer<T, inlineCapacity, Malloc> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Vector);
 private:
     typedef VectorBuffer<T, inlineCapacity, Malloc> Base;
     typedef VectorTypeOperations<T> TypeOperations;
@@ -858,6 +859,9 @@ public:
     void remove(size_t position, size_t length);
     template<typename U> bool removeFirst(const U&);
     template<typename MatchFunction> bool removeFirstMatching(const MatchFunction&, size_t startIndex = 0);
+    template<typename U> bool removeLast(const U&);
+    template<typename MatchFunction> bool removeLastMatching(const MatchFunction&);
+    template<typename MatchFunction> bool removeLastMatching(const MatchFunction&, size_t startIndex);
     template<typename U> unsigned removeAll(const U&);
     template<typename MatchFunction> unsigned removeAllMatching(const MatchFunction&, size_t startIndex = 0);
 
@@ -1427,7 +1431,7 @@ bool Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::appendSlow
     static_assert(action == FailureAction::Crash || action == FailureAction::Report);
     ASSERT(size() == capacity());
 
-    auto ptr = const_cast<typename std::remove_const<typename std::remove_reference<U>::type>::type*>(std::addressof(value));
+    auto ptr = const_cast<std::remove_cvref_t<U>*>(std::addressof(value));
     ptr = expandCapacity<action>(size() + 1, ptr);
     if constexpr (action == FailureAction::Report) {
         if (UNLIKELY(!ptr))
@@ -1532,7 +1536,7 @@ inline void Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::ins
 {
     ASSERT_WITH_SECURITY_IMPLICATION(position <= size());
 
-    auto ptr = const_cast<typename std::remove_const<typename std::remove_reference<U>::type>::type*>(std::addressof(value));
+    auto ptr = const_cast<std::remove_cvref_t<U>*>(std::addressof(value));
     if (size() == capacity()) {
         ptr = expandCapacity<FailureAction::Crash>(size() + 1, ptr);
         ASSERT(begin());
@@ -1593,6 +1597,35 @@ inline bool Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::rem
     for (size_t i = startIndex; i < size(); ++i) {
         if (matches(at(i))) {
             remove(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
+template<typename U>
+inline bool Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::removeLast(const U& value)
+{
+    return removeLastMatching([&value] (const T& current) {
+        return current == value;
+    });
+}
+
+template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
+template<typename MatchFunction>
+inline bool Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::removeLastMatching(const MatchFunction& matches)
+{
+    return removeLastMatching(matches, size());
+}
+
+template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
+template<typename MatchFunction>
+inline bool Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::removeLastMatching(const MatchFunction& matches, size_t startIndex)
+{
+    for (size_t i = std::min(startIndex + 1, size()); i > 0; --i) {
+        if (matches(at(i - 1))) {
+            remove(i - 1);
             return true;
         }
     }
@@ -1749,12 +1782,12 @@ struct Mapper {
     using SourceItemType = typename CollectionInspector<SourceType>::SourceItemType;
     using DestinationItemType = typename std::invoke_result<MapFunction, SourceItemType&>::type;
 
-    static Vector<DestinationItemType> map(SourceType source, const MapFunction& mapFunction)
+    static Vector<DestinationItemType> map(const SourceType& source, const MapFunction& mapFunction)
     {
         Vector<DestinationItemType> result;
         // FIXME: Use std::size when available on all compilers.
         result.reserveInitialCapacity(source.size());
-        for (auto& item : source)
+        for (auto&& item : source)
             result.uncheckedAppend(mapFunction(item));
         return result;
     }
@@ -1770,7 +1803,7 @@ struct Mapper<MapFunction, SourceType, typename std::enable_if<std::is_rvalue_re
         Vector<DestinationItemType> result;
         // FIXME: Use std::size when available on all compilers.
         result.reserveInitialCapacity(source.size());
-        for (auto& item : source)
+        for (auto&& item : source)
             result.uncheckedAppend(mapFunction(WTFMove(item)));
         return result;
     }
@@ -1809,10 +1842,10 @@ struct CompactMapper {
     using ResultItemType = typename std::invoke_result<MapFunction, SourceItemType&>::type;
     using DestinationItemType = typename CompactMapTraits<ResultItemType>::ItemType;
 
-    static Vector<DestinationItemType> compactMap(SourceType source, const MapFunction& mapFunction)
+    static Vector<DestinationItemType> compactMap(const SourceType& source, const MapFunction& mapFunction)
     {
         Vector<DestinationItemType> result;
-        for (auto& item : source) {
+        for (auto&& item : source) {
             auto itemResult = mapFunction(item);
             if (CompactMapTraits<ResultItemType>::hasValue(itemResult))
                 result.append(CompactMapTraits<ResultItemType>::extractValue(WTFMove(itemResult)));
@@ -1828,10 +1861,10 @@ struct CompactMapper<MapFunction, SourceType, typename std::enable_if<std::is_rv
     using ResultItemType = typename std::invoke_result<MapFunction, SourceItemType&&>::type;
     using DestinationItemType = typename CompactMapTraits<ResultItemType>::ItemType;
 
-    static Vector<DestinationItemType> compactMap(SourceType source, const MapFunction& mapFunction)
+    static Vector<DestinationItemType> compactMap(SourceType&& source, const MapFunction& mapFunction)
     {
         Vector<DestinationItemType> result;
-        for (auto& item : source) {
+        for (auto&& item : source) {
             auto itemResult = mapFunction(WTFMove(item));
             if (CompactMapTraits<ResultItemType>::hasValue(itemResult))
                 result.append(CompactMapTraits<ResultItemType>::extractValue(WTFMove(itemResult)));
@@ -1853,7 +1886,7 @@ inline auto copyToVectorSpecialization(const Collection& collection) -> Destinat
     DestinationVector result;
     // FIXME: Use std::size when available on all compilers.
     result.reserveInitialCapacity(collection.size());
-    for (auto& item : collection)
+    for (auto&& item : collection)
         result.uncheckedAppend(item);
     return result;
 }

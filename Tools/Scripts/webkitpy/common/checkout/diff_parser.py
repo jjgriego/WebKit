@@ -87,7 +87,10 @@ def get_diff_converter(lines):
              converter from git to SVN.
     """
     for i, line in enumerate(lines[:-1]):
-        line = string_utils.decode(line)
+        try:
+            line = string_utils.decode(line)
+        except UnicodeDecodeError:
+            line = string_utils.decode(line, encoding='iso-8859-1')
 
         # Stop when we find the first patch
         if line[:3] == "+++" and lines[i + 1] == "---":
@@ -159,7 +162,7 @@ class DiffParser(object):
         new_diff_line = None
         transform_line = get_diff_converter(diff_input)
         for line in diff_input:
-            line = string_utils.decode(line).rstrip("\n")
+            line = string_utils.decode(line, errors='replace').rstrip("\n")
             line = transform_line(line)
 
             file_declaration = match(r"^Index: (?P<FilePath>.+)", line)

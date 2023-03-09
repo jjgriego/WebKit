@@ -81,14 +81,11 @@ void PlatformPasteboard::getTypes(Vector<String>& types) const
 
 RefPtr<SharedBuffer> PlatformPasteboard::bufferForType(const String& type) const
 {
-    if (NSData *data = [m_pasteboard dataForPasteboardType:type])
-        return SharedBuffer::create(data);
-    return nullptr;
+    return readBuffer(0, type);
 }
 
 void PlatformPasteboard::performAsDataOwner(DataOwnerType type, Function<void()>&& actions)
 {
-#if HAVE(PASTEBOARD_DATA_OWNER)
     auto dataOwner = _UIDataOwnerUndefined;
     switch (type) {
     case DataOwnerType::Undefined:
@@ -108,10 +105,6 @@ void PlatformPasteboard::performAsDataOwner(DataOwnerType type, Function<void()>
     [PAL::getUIPasteboardClass() _performAsDataOwner:dataOwner block:^{
         actions();
     }];
-#else
-    UNUSED_PARAM(type);
-    actions();
-#endif
 }
 
 void PlatformPasteboard::getPathnamesForType(Vector<String>&, const String&) const
@@ -746,12 +739,17 @@ Vector<String> PlatformPasteboard::allStringsForType(const String& type) const
     return strings;
 }
 
+static bool isDisallowedTypeForReadBuffer(NSString *type)
+{
+    return [type isEqualToString:UIImagePboardType];
+}
+
 RefPtr<SharedBuffer> PlatformPasteboard::readBuffer(std::optional<size_t> index, const String& type) const
 {
-    if (!index)
-        return bufferForType(type);
+    if (isDisallowedTypeForReadBuffer(type))
+        return nullptr;
 
-    NSInteger integerIndex = *index;
+    NSInteger integerIndex = index.value_or(0);
     if (integerIndex < 0 || integerIndex >= [m_pasteboard numberOfItems])
         return nullptr;
 
@@ -761,7 +759,10 @@ RefPtr<SharedBuffer> PlatformPasteboard::readBuffer(std::optional<size_t> index,
 
     if (![pasteboardItem count])
         return nullptr;
-    return SharedBuffer::create([pasteboardItem objectAtIndex:0]);
+
+    if (NSData *data = [pasteboardItem firstObject])
+        return SharedBuffer::create(data);
+    return nullptr;
 }
 
 String PlatformPasteboard::readString(size_t index, const String& type) const
@@ -810,12 +811,16 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (!value)
         return { };
 
-    ASSERT([value isKindOfClass:[NSURL class]]);
-    if (![value isKindOfClass:[NSURL class]])
+    RetainPtr url = dynamic_objc_cast<NSURL>(value);
+    if (!url) {
+        if (auto *urlData = dynamic_objc_cast<NSData>(value))
+            url = adoptNS([[NSURL alloc] initWithDataRepresentation:urlData relativeToURL:nil]);
+    }
+
+    if (!url)
         return { };
 
-    NSURL *url = (NSURL *)value;
-    if (!allowReadingURLAtIndex(url, index))
+    if (!allowReadingURLAtIndex(url.get(), index))
         return { };
 
 #if PASTEBOARD_SUPPORTS_ITEM_PROVIDERS && NSURL_SUPPORTS_TITLE
@@ -824,7 +829,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     UNUSED_PARAM(title);
 #endif
 
-    return url;
+    return url.get();
 }
 
 void PlatformPasteboard::updateSupportedTypeIdentifiers(const Vector<String>& types)

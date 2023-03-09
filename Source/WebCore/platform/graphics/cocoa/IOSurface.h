@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,8 +29,10 @@
 
 #include "DestinationColorSpace.h"
 #include "IntSize.h"
+#include "ProcessIdentity.h"
+#include <CoreGraphics/CGImage.h>
 #include <objc/objc.h>
-#include <pal/spi/cocoa/IOSurfaceSPI.h>
+#include <wtf/spi/cocoa/IOSurfaceSPI.h>
 
 #if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
 #define HAVE_IOSURFACE_RGB10 1
@@ -43,20 +45,19 @@ class TextStream;
 
 namespace WebCore {
 
-class GraphicsContext;
-class HostWindow;
 class IOSurfacePool;
-class ProcessIdentity;
 
 enum class PixelFormat : uint8_t;
 enum class SetNonVolatileResult : uint8_t;
 
 using IOSurfaceSeed = uint32_t;
+using PlatformDisplayID = uint32_t;
 
 class IOSurface final {
     WTF_MAKE_FAST_ALLOCATED;
 public:
     enum class Format {
+        BGRX,
         BGRA,
         YUV422,
 #if HAVE(IOSURFACE_RGB10)
@@ -103,8 +104,9 @@ public:
     WEBCORE_EXPORT static std::unique_ptr<IOSurface> create(IOSurfacePool*, IntSize, const DestinationColorSpace&, Format = Format::BGRA);
     WEBCORE_EXPORT static std::unique_ptr<IOSurface> createFromImage(IOSurfacePool*, CGImageRef);
 
-    WEBCORE_EXPORT static std::unique_ptr<IOSurface> createFromSendRight(const WTF::MachSendRight&&, const DestinationColorSpace&);
-    WEBCORE_EXPORT static std::unique_ptr<IOSurface> createFromSurface(IOSurfaceRef, const DestinationColorSpace&);
+    WEBCORE_EXPORT static std::unique_ptr<IOSurface> createFromSendRight(const WTF::MachSendRight&&);
+    // If the colorSpace argument is non-null, it replaces any colorspace metadata on the surface.
+    WEBCORE_EXPORT static std::unique_ptr<IOSurface> createFromSurface(IOSurfaceRef, std::optional<DestinationColorSpace>&&);
 
     WEBCORE_EXPORT static void moveToPool(std::unique_ptr<IOSurface>&&, IOSurfacePool*);
 
@@ -127,8 +129,10 @@ public:
     id asLayerContents() const { return (__bridge id)m_surface.get(); }
 #endif
     IOSurfaceRef surface() const { return m_surface.get(); }
-    WEBCORE_EXPORT GraphicsContext& ensureGraphicsContext();
-    WEBCORE_EXPORT CGContextRef ensurePlatformContext(const HostWindow* = nullptr);
+    WEBCORE_EXPORT CGContextRef ensurePlatformContext(PlatformDisplayID = 0);
+    // The graphics context cached on the surface counts as a "user", so to get
+    // an accurate result from isInUse(), it needs to be released.
+    WEBCORE_EXPORT void releasePlatformContext();
 
     // Querying volatility can be expensive, so in cases where the surface is
     // going to be used immediately, use the return value of setVolatile to
@@ -138,21 +142,17 @@ public:
 
     WEBCORE_EXPORT SetNonVolatileResult setVolatile(bool);
 
+    bool hasFormat(Format format) const { return m_format && *m_format == format; }
     IntSize size() const { return m_size; }
     size_t totalBytes() const { return m_totalBytes; }
 
-    const DestinationColorSpace& colorSpace() const { return m_colorSpace; }
-    WEBCORE_EXPORT Format format() const;
+    WEBCORE_EXPORT DestinationColorSpace colorSpace();
     WEBCORE_EXPORT IOSurfaceID surfaceID() const;
-    size_t bytesPerRow() const;
+    WEBCORE_EXPORT size_t bytesPerRow() const;
 
     WEBCORE_EXPORT IOSurfaceSeed seed() const;
 
     WEBCORE_EXPORT bool isInUse() const;
-
-    // The graphics context cached on the surface counts as a "user", so to get
-    // an accurate result from isInUse(), it needs to be released.
-    WEBCORE_EXPORT void releaseGraphicsContext();
 
 #if HAVE(IOSURFACE_ACCELERATOR)
     WEBCORE_EXPORT static bool allowConversionFromFormatToFormat(Format, Format);
@@ -162,26 +162,39 @@ public:
     WEBCORE_EXPORT void setOwnershipIdentity(const ProcessIdentity&);
     WEBCORE_EXPORT static void setOwnershipIdentity(IOSurfaceRef, const ProcessIdentity&);
 
-    void migrateColorSpaceToProperties();
+    RetainPtr<CGContextRef> createCompatibleBitmap(unsigned width, unsigned height);
 
 private:
     IOSurface(IntSize, const DestinationColorSpace&, Format, bool& success);
-    IOSurface(IOSurfaceRef, const DestinationColorSpace&);
+    IOSurface(IOSurfaceRef, std::optional<DestinationColorSpace>&&);
 
-    DestinationColorSpace m_colorSpace;
+    void setColorSpaceProperty();
+    void ensureColorSpace();
+    std::optional<DestinationColorSpace> surfaceColorSpace() const;
+
+    struct BitmapConfiguration {
+        CGBitmapInfo bitmapInfo;
+        size_t bitsPerComponent;
+    };
+
+    BitmapConfiguration bitmapConfiguration() const;
+
+    std::optional<Format> m_format;
+    std::optional<DestinationColorSpace> m_colorSpace;
     IntSize m_size;
     size_t m_totalBytes;
 
-    std::unique_ptr<GraphicsContext> m_graphicsContext;
+    ProcessIdentity m_resourceOwner;
     RetainPtr<CGContextRef> m_cgContext;
 
     RetainPtr<IOSurfaceRef> m_surface;
 
     static std::optional<IntSize> s_maximumSize;
+
+    WEBCORE_EXPORT friend WTF::TextStream& operator<<(WTF::TextStream&, const WebCore::IOSurface&);
 };
 
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, WebCore::IOSurface::Format);
-WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const WebCore::IOSurface&);
 
 } // namespace WebCore
 

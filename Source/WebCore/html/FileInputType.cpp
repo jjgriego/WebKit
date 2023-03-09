@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2004-2020 Apple Inc. All rights reserved.
- * Copyright (C) 2010 Google Inc. All rights reserved.
+ * Copyright (C) 2004-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2014 Google Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -26,10 +26,11 @@
 #include "DOMFormData.h"
 #include "DirectoryFileListCreator.h"
 #include "DragData.h"
-#include "ElementChildIterator.h"
+#include "ElementChildIteratorInlines.h"
 #include "ElementRareData.h"
 #include "Event.h"
 #include "File.h"
+#include "FileChooser.h"
 #include "FileList.h"
 #include "FormController.h"
 #include "Frame.h"
@@ -40,7 +41,7 @@
 #include "LocalizedStrings.h"
 #include "MIMETypeRegistry.h"
 #include "RenderFileUploadControl.h"
-#include "RuntimeEnabledFeatures.h"
+#include "ScriptDisallowedScope.h"
 #include "Settings.h"
 #include "ShadowPseudoIds.h"
 #include "ShadowRoot.h"
@@ -95,6 +96,7 @@ Ref<UploadButtonElement> UploadButtonElement::createForMultiple(Document& docume
 Ref<UploadButtonElement> UploadButtonElement::createInternal(Document& document, const String& value)
 {
     auto button = adoptRef(*new UploadButtonElement(document));
+    ScriptDisallowedScope::EventAllowedScope eventAllowedScope { button };
     button->setType(HTMLNames::buttonTag->localName());
     button->setPseudo(ShadowPseudoIds::fileSelectorButton());
     button->setValue(value);
@@ -122,14 +124,15 @@ FileInputType::~FileInputType()
         m_fileIconLoader->invalidate();
 }
 
-Vector<FileChooserFileInfo> FileInputType::filesFromFormControlState(const FormControlState& state)
+std::pair<Vector<FileChooserFileInfo>, String> FileInputType::filesFromFormControlState(const FormControlState& state)
 {
     Vector<FileChooserFileInfo> files;
-    size_t size = state.size();
+    size_t size = state.size() - 1;
     files.reserveInitialCapacity(size / 2);
     for (size_t i = 0; i < size; i += 2)
         files.uncheckedAppend({ state[i], { }, state[i + 1] });
-    return files;
+
+    return { files, state[size] };
 }
 
 const AtomString& FileInputType::formControlType() const
@@ -142,7 +145,7 @@ FormControlState FileInputType::saveFormControlState() const
     if (m_fileList->isEmpty())
         return { };
 
-    auto length = Checked<size_t>(m_fileList->files().size()) * Checked<size_t>(2);
+    auto length = Checked<size_t>(m_fileList->files().size()) * Checked<size_t>(2) + Checked<size_t>(1);
 
     Vector<AtomString> stateVector;
     stateVector.reserveInitialCapacity(length);
@@ -150,12 +153,14 @@ FormControlState FileInputType::saveFormControlState() const
         stateVector.uncheckedAppend(AtomString { file->path() });
         stateVector.uncheckedAppend(AtomString { file->name() });
     }
+    stateVector.uncheckedAppend(AtomString { m_displayString });
     return FormControlState { WTFMove(stateVector) };
 }
 
 void FileInputType::restoreFormControlState(const FormControlState& state)
 {
-    filesChosen(filesFromFormControlState(state));
+    auto [files, displayString] = filesFromFormControlState(state);
+    filesChosen(files, displayString);
 }
 
 bool FileInputType::appendFormData(DOMFormData& formData) const
@@ -248,13 +253,17 @@ String FileInputType::firstElementPathForInputValue() const
     return makeString("C:\\fakepath\\", m_fileList->file(0).name());
 }
 
-void FileInputType::setValue(const String&, bool, TextFieldEventBehavior, TextControlSetValueSelection)
+void FileInputType::setValue(const String&, bool valueChanged, TextFieldEventBehavior, TextControlSetValueSelection)
 {
     // FIXME: Should we clear the file list, or replace it with a new empty one here? This is observable from JavaScript through custom properties.
+    if (!valueChanged)
+        return;
+    
     m_fileList->clear();
     m_icon = nullptr;
     ASSERT(element());
     element()->invalidateStyleForSubtree();
+    element()->updateValidity();
 }
 
 void FileInputType::createShadowSubtree()
@@ -264,6 +273,7 @@ void FileInputType::createShadowSubtree()
     ASSERT(element()->shadowRoot());
 
     auto button = element()->multiple() ? UploadButtonElement::createForMultiple(element()->document()) : UploadButtonElement::create(element()->document());
+    ScriptDisallowedScope::EventAllowedScope eventAllowedScope { *element()->userAgentShadowRoot() };
     element()->userAgentShadowRoot()->appendChild(ContainerNode::ChildChange::Source::Parser, button);
     disabledStateChanged();
 }
@@ -337,14 +347,14 @@ void FileInputType::applyFileChooserSettings()
     if (m_fileChooser)
         m_fileChooser->invalidate();
 
-    m_fileChooser = FileChooser::create(this, fileChooserSettings());
+    m_fileChooser = FileChooser::create(*this, fileChooserSettings());
 }
 
 bool FileInputType::allowsDirectories() const
 {
-    if (!RuntimeEnabledFeatures::sharedFeatures().directoryUploadEnabled())
-        return false;
     ASSERT(element());
+    if (!element()->document().settings().directoryUploadEnabled())
+        return false;
     return element()->hasAttributeWithoutSynchronization(webkitdirectoryAttr);
 }
 
@@ -368,7 +378,7 @@ void FileInputType::setFiles(RefPtr<FileList>&& files, RequestIcon shouldRequest
         pathsChanged = true;
     else {
         for (unsigned i = 0; i < length; ++i) {
-            if (files->file(i).path() != m_fileList->file(i).path()) {
+            if (files->file(i).path() != m_fileList->file(i).path() || !FileSystem::fileIDsAreEqual(files->file(i).fileID(), m_fileList->file(i).fileID())) {
                 pathsChanged = true;
                 break;
             }
@@ -394,8 +404,11 @@ void FileInputType::setFiles(RefPtr<FileList>&& files, RequestIcon shouldRequest
         // input instance is safe since it is ref-counted.
         protectedInputElement->dispatchInputEvent();
         protectedInputElement->dispatchChangeEvent();
-    }
+    } else
+        protectedInputElement->dispatchCancelEvent();
+
     protectedInputElement->setChangedSinceLastFormControlChangeEvent(false);
+    protectedInputElement->setInteractedWithSinceLastFormSubmitEvent(true);
 }
 
 void FileInputType::filesChosen(const Vector<FileChooserFileInfo>& paths, const String& displayString, Icon* icon)
@@ -409,7 +422,11 @@ void FileInputType::filesChosen(const Vector<FileChooserFileInfo>& paths, const 
     auto* document = element() ? &element()->document() : nullptr;
     if (!allowsDirectories()) {
         auto files = paths.map([document](auto& fileInfo) {
-            return File::create(document, fileInfo.path, fileInfo.replacementPath, fileInfo.displayName);
+            auto handle = FileSystem::openFile(fileInfo.path, FileSystem::FileOpenMode::Read);
+            auto fileID = FileSystem::fileID(handle);
+            FileSystem::closeFile(handle);
+
+            return File::create(document, fileInfo.path, fileInfo.replacementPath, fileInfo.displayName, fileID);
         });
         didCreateFileList(FileList::create(WTFMove(files)), icon);
         return;
@@ -440,6 +457,14 @@ void FileInputType::filesChosen(const Vector<String>& paths, const Vector<String
     filesChosen(WTFMove(files));
 }
 
+void FileInputType::fileChoosingCancelled()
+{
+    ASSERT(element());
+    Ref<HTMLInputElement> protectedInputElement(*element());
+
+    protectedInputElement->dispatchCancelEvent();
+}
+
 void FileInputType::didCreateFileList(Ref<FileList>&& fileList, RefPtr<Icon>&& icon)
 {
     Ref protectedThis { *this };
@@ -447,7 +472,7 @@ void FileInputType::didCreateFileList(Ref<FileList>&& fileList, RefPtr<Icon>&& i
     ASSERT(!allowsDirectories() || m_directoryFileListCreator);
     m_directoryFileListCreator = nullptr;
 
-    setFiles(WTFMove(fileList), icon ? RequestIcon::Yes : RequestIcon::No, WasSetByJavaScript::No);
+    setFiles(WTFMove(fileList), icon ? RequestIcon::No : RequestIcon::Yes, WasSetByJavaScript::No);
     if (icon && !m_fileList->isEmpty() && element())
         iconLoaded(WTFMove(icon));
 }

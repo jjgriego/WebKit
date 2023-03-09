@@ -3,6 +3,7 @@ PASS accent-color
 PASS align-content
 PASS align-items
 PASS align-self
+PASS align-tracks
 PASS alignment-baseline
 PASS alt
 PASS animation-composition
@@ -127,9 +128,12 @@ PASS font-kerning
 PASS font-optical-sizing
 PASS font-palette
 PASS font-size
+PASS font-size-adjust
 PASS font-stretch
 PASS font-style
-PASS font-synthesis
+PASS font-synthesis-small-caps
+PASS font-synthesis-style
+PASS font-synthesis-weight
 PASS font-variant-alternates
 PASS font-variant-caps
 PASS font-variant-east-asian
@@ -164,6 +168,7 @@ PASS isolation
 PASS justify-content
 PASS justify-items
 PASS justify-self
+PASS justify-tracks
 PASS kerning
 PASS left
 PASS letter-spacing
@@ -192,6 +197,7 @@ PASS mask-origin
 PASS mask-repeat
 PASS mask-size
 PASS mask-type
+PASS masonry-auto-flow
 PASS math-style
 PASS max-block-size
 PASS max-height
@@ -216,6 +222,7 @@ PASS outline-color
 PASS outline-offset
 PASS outline-style
 PASS outline-width
+PASS overflow-anchor
 PASS overflow-wrap
 PASS overflow-x
 PASS overflow-y
@@ -316,7 +323,6 @@ PASS transition-property
 PASS transition-timing-function
 PASS translate
 PASS unicode-bidi
-PASS user-select
 PASS vector-effect
 PASS vertical-align
 PASS visibility

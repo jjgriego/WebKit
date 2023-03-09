@@ -28,6 +28,7 @@
 #if ENABLE(VIDEO) && USE(AVFOUNDATION)
 
 #include "MediaPlayerPrivateAVFoundation.h"
+#include "VideoFrameMetadata.h"
 #include <CoreMedia/CMTime.h>
 #include <wtf/Function.h>
 #include <wtf/Observer.h>
@@ -239,7 +240,7 @@ private:
     void updateVideoLayerGravity(ShouldAnimate);
 
     bool didPassCORSAccessCheck() const final;
-    std::optional<bool> wouldTaintOrigin(const SecurityOrigin&) const final;
+    std::optional<bool> isCrossOrigin(const SecurityOrigin&) const final;
 
     MediaTime getStartDate() const final;
 
@@ -356,7 +357,10 @@ private:
 
     void checkNewVideoFrameMetadata();
 
+    void setShouldDisableHDR(bool) final;
+
     std::optional<bool> allTracksArePlayable() const;
+    bool containsDisabledTracks() const;
     bool trackIsPlayable(AVAssetTrack*) const;
 
     RetainPtr<AVURLAsset> m_avAsset;
@@ -435,7 +439,7 @@ private:
     mutable MediaPlayer::CurrentTimeDidChangeCallback m_currentTimeDidChangeCallback;
     mutable MediaTime m_cachedCurrentMediaTime { -1, 1, 0 };
     mutable MediaTime m_lastPeriodicObserverMediaTime;
-    mutable std::optional<WallTime> m_wallClockAtCachedCurrentTime;
+    mutable Markable<WallTime> m_wallClockAtCachedCurrentTime;
     mutable int m_timeControlStatusAtCachedCurrentTime { 0 };
     mutable double m_requestedRateAtCachedCurrentTime { 0 };
     RefPtr<SharedBuffer> m_keyID;

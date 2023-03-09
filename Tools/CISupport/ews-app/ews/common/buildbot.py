@@ -1,4 +1,4 @@
-# Copyright (C) 2018-2020 Apple Inc. All rights reserved.
+# Copyright (C) 2018-2022 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -20,8 +20,6 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from future.utils import lrange
-
 import logging
 import os
 import re
@@ -36,11 +34,27 @@ _log = logging.getLogger(__name__)
 
 class Buildbot():
     # Buildbot status codes referenced from https://github.com/buildbot/buildbot/blob/master/master/buildbot/process/results.py
-    ALL_RESULTS = lrange(7)
+    ALL_RESULTS = list(range(7))
     SUCCESS, WARNINGS, FAILURE, SKIPPED, EXCEPTION, RETRY, CANCELLED = ALL_RESULTS
     icons_for_queues_mapping = {}
     queue_name_by_shortname_mapping = {}
     builder_name_to_id_mapping = {}
+
+    # FIXME: Auto-generate the queue's trigger relationship
+    QUEUE_TRIGGERS = {
+        'api-ios': 'ios-sim',
+        'ios-wk2': 'ios-sim',
+        'api-mac': 'mac',
+        'mac-wk1': 'mac',
+        'mac-wk2': 'mac',
+        'mac-wk2-stress': 'mac',
+        'mac-debug-wk1': 'mac-debug',
+        'mac-AS-debug-wk2': 'mac-AS-debug',
+        'api-gtk': 'gtk',
+        'gtk-wk2': 'gtk',
+        'jsc-mips-tests': 'jsc-mips',
+        'jsc-armv7-tests': 'jsc-armv7',
+    }
 
     @classmethod
     def send_patch_to_buildbot(cls, patch_path, send_to_commit_queue=False, properties=None):
@@ -48,7 +62,7 @@ class Buildbot():
         buildbot_port = config.COMMIT_QUEUE_PORT if send_to_commit_queue else config.BUILDBOT_SERVER_PORT
         command = ['buildbot', 'try',
                    '--connect=pb',
-                   '--master={}:{}'.format(config.BUILDBOT_SERVER_HOST, buildbot_port),
+                   '--master={}:{}'.format(config.BUILDBOT_TRY_HOST, buildbot_port),
                    '--username={}'.format(config.BUILDBOT_TRY_USERNAME),
                    '--passwd={}'.format(config.BUILDBOT_TRY_PASSWORD),
                    '--diff={}'.format(patch_path),
@@ -169,3 +183,17 @@ class Buildbot():
 
         _log.error('Failed to retry build: {}, http response code: {}'.format(build_url, response.status_code))
         return False
+
+    @classmethod
+    def is_tester_queue(self, queue):
+        icon = Buildbot.icons_for_queues_mapping.get(queue)
+        return icon in ['testOnly', 'buildAndTest']
+
+    @classmethod
+    def is_builder_queue(self, queue):
+        icon = Buildbot.icons_for_queues_mapping.get(queue)
+        return icon in ['buildOnly', 'buildAndTest']
+
+    @classmethod
+    def get_parent_queue(self, queue):
+        return Buildbot.QUEUE_TRIGGERS.get(queue)

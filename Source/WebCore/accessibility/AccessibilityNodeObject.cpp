@@ -38,7 +38,8 @@
 #include "AccessibilitySpinButton.h"
 #include "AccessibilityTable.h"
 #include "Editing.h"
-#include "ElementIterator.h"
+#include "ElementAncestorIteratorInlines.h"
+#include "ElementChildIteratorInlines.h"
 #include "Event.h"
 #include "EventNames.h"
 #include "FloatRect.h"
@@ -64,7 +65,6 @@
 #include "HTMLTextFormControlElement.h"
 #include "HTMLVideoElement.h"
 #include "KeyboardEvent.h"
-#include "LabelableElement.h"
 #include "LocalizedStrings.h"
 #include "MathMLElement.h"
 #include "MathMLNames.h"
@@ -126,7 +126,7 @@ void AccessibilityNodeObject::updateRole()
     m_role = determineAccessibilityRole();
     if (previousRole != m_role) {
         if (auto* cache = axObjectCache())
-            cache->handleRoleChange(this);
+            cache->handleRoleChanged(this);
     }
 }
 
@@ -259,6 +259,11 @@ AccessibilityRole AccessibilityNodeObject::determineAccessibilityRole()
     return determineAccessibilityRoleFromNode();
 }
 
+bool AccessibilityNodeObject::matchesTextAreaRole() const
+{
+    return is<HTMLTextAreaElement>(node()) || hasContentEditableAttributeSet();
+}
+
 AccessibilityRole AccessibilityNodeObject::determineAccessibilityRoleFromNode(TreatStyleFormatGroupAsInline treatStyleFormatGroupAsInline) const
 {
     if (!node())
@@ -272,8 +277,6 @@ AccessibilityRole AccessibilityNodeObject::determineAccessibilityRoleFromNode(Tr
         auto& selectElement = downcast<HTMLSelectElement>(*node());
         return selectElement.multiple() ? AccessibilityRole::ListBox : AccessibilityRole::PopUpButton;
     }
-    if (is<HTMLTextAreaElement>(*node()))
-        return AccessibilityRole::TextArea;
     if (is<HTMLImageElement>(*node()) && downcast<HTMLImageElement>(*node()).hasAttributeWithoutSynchronization(usemapAttr))
         return AccessibilityRole::ImageMap;
     if (node()->hasTagName(liTag))
@@ -313,7 +316,7 @@ AccessibilityRole AccessibilityNodeObject::determineAccessibilityRoleFromNode(Tr
         return AccessibilityRole::TextField;
     }
 
-    if (hasContentEditableAttributeSet())
+    if (matchesTextAreaRole())
         return AccessibilityRole::TextArea;
 
     if (headingLevel())
@@ -375,13 +378,13 @@ AccessibilityRole AccessibilityNodeObject::determineAccessibilityRoleFromNode(Tr
         return AccessibilityRole::Caption;
     if (node()->hasTagName(dialogTag))
         return AccessibilityRole::ApplicationDialog;
-    if (node()->hasTagName(markTag))
+    if (node()->hasTagName(markTag) || equalLettersIgnoringASCIICase(getAttribute(roleAttr), "mark"_s))
         return AccessibilityRole::Mark;
     if (node()->hasTagName(preTag))
         return AccessibilityRole::Pre;
     if (is<HTMLDetailsElement>(node()))
         return AccessibilityRole::Details;
-    if (is<HTMLSummaryElement>(node()))
+    if (auto* summaryElement = dynamicDowncast<HTMLSummaryElement>(node()); summaryElement && summaryElement->isActiveSummary())
         return AccessibilityRole::Summary;
 
     // http://rawgit.com/w3c/aria/master/html-aam/html-aam.html
@@ -445,6 +448,20 @@ bool AccessibilityNodeObject::isDescendantOfElementType(const HashSet<QualifiedN
             return true;
     }
     return false;
+}
+
+void AccessibilityNodeObject::updateChildrenIfNecessary()
+{
+    if (needsToUpdateChildren())
+        clearChildren();
+
+    AccessibilityObject::updateChildrenIfNecessary();
+}
+
+void AccessibilityNodeObject::clearChildren()
+{
+    AccessibilityObject::clearChildren();
+    m_childrenDirty = false;
 }
 
 void AccessibilityNodeObject::addChildren()
@@ -554,11 +571,6 @@ bool AccessibilityNodeObject::canvasHasFallbackContent() const
     return childrenOfType<Element>(canvasElement).first();
 }
 
-bool AccessibilityNodeObject::isImageButton() const
-{
-    return isNativeImage() && isButton();
-}
-
 bool AccessibilityNodeObject::isNativeTextControl() const
 {
     Node* node = this->node();
@@ -639,25 +651,6 @@ bool AccessibilityNodeObject::isPasswordField() const
     return downcast<HTMLInputElement>(*node).isPasswordField();
 }
 
-AccessibilityObject* AccessibilityNodeObject::passwordFieldOrContainingPasswordField()
-{
-    Node* node = this->node();
-    if (!node)
-        return nullptr;
-
-    if (is<HTMLInputElement>(*node) && downcast<HTMLInputElement>(*node).isPasswordField())
-        return this;
-
-    auto* element = node->shadowHost();
-    if (!is<HTMLInputElement>(element))
-        return nullptr;
-
-    if (auto* cache = axObjectCache())
-        return cache->getOrCreate(element);
-
-    return nullptr;
-}
-
 bool AccessibilityNodeObject::isInputImage() const
 {
     Node* node = this->node();
@@ -721,16 +714,6 @@ bool AccessibilityNodeObject::isMenuItem() const
     }
 }
 
-bool AccessibilityNodeObject::isNativeCheckboxOrRadio() const
-{
-    Node* node = this->node();
-    if (!is<HTMLInputElement>(node))
-        return false;
-
-    auto& input = downcast<HTMLInputElement>(*node);
-    return input.isCheckbox() || input.isRadioButton();
-}
-
 bool AccessibilityNodeObject::isEnabled() const
 {
     // ARIA says that the disabled status applies to the current element and all descendant elements.
@@ -754,7 +737,14 @@ bool AccessibilityNodeObject::isEnabled() const
 
 bool AccessibilityNodeObject::isIndeterminate() const
 {
-    return equalLettersIgnoringASCIICase(getAttribute(indeterminateAttr), "true"_s);
+    if (supportsCheckedState())
+        return checkboxOrRadioValue() == AccessibilityButtonState::Mixed;
+
+    // We handle this for native <progress> elements in AccessibilityProgressIndicator::isIndeterminate.
+    if (ariaRoleAttribute() == AccessibilityRole::ProgressIndicator)
+        return !hasARIAValueNow();
+
+    return false;
 }
 
 bool AccessibilityNodeObject::isPressed() const
@@ -1076,8 +1066,8 @@ AXCoreObject* AccessibilityNodeObject::selectedTabItem()
 
 AccessibilityButtonState AccessibilityNodeObject::checkboxOrRadioValue() const
 {
-    if (isNativeCheckboxOrRadio())
-        return isIndeterminate() ? AccessibilityButtonState::Mixed : isChecked() ? AccessibilityButtonState::On : AccessibilityButtonState::Off;
+    if (auto* input = dynamicDowncast<HTMLInputElement>(node()); input && (input->isCheckbox() || input->isRadioButton()))
+        return input->indeterminate() ? AccessibilityButtonState::Mixed : isChecked() ? AccessibilityButtonState::On : AccessibilityButtonState::Off;
 
     return AccessibilityObject::checkboxOrRadioValue();
 }
@@ -1202,9 +1192,9 @@ bool AccessibilityNodeObject::isDescendantOfBarrenParent() const
     return false;
 }
 
-void AccessibilityNodeObject::alterSliderValue(bool increase)
+void AccessibilityNodeObject::alterRangeValue(StepAction stepAction)
 {
-    if (roleValue() != AccessibilityRole::Slider)
+    if (roleValue() != AccessibilityRole::Slider && roleValue() != AccessibilityRole::SpinButton)
         return;
     
     auto element = this->element();
@@ -1212,21 +1202,21 @@ void AccessibilityNodeObject::alterSliderValue(bool increase)
         return;
 
     if (!getAttribute(stepAttr).isEmpty())
-        changeValueByStep(increase);
+        changeValueByStep(stepAction);
     else
-        changeValueByPercent(increase ? 5 : -5);
+        changeValueByPercent(stepAction == StepAction::Increment ? 5 : -5);
 }
     
 void AccessibilityNodeObject::increment()
 {
     UserGestureIndicator gestureIndicator(ProcessingUserGesture, document());
-    alterSliderValue(true);
+    alterRangeValue(StepAction::Increment);
 }
 
 void AccessibilityNodeObject::decrement()
 {
     UserGestureIndicator gestureIndicator(ProcessingUserGesture, document());
-    alterSliderValue(false);
+    alterRangeValue(StepAction::Decrement);
 }
 
 static bool dispatchSimulatedKeyboardUpDownEvent(AccessibilityObject* object, const KeyboardEvent::Init& keyInit)
@@ -1273,24 +1263,28 @@ bool AccessibilityNodeObject::performDismissAction()
 }
 
 // Fire a keyboard event if we were not able to set this value natively.
-bool AccessibilityNodeObject::postKeyboardKeysForValueChange(bool increase)
+bool AccessibilityNodeObject::postKeyboardKeysForValueChange(StepAction stepAction)
 {
     auto keyInit = KeyboardEvent::Init();
-    bool vertical = orientation() == AccessibilityOrientation::Vertical;
     bool isLTR = page()->userInterfaceLayoutDirection() == UserInterfaceLayoutDirection::LTR;
-    
+    // https://w3c.github.io/aria/#spinbutton
+    // `spinbutton` elements don't have an implicit orientation, but the spec does say:
+    //     > Authors SHOULD also ensure the up and down arrows on a keyboard perform the increment and decrement functions
+    // So let's force a vertical orientation for `spinbutton`s so we simulate the correct keypress (either up or down).
+    bool vertical = orientation() == AccessibilityOrientation::Vertical || roleValue() == AccessibilityRole::SpinButton;
+
     // The goal is to mimic existing keyboard dispatch completely, so that this is indistinguishable from a real key press.
     typedef enum { left = 37, up = 38, right = 39, down = 40 } keyCode;
-    keyInit.key = increase ? (vertical ? "ArrowUp"_s : (isLTR ? "ArrowRight"_s : "ArrowLeft"_s)) : (vertical ? "ArrowDown"_s : (isLTR ? "ArrowLeft"_s : "ArrowRight"_s));
-    keyInit.keyCode = increase ? (vertical ? keyCode::up : (isLTR ? keyCode::right : keyCode::left)) : (vertical ? keyCode::down : (isLTR ? keyCode::left : keyCode::right));
-    keyInit.keyIdentifier = increase ? (vertical ? "Up"_s : (isLTR ? "Right"_s : "Left"_s)) : (vertical ? "Down"_s : (isLTR ? "Left"_s : "Right"_s));
+    keyInit.key = stepAction == StepAction::Increment ? (vertical ? "ArrowUp"_s : (isLTR ? "ArrowRight"_s : "ArrowLeft"_s)) : (vertical ? "ArrowDown"_s : (isLTR ? "ArrowLeft"_s : "ArrowRight"_s));
+    keyInit.keyCode = stepAction == StepAction::Increment ? (vertical ? keyCode::up : (isLTR ? keyCode::right : keyCode::left)) : (vertical ? keyCode::down : (isLTR ? keyCode::left : keyCode::right));
+    keyInit.keyIdentifier = stepAction == StepAction::Increment ? (vertical ? "Up"_s : (isLTR ? "Right"_s : "Left"_s)) : (vertical ? "Down"_s : (isLTR ? "Left"_s : "Right"_s));
 
     InitializeLegacyKeyInitProperties(keyInit, *this);
 
     return dispatchSimulatedKeyboardUpDownEvent(this, keyInit);
 }
 
-void AccessibilityNodeObject::setNodeValue(bool increase, float value)
+void AccessibilityNodeObject::setNodeValue(StepAction stepAction, float value)
 {
     bool didSet = setValue(String::number(value));
     
@@ -1298,20 +1292,23 @@ void AccessibilityNodeObject::setNodeValue(bool increase, float value)
         if (auto* cache = axObjectCache())
             cache->postNotification(this, document(), AXObjectCache::AXValueChanged);
     } else
-        postKeyboardKeysForValueChange(increase);
+        postKeyboardKeysForValueChange(stepAction);
 }
 
-void AccessibilityNodeObject::changeValueByStep(bool increase)
+void AccessibilityNodeObject::changeValueByStep(StepAction stepAction)
 {
     float step = stepValueForRange();
     float value = valueForRange();
 
-    value += increase ? step : -step;
-    setNodeValue(increase, value);
+    value += stepAction == StepAction::Increment ? step : -step;
+    setNodeValue(stepAction, value);
 }
 
 void AccessibilityNodeObject::changeValueByPercent(float percentChange)
 {
+    if (!percentChange)
+        return;
+
     float range = maxValueForRange() - minValueForRange();
     float step = range * (percentChange / 100);
     float value = valueForRange();
@@ -1321,7 +1318,7 @@ void AccessibilityNodeObject::changeValueByPercent(float percentChange)
         step = std::abs(percentChange) * (1 / percentChange);
 
     value += step;
-    setNodeValue(percentChange > 0, value);
+    setNodeValue(percentChange > 0 ? StepAction::Increment : StepAction::Decrement, value);
 }
 
 bool AccessibilityNodeObject::elementAttributeValue(const QualifiedName& attributeName) const
@@ -1832,19 +1829,8 @@ void AccessibilityNodeObject::accessibilityText(Vector<AccessibilityText>& textO
 void AccessibilityNodeObject::ariaLabeledByText(Vector<AccessibilityText>& textOrder) const
 {
     String ariaLabeledBy = ariaLabeledByAttribute();
-    if (!ariaLabeledBy.isEmpty()) {
-        auto objectCache = axObjectCache();
-        if (!objectCache)
-            return;
-
-        auto elements = ariaLabeledByElements();
-
-        Vector<AXCoreObject*> axElements;
-        for (const auto& element : elements)
-            axElements.append(objectCache->getOrCreate(element));
-        
+    if (!ariaLabeledBy.isEmpty())
         textOrder.append(AccessibilityText(ariaLabeledBy, AccessibilityTextSource::Alternative));
-    }
 }
     
 String AccessibilityNodeObject::alternativeTextForWebArea() const
@@ -2256,11 +2242,13 @@ String AccessibilityNodeObject::stringValue() const
     if (node->hasTagName(selectTag)) {
         HTMLSelectElement& selectElement = downcast<HTMLSelectElement>(*node);
         int selectedIndex = selectElement.selectedIndex();
-        const Vector<HTMLElement*>& listItems = selectElement.listItems();
+        auto& listItems = selectElement.listItems();
         if (selectedIndex >= 0 && static_cast<size_t>(selectedIndex) < listItems.size()) {
-            const AtomString& overriddenDescription = listItems[selectedIndex]->attributeWithoutSynchronization(aria_labelAttr);
-            if (!overriddenDescription.isNull())
-                return overriddenDescription;
+            if (RefPtr selectedItem = listItems[selectedIndex].get()) {
+                const AtomString& overriddenDescription = selectedItem->attributeWithoutSynchronization(aria_labelAttr);
+                if (!overriddenDescription.isNull())
+                    return overriddenDescription;
+            }
         }
         if (!selectElement.multiple())
             return selectElement.value();
@@ -2430,6 +2418,61 @@ bool AccessibilityNodeObject::hasAttributesRequiredForInclusion() const
     return false;
 }
 
+bool AccessibilityNodeObject::isFocused() const
+{
+    if (!m_node)
+        return false;
+
+    auto& document = m_node->document();
+    auto* focusedElement = document.focusedElement();
+    if (!focusedElement)
+        return false;
+
+    if (focusedElement == m_node)
+        return true;
+
+    // A web area is represented by the Document node in the DOM tree which isn't focusable.
+    // Instead, check if the frame's selection is focused.
+    if (roleValue() != AccessibilityRole::WebArea)
+        return false;
+
+    auto* frame = document.frame();
+    return frame ? frame->selection().isFocusedAndActive() : false;
+}
+
+void AccessibilityNodeObject::setFocused(bool on)
+{
+    // Call the base class setFocused to ensure the view is focused and active.
+    AccessibilityObject::setFocused(on);
+
+    if (!canSetFocusAttribute())
+        return;
+
+    auto* document = this->document();
+    if (!on || !is<Element>(m_node)) {
+        document->setFocusedElement(nullptr);
+        return;
+    }
+
+    // When a node is told to set focus, that can cause it to be deallocated, which means that doing
+    // anything else inside this object will crash. To fix this, we added a RefPtr to protect this object
+    // long enough for duration.
+    RefPtr<AccessibilityObject> protectedThis(this);
+
+    // If this node is already the currently focused node, then calling focus() won't do anything.
+    // That is a problem when focus is removed from the webpage to chrome, and then returns.
+    // In these cases, we need to do what keyboard and mouse focus do, which is reset focus first.
+    if (document->focusedElement() == m_node)
+        document->setFocusedElement(nullptr);
+
+    // If we return from setFocusedElement and our element has been removed from a tree, axObjectCache() may be null.
+    if (auto* cache = axObjectCache()) {
+        cache->setIsSynchronizingSelection(true);
+        downcast<Element>(*m_node).focus();
+        cache->setIsSynchronizingSelection(false);
+    }
+}
+
 bool AccessibilityNodeObject::canSetFocusAttribute() const
 {
     Node* node = this->node();
@@ -2524,8 +2567,13 @@ AccessibilityRole AccessibilityNodeObject::determineAriaRoleAttribute() const
     if (role == AccessibilityRole::Button)
         role = buttonRoleType();
 
-    if (role == AccessibilityRole::TextArea && !ariaIsMultiline())
-        role = AccessibilityRole::TextField;
+    // If ariaRoleToWebCoreRole computed AccessibilityRole::TextField, we need to figure out if we should use the single-line WebCore textbox role (AccessibilityRole::TextField)
+    // or the multi-line WebCore textbox role (AccessibilityRole::TextArea) because the "textbox" ARIA role is overloaded and can mean either.
+    if (role == AccessibilityRole::TextField) {
+        auto ariaMultiline = getAttribute(aria_multilineAttr);
+        if (equalLettersIgnoringASCIICase(ariaMultiline, "true"_s) || (!equalLettersIgnoringASCIICase(ariaMultiline, "false"_s) && matchesTextAreaRole()))
+            role = AccessibilityRole::TextArea;
+    }
 
     role = remapAriaRoleDueToParent(role);
     

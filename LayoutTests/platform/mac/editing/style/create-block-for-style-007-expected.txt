@@ -2,7 +2,7 @@ EDITING DELEGATE: shouldBeginEditingInDOMRange:range from 0 of BODY > HTML > #do
 EDITING DELEGATE: webViewDidBeginEditing:WebViewDidBeginEditingNotification
 EDITING DELEGATE: webViewDidChangeSelection:WebViewDidChangeSelectionNotification
 EDITING DELEGATE: webViewDidChangeSelection:WebViewDidChangeSelectionNotification
-EDITING DELEGATE: shouldChangeSelectedDOMRange:range from 1 of DIV > DIV > BODY > HTML > #document to 1 of DIV > DIV > BODY > HTML > #document toDOMRange:range from 0 of DIV > DIV > DIV > BODY > HTML > #document to 0 of DIV > DIV > DIV > BODY > HTML > #document affinity:NSSelectionAffinityDownstream stillSelecting:FALSE
+EDITING DELEGATE: shouldChangeSelectedDOMRange:range from 0 of DIV > DIV > BODY > HTML > #document to 0 of DIV > DIV > BODY > HTML > #document toDOMRange:range from 0 of DIV > DIV > DIV > BODY > HTML > #document to 0 of DIV > DIV > DIV > BODY > HTML > #document affinity:NSSelectionAffinityDownstream stillSelecting:FALSE
 EDITING DELEGATE: webViewDidChangeSelection:WebViewDidChangeSelectionNotification
 EDITING DELEGATE: webViewDidChange:WebViewDidChangeNotification
 layer at (0,0) size 800x600
@@ -11,9 +11,8 @@ layer at (0,0) size 800x600
   RenderBlock {HTML} at (0,0) size 800x600
     RenderBody {BODY} at (8,8) size 784x584
       RenderBlock {DIV} at (0,0) size 784x84 [border: (2px solid #0000FF)]
-        RenderText {#text} at (14,14) size 756x56
-          text run at (14,14) width 756: "Should see \"foo\" centered in its own red box. The \"bar\" and \"baz\" lines should"
-          text run at (769,14) width 1: " "
+        RenderText {#text} at (14,14) size 762x56
+          text run at (14,14) width 762: "Should see \"foo\" centered in its own red box. The \"bar\" and \"baz\" lines should "
           text run at (14,42) width 153: "not be centered."
       RenderBlock {DIV} at (0,108) size 784x140
         RenderBlock {DIV} at (0,0) size 784x140 [border: (2px solid #FF0000)]

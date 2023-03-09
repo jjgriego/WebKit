@@ -141,6 +141,10 @@ WKRetainPtr<WKMutableDictionaryRef> TestInvocation::createTestSettingsDictionary
     setValue(beginTestMessageBody, "Timeout", static_cast<uint64_t>(m_timeout.milliseconds()));
     setValue(beginTestMessageBody, "DumpJSConsoleLogInStdErr", m_dumpJSConsoleLogInStdErr);
     setValue(beginTestMessageBody, "additionalSupportedImageTypes", options().additionalSupportedImageTypes().c_str());
+    auto allowedHostsValue = adoptWK(WKMutableArrayCreate());
+    for (auto& host : TestController::singleton().allowedHosts())
+        WKArrayAppendItem(allowedHostsValue.get(), toWK(host.c_str()).get());
+    setValue(beginTestMessageBody, "AllowedHosts", allowedHostsValue);
     return beginTestMessageBody;
 }
 
@@ -288,10 +292,10 @@ void TestInvocation::dumpAudio(WKDataRef audioData)
     fprintf(stderr, "#EOF\n");
 }
 
-bool TestInvocation::compareActualHashToExpectedAndDumpResults(const char actualHash[33])
+bool TestInvocation::compareActualHashToExpectedAndDumpResults(const std::string& actualHash)
 {
     // Compute the hash of the bitmap context pixels
-    fprintf(stdout, "\nActualHash: %s\n", actualHash);
+    fprintf(stdout, "\nActualHash: %s\n", actualHash.c_str());
 
     if (!m_expectedPixelHash.length())
         return false;
@@ -411,6 +415,11 @@ void TestInvocation::didReceiveMessageFromInjectedBundle(WKStringRef messageName
 
     if (WKStringIsEqualToUTF8CString(messageName, "SetGeolocationPermission")) {
         TestController::singleton().setGeolocationPermission(booleanValue(messageBody));
+        return;
+    }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "SetScreenWakeLockPermission")) {
+        TestController::singleton().setScreenWakeLockPermission(booleanValue(messageBody));
         return;
     }
 
@@ -636,14 +645,6 @@ void TestInvocation::didReceiveMessageFromInjectedBundle(WKStringRef messageName
         return;
     }
 
-    if (WKStringIsEqualToUTF8CString(messageName, "InstallCustomMenuAction")) {
-        auto messageBodyDictionary = static_cast<WKDictionaryRef>(messageBody);
-        auto name = stringValue(messageBodyDictionary, "name");
-        auto dismissesAutomatically = booleanValue(messageBodyDictionary, "dismissesAutomatically");
-        TestController::singleton().installCustomMenuAction(toWTFString(name), dismissesAutomatically);
-        return;
-    }
-
     if (WKStringIsEqualToUTF8CString(messageName, "SetAllowedMenuActions")) {
         auto messageBodyArray = static_cast<WKArrayRef>(messageBody);
         auto size = WKArrayGetSize(messageBodyArray);
@@ -669,6 +670,11 @@ void TestInvocation::didReceiveMessageFromInjectedBundle(WKStringRef messageName
     
     if (WKStringIsEqualToUTF8CString(messageName, "LoadedSubresourceDomains")) {
         TestController::singleton().loadedSubresourceDomains();
+        return;
+    }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "ReloadFromOrigin")) {
+        TestController::singleton().reloadFromOrigin();
         return;
     }
 
@@ -731,6 +737,16 @@ void TestInvocation::didReceiveMessageFromInjectedBundle(WKStringRef messageName
         auto hostName = stringValue(messageBodyDictionary, "HostName");
         auto value = booleanValue(messageBodyDictionary, "Value");
         TestController::singleton().setStatisticsVeryPrevalentResource(hostName, value);
+        return;
+    }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "DumpPolicyDelegateCallbacks")) {
+        TestController::singleton().dumpPolicyDelegateCallbacks();
+        return;
+    }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "RemoveAllCookies")) {
+        TestController::singleton().removeAllCookies();
         return;
     }
 
@@ -831,6 +847,17 @@ void TestInvocation::didReceiveMessageFromInjectedBundle(WKStringRef messageName
         return;
     }
 
+    if (WKStringIsEqualToUTF8CString(messageName, "SetManagedDomains")) {
+        ASSERT(WKGetTypeID(messageBody) == WKArrayGetTypeID());
+        TestController::singleton().setManagedDomains(static_cast<WKArrayRef>(messageBody));
+        return;
+    }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "SkipPolicyDelegateNotifyDone")) {
+        TestController::singleton().skipPolicyDelegateNotifyDone();
+        return;
+    }
+
     ASSERT_NOT_REACHED();
 }
 
@@ -920,7 +947,12 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         TestController::singleton().setAllowsAnySSLCertificate(booleanValue(messageBody));
         return nullptr;
     }
-    
+
+    if (WKStringIsEqualToUTF8CString(messageName, "SetBackgroundFetchPermission")) {
+        TestController::singleton().setBackgroundFetchPermission(booleanValue(messageBody));
+        return nullptr;
+    }
+
     if (WKStringIsEqualToUTF8CString(messageName, "SetShouldSwapToEphemeralSessionOnNextNavigation")) {
         TestController::singleton().setShouldSwapToEphemeralSessionOnNextNavigation(booleanValue(messageBody));
         return nullptr;
@@ -963,6 +995,14 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         return nullptr;
     }
 
+    if (WKStringIsEqualToUTF8CString(messageName, "SetMockMediaDeviceIsEphemeral")) {
+        auto messageBodyDictionary = dictionaryValue(messageBody);
+        auto persistentID = stringValue(messageBodyDictionary, "PersistentID");
+        bool isEphemeral = booleanValue(messageBodyDictionary, "IsEphemeral");
+        TestController::singleton().setMockMediaDeviceIsEphemeral(persistentID, isEphemeral);
+        return nullptr;
+    }
+
     if (WKStringIsEqualToUTF8CString(messageName, "SetMockCameraOrientation")) {
         TestController::singleton().setMockCameraOrientation(uint64Value(messageBody));
         return nullptr;
@@ -976,6 +1016,11 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         bool isCameraInterrupted = booleanValue(messageBodyDictionary, "camera");
         bool isMicrophoneInterrupted = booleanValue(messageBodyDictionary, "microphone");
         TestController::singleton().setMockCaptureDevicesInterrupted(isCameraInterrupted, isMicrophoneInterrupted);
+        return nullptr;
+    }
+    
+    if (WKStringIsEqualToUTF8CString(messageName, "TriggerMockMicrophoneConfigurationChange")) {
+        TestController::singleton().triggerMockMicrophoneConfigurationChange();
         return nullptr;
     }
 
@@ -1000,7 +1045,8 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         auto mapping = stringValue(messageBodyDictionary, "Mapping");
         auto axisCount = uint64Value(messageBodyDictionary, "AxisCount");
         auto buttonCount = uint64Value(messageBodyDictionary, "ButtonCount");
-        WebCoreTestSupport::setMockGamepadDetails(gamepadIndex, toWTFString(gamepadID), toWTFString(mapping), axisCount, buttonCount);
+        bool supportsDualRumble = booleanValue(messageBodyDictionary, "SupportsDualRumble");
+        WebCoreTestSupport::setMockGamepadDetails(gamepadIndex, toWTFString(gamepadID), toWTFString(mapping), axisCount, buttonCount, supportsDualRumble);
         return nullptr;
     }
 
@@ -1288,6 +1334,11 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
 
     if (WKStringIsEqualToUTF8CString(messageName, "SetAllowStorageQuotaIncrease")) {
         TestController::singleton().setAllowStorageQuotaIncrease(booleanValue(messageBody));
+        return nullptr;
+    }
+    
+    if (WKStringIsEqualToUTF8CString(messageName, "SetQuota")) {
+        TestController::singleton().setQuota(uint64Value(messageBody));
         return nullptr;
     }
 
@@ -1626,6 +1677,11 @@ void TestInvocation::didSetHasHadUserInteraction()
     postPageMessage("CallDidSetHasHadUserInteraction");
 }
 
+void TestInvocation::didRemoveAllCookies()
+{
+    postPageMessage("CallDidRemoveAllCookies");
+}
+
 void TestInvocation::didReceiveAllStorageAccessEntries(Vector<String>&& domains)
 {
     auto messageBody = adoptWK(WKMutableArrayCreate());
@@ -1652,6 +1708,11 @@ void TestInvocation::didSetAppBoundDomains()
     postPageMessage("CallDidSetAppBoundDomains");
 }
 
+void TestInvocation::didSetManagedDomains()
+{
+    postPageMessage("CallDidSetManagedDomains");
+}
+
 void TestInvocation::dumpResourceLoadStatistics()
 {
     m_shouldDumpResourceLoadStatistics = true;
@@ -1660,11 +1721,6 @@ void TestInvocation::dumpResourceLoadStatistics()
 void TestInvocation::dumpPrivateClickMeasurement()
 {
     m_shouldDumpPrivateClickMeasurement = true;
-}
-
-void TestInvocation::performCustomMenuAction()
-{
-    postPageMessage("PerformCustomMenuAction");
 }
 
 void TestInvocation::initializeWaitToDumpWatchdogTimerIfNeeded()

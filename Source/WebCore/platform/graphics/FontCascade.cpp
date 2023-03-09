@@ -24,7 +24,6 @@
 #include "config.h"
 #include "FontCascade.h"
 
-#include "CharacterProperties.h"
 #include "ComplexTextController.h"
 #include "DisplayListRecorderImpl.h"
 #include "FloatRect.h"
@@ -47,28 +46,9 @@ namespace WebCore {
 
 using namespace WTF::Unicode;
 
-static bool useBackslashAsYenSignForFamily(const AtomString& family)
-{
-    if (family.isEmpty())
-        return false;
-    static NeverDestroyed set = [] {
-        MemoryCompactLookupOnlyRobinHoodHashSet<AtomString> set;
-        auto add = [&set] (ASCIILiteral name, std::initializer_list<UChar> unicodeName) {
-            set.add(AtomString { name });
-            unsigned unicodeNameLength = unicodeName.size();
-            set.add(AtomString { unicodeName.begin(), unicodeNameLength });
-        };
-        add("MS PGothic"_s, { 0xFF2D, 0xFF33, 0x0020, 0xFF30, 0x30B4, 0x30B7, 0x30C3, 0x30AF });
-        add("MS PMincho"_s, { 0xFF2D, 0xFF33, 0x0020, 0xFF30, 0x660E, 0x671D });
-        add("MS Gothic"_s, { 0xFF2D, 0xFF33, 0x0020, 0x30B4, 0x30B7, 0x30C3, 0x30AF });
-        add("MS Mincho"_s, { 0xFF2D, 0xFF33, 0x0020, 0x660E, 0x671D });
-        add("Meiryo"_s, { 0x30E1, 0x30A4, 0x30EA, 0x30AA });
-        return set;
-    }();
-    return set.get().contains(family);
-}
-
 FontCascade::CodePath FontCascade::s_codePath = CodePath::Auto;
+
+static std::atomic<unsigned> lastFontCascadeGeneration { 0 };
 
 // ============================================================================================
 // FontCascade Implementation (Cross-Platform Portion)
@@ -82,7 +62,8 @@ FontCascade::FontCascade(FontCascadeDescription&& fd, float letterSpacing, float
     : m_fontDescription(WTFMove(fd))
     , m_letterSpacing(letterSpacing)
     , m_wordSpacing(wordSpacing)
-    , m_useBackslashAsYenSymbol(useBackslashAsYenSignForFamily(m_fontDescription.firstFamily()))
+    , m_generation(++lastFontCascadeGeneration)
+    , m_useBackslashAsYenSymbol(FontCache::forCurrentThread().useBackslashAsYenSignForFamily(m_fontDescription.firstFamily()))
     , m_enableKerning(computeEnableKerning())
     , m_requiresShaping(computeRequiresShaping())
 {
@@ -93,6 +74,7 @@ FontCascade::FontCascade(const FontCascade& other)
     , m_fonts(other.m_fonts)
     , m_letterSpacing(other.m_letterSpacing)
     , m_wordSpacing(other.m_wordSpacing)
+    , m_generation(other.m_generation)
     , m_useBackslashAsYenSymbol(other.m_useBackslashAsYenSymbol)
     , m_enableKerning(computeEnableKerning())
     , m_requiresShaping(computeRequiresShaping())
@@ -105,6 +87,7 @@ FontCascade& FontCascade::operator=(const FontCascade& other)
     m_fonts = other.m_fonts;
     m_letterSpacing = other.m_letterSpacing;
     m_wordSpacing = other.m_wordSpacing;
+    m_generation = other.m_generation;
     m_useBackslashAsYenSymbol = other.m_useBackslashAsYenSymbol;
     m_enableKerning = other.m_enableKerning;
     m_requiresShaping = other.m_requiresShaping;
@@ -147,9 +130,7 @@ bool FontCascade::isCurrent(const FontSelector& fontSelector) const
 void FontCascade::updateFonts(Ref<FontCascadeFonts>&& fonts) const
 {
     m_fonts = WTFMove(fonts);
-    m_useBackslashAsYenSymbol = useBackslashAsYenSignForFamily(firstFamily());
-    m_enableKerning = computeEnableKerning();
-    m_requiresShaping = computeRequiresShaping();
+    m_generation = ++lastFontCascadeGeneration;
 }
 
 void FontCascade::update(RefPtr<FontSelector>&& fontSelector) const
@@ -213,7 +194,9 @@ std::unique_ptr<DisplayList::InMemoryDisplayList> FontCascade::displayListForTex
         return nullptr;
 
     std::unique_ptr<DisplayList::InMemoryDisplayList> displayList = makeUnique<DisplayList::InMemoryDisplayList>();
-    DisplayList::RecorderImpl recordingContext(*displayList, context.state().cloneForRecording(), { }, context.getCTM(GraphicsContext::DefinitelyIncludeDeviceScale), DisplayList::Recorder::DrawGlyphsMode::DeconstructUsingDrawDecomposedGlyphsCommands);
+    DisplayList::RecorderImpl recordingContext(*displayList, context.state().cloneForRecording(), { },
+        context.getCTM(GraphicsContext::DefinitelyIncludeDeviceScale), context.colorSpace(),
+        DisplayList::Recorder::DrawGlyphsMode::DeconstructUsingDrawDecomposedGlyphsCommands);
 
     FloatPoint startPoint = toFloatPoint(WebCore::size(glyphBuffer.initialAdvance()));
     drawGlyphBuffer(recordingContext, glyphBuffer, startPoint, customFontNotReadyAction);
@@ -357,6 +340,8 @@ GlyphData FontCascade::glyphDataForCharacter(UChar32 c, bool mirror, FontVariant
 // all platforms.
 bool FontCascade::hasValidAverageCharWidth() const
 {
+    ASSERT(isMainThread());
+
     const AtomString& family = firstFamily();
     if (family.isEmpty())
         return false;
@@ -454,25 +439,18 @@ String FontCascade::normalizeSpaces(const UChar* characters, unsigned length)
     return normalizeSpacesInternal(characters, length);
 }
 
-static bool shouldUseFontSmoothing = true;
+static std::atomic<bool> disableFontSubpixelAntialiasingForTesting = false;
 
-void FontCascade::setShouldUseSmoothing(bool shouldUseSmoothing)
+void FontCascade::setDisableFontSubpixelAntialiasingForTesting(bool disable)
 {
     ASSERT(isMainThread());
-    shouldUseFontSmoothing = shouldUseSmoothing;
+    disableFontSubpixelAntialiasingForTesting = disable;
 }
 
-bool FontCascade::shouldUseSmoothing()
+bool FontCascade::shouldDisableFontSubpixelAntialiasingForTesting()
 {
-    return shouldUseFontSmoothing;
+    return disableFontSubpixelAntialiasingForTesting;
 }
-
-#if !USE(CORE_TEXT) || PLATFORM(WIN)
-bool FontCascade::isSubpixelAntialiasingAvailable()
-{
-    return false;
-}
-#endif
 
 void FontCascade::setCodePath(CodePath p)
 {
@@ -1228,18 +1206,28 @@ int FontCascade::emphasisMarkDescent(const AtomString& mark) const
     return markFontData->fontMetrics().descent();
 }
 
+const Font* FontCascade::fontForEmphasisMark(const AtomString& mark) const
+{
+    auto markGlyphData = getEmphasisMarkGlyphData(mark);
+    if (!markGlyphData)
+        return { };
+
+    ASSERT(markGlyphData->font);
+    return markGlyphData->font;
+}
+
 int FontCascade::emphasisMarkHeight(const AtomString& mark) const
 {
-    std::optional<GlyphData> markGlyphData = getEmphasisMarkGlyphData(mark);
-    if (!markGlyphData)
-        return 0;
+    if (auto* font = fontForEmphasisMark(mark))
+        return font->fontMetrics().height();
+    return { };
+}
 
-    const Font* markFontData = markGlyphData.value().font;
-    ASSERT(markFontData);
-    if (!markFontData)
-        return 0;
-
-    return markFontData->fontMetrics().height();
+float FontCascade::floatEmphasisMarkHeight(const AtomString& mark) const
+{
+    if (auto* font = fontForEmphasisMark(mark))
+        return font->fontMetrics().floatHeight();
+    return { };
 }
 
 GlyphBuffer FontCascade::layoutSimpleText(const TextRun& run, unsigned from, unsigned to, ForTextEmphasisOrNot forTextEmphasis) const
@@ -1335,7 +1323,7 @@ void FontCascade::drawGlyphBuffer(GraphicsContext& context, const GlyphBuffer& g
 
         if (&nextFontData != fontData) {
             if (shouldDrawIfLoading(*fontData, customFontNotReadyAction))
-                context.drawGlyphs(*fontData, glyphBuffer.glyphs(lastFrom), glyphBuffer.advances(lastFrom), nextGlyph - lastFrom, startPoint, m_fontDescription.fontSmoothing());
+                context.drawGlyphs(*fontData, glyphBuffer.glyphs(lastFrom), glyphBuffer.advances(lastFrom), nextGlyph - lastFrom, startPoint, m_fontDescription.usedFontSmoothing());
 
             lastFrom = nextGlyph;
             fontData = &nextFontData;
@@ -1348,7 +1336,7 @@ void FontCascade::drawGlyphBuffer(GraphicsContext& context, const GlyphBuffer& g
     }
 
     if (shouldDrawIfLoading(*fontData, customFontNotReadyAction))
-        context.drawGlyphs(*fontData, glyphBuffer.glyphs(lastFrom), glyphBuffer.advances(lastFrom), nextGlyph - lastFrom, startPoint, m_fontDescription.fontSmoothing());
+        context.drawGlyphs(*fontData, glyphBuffer.glyphs(lastFrom), glyphBuffer.advances(lastFrom), nextGlyph - lastFrom, startPoint, m_fontDescription.usedFontSmoothing());
     point.setX(nextX);
 }
 
@@ -1667,7 +1655,7 @@ DashArray FontCascade::dashesForIntersectionsWithRect(const TextRun& run, const 
     FloatPoint origin = textOrigin + WebCore::size(glyphBuffer.initialAdvance());
     GlyphToPathTranslator translator(run, glyphBuffer, origin);
     DashArray result;
-    for (unsigned index = 0; translator.containsMorePaths(); ++index, translator.advance()) {
+    for (; translator.containsMorePaths(); translator.advance()) {
         GlyphIterationState info = { FloatPoint(0, 0), FloatPoint(0, 0), lineExtents.y(), lineExtents.y() + lineExtents.height(), lineExtents.x() + lineExtents.width(), lineExtents.x() };
         switch (translator.underlineType()) {
         case GlyphUnderlineType::SkipDescenders: {

@@ -83,10 +83,16 @@ Expected<RetainPtr<CVPixelBufferPoolRef>, CVReturn> createCVPixelBufferPool(size
     return shouldUseIOSurfacePool ? createIOSurfaceCVPixelBufferPool(width, height, format, minimumBufferCount, isCGImageCompatible) : createInMemoryCVPixelBufferPool(width, height, format, minimumBufferCount, isCGImageCompatible);
 }
 
-Expected<RetainPtr<CVPixelBufferRef>, CVReturn> createCVPixelBufferFromPool(CVPixelBufferPoolRef pixelBufferPool)
+Expected<RetainPtr<CVPixelBufferRef>, CVReturn> createCVPixelBufferFromPool(CVPixelBufferPoolRef pixelBufferPool, unsigned maxBufferSize)
 {
     CVPixelBufferRef pixelBuffer = nullptr;
-    auto status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pixelBufferPool, &pixelBuffer);
+    CVReturn status;
+    if (!maxBufferSize)
+        status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pixelBufferPool, &pixelBuffer);
+    else {
+        auto *auxiliaryAttributes = @{ (__bridge NSString *)kCVPixelBufferPoolAllocationThresholdKey : @(maxBufferSize) };
+        status = CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(kCFAllocatorDefault, pixelBufferPool, (__bridge CFDictionaryRef)auxiliaryAttributes, &pixelBuffer);
+    }
     if (status != kCVReturnSuccess || !pixelBuffer)
         return makeUnexpected(status);
     return adoptCF(pixelBuffer);
@@ -175,7 +181,8 @@ RetainPtr<CVPixelBufferRef> createBlackPixelBuffer(size_t width, size_t height, 
 
     CVPixelBufferRef pixelBuffer = nullptr;
     auto status = CVPixelBufferCreate(kCFAllocatorDefault, width, height, format, shouldUseIOSurface ? (__bridge CFDictionaryRef)pixelAttributes : nullptr, &pixelBuffer);
-    ASSERT_UNUSED(status, status == noErr);
+    if (status != noErr || !pixelBuffer)
+        return nullptr;
 
     status = CVPixelBufferLockBaseAddress(pixelBuffer, 0);
     ASSERT(status == noErr);

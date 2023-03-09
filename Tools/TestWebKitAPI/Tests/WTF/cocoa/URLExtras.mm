@@ -26,7 +26,7 @@
 #import "config.h"
 
 #import "Test.h"
-#import "WTFStringUtilities.h"
+#import "WTFTestUtilities.h"
 #import <wtf/URL.h>
 #import <wtf/Vector.h>
 #import <wtf/cocoa/NSURLExtras.h>
@@ -118,8 +118,11 @@ TEST(WTF_URLExtras, URLExtras_Spoof)
         "xn--2-zic"_s, // U+0032 U+05E1
         "xn--uoa"_s, // U+027E
         "xn--fja"_s, // U+01C0
+        "xn--jna"_s, // U+0250
         "xn--koa"_s, // U+0274
+        "xn--spa"_s, // U+029F
         "xn--tma"_s, // U+0237
+        "xn--8pa"_s, // U+02AF
         "xn--o-pdc"_s, // U+0585 'o'
         "xn--o-qdc"_s, // 'o' U+0585
         "xn--g-hdc"_s, // U+0581 'g'
@@ -128,6 +131,38 @@ TEST(WTF_URLExtras, URLExtras_Spoof)
         "xn--o-10e"_s, // 'o' U+0BE6
         "xn--a-53i"_s, // U+15AF 'a'
         "xn--a-63i"_s, // 'a' U+15AF
+        "xn--a-g4i"_s, // U+15B4 'a'
+        "xn--a-h4i"_s, // 'a' U+15B4
+        "xn--a-80i"_s, // U+157C 'a'
+        "xn--a-90i"_s, // 'a' U+157C
+        "xn--a-0fj"_s, // U+166D 'a'
+        "xn--a-1fj"_s, // 'a' U+166D
+        "xn--a-2fj"_s, // U+166E 'a'
+        "xn--a-3fj"_s, // 'a' U+166E
+        "xn--a-rli"_s, // U+146D 'a'
+        "xn--a-sli"_s, // 'a' U+146D
+        "xn--a-vli"_s, // U+146F 'a'
+        "xn--a-wli"_s, // 'a' U+146F
+        "xn--a-1li"_s, // U+1472 'a'
+        "xn--a-2li"_s, // 'a' U+1472
+        "xn--a-8oi"_s, // U+14AA 'a'
+        "xn--a-9oi"_s, // 'a' U+14AA
+        "xn--a-v1i"_s, // U+1587 'a'
+        "xn--a-w1i"_s, // 'a' U+1587
+        "xn--a-f5i"_s, // U+15C5 'a'
+        "xn--a-g5i"_s, // 'a' U+15C5
+        "xn--a-u6i"_s, // U+15DE 'a'
+        "xn--a-v6i"_s, // 'a' U+15DE
+        "xn--a-h7i"_s, // U+15E9 'a'
+        "xn--a-i7i"_s, // 'a' U+15E9
+        "xn--a-x7i"_s, // U+15F1 'a'
+        "xn--a-y7i"_s, // 'a' U+15F1
+        "xn--a-37i"_s, // U+15F4 'a'
+        "xn--a-47i"_s, // 'a' U+15F4
+        "xn--n-twf"_s, // U+0E01 'n'
+        "xn--n-uwf"_s, // 'n' U+0E01
+        "xn--3hb112n"_s, // U+065B
+        "xn--a-ypc062v"_s, // 'a' U+065B
     };
     for (auto& host : punycodedSpoofHosts) {
         auto url = makeString("http://", host, "/").utf8();
@@ -156,7 +191,30 @@ TEST(WTF_URLExtras, URLExtras_NotSpoofed)
     EXPECT_STREQ("https://\u0BE6\u0BE7\u0BE8\u0BE9count/", userVisibleString(literalURL("https://\u0BE6\u0BE7\u0BE8\u0BE9count/")));
 
     // Canadian aboriginal
+    EXPECT_STREQ("https://\u146D\u1401abc/", userVisibleString(literalURL("https://\u146D\u1401abc/")));
+    EXPECT_STREQ("https://\u146F\u1401abc/", userVisibleString(literalURL("https://\u146F\u1401abc/")));
+    EXPECT_STREQ("https://\u1472\u1401abc/", userVisibleString(literalURL("https://\u1472\u1401abc/")));
+    EXPECT_STREQ("https://\u14AA\u1401abc/", userVisibleString(literalURL("https://\u14AA\u1401abc/")));
+    EXPECT_STREQ("https://\u157C\u1401abc/", userVisibleString(literalURL("https://\u157C\u1401abc/")));
+    EXPECT_STREQ("https://\u1587\u1401abc/", userVisibleString(literalURL("https://\u1587\u1401abc/")));
     EXPECT_STREQ("https://\u15AF\u1401abc/", userVisibleString(literalURL("https://\u15AF\u1401abc/")));
+    EXPECT_STREQ("https://\u15B4\u1401abc/", userVisibleString(literalURL("https://\u15B4\u1401abc/")));
+    EXPECT_STREQ("https://\u15C5\u1401abc/", userVisibleString(literalURL("https://\u15C5\u1401abc/")));
+    EXPECT_STREQ("https://\u15DE\u1401abc/", userVisibleString(literalURL("https://\u15DE\u1401abc/")));
+    EXPECT_STREQ("https://\u15E9\u1401abc/", userVisibleString(literalURL("https://\u15E9\u1401abc/")));
+    EXPECT_STREQ("https://\u15F1\u1401abc/", userVisibleString(literalURL("https://\u15F1\u1401abc/")));
+    EXPECT_STREQ("https://\u15F4\u1401abc/", userVisibleString(literalURL("https://\u15F4\u1401abc/")));
+    EXPECT_STREQ("https://\u166D\u1401abc/", userVisibleString(literalURL("https://\u166D\u1401abc/")));
+    EXPECT_STREQ("https://\u166E\u1401abc/", userVisibleString(literalURL("https://\u166E\u1401abc/")));
+
+    // Thai
+    EXPECT_STREQ("https://\u0E01\u0E02abc/", userVisibleString(literalURL("https://\u0E01\u0E02abc/")));
+
+    // Arabic
+    EXPECT_STREQ("https://\u0620\u065Babc/", userVisibleString(literalURL("https://\u0620\u065Babc/")));
+
+    // Latin
+    EXPECT_STREQ("https://\u00ED\u00CDabc/", userVisibleString(literalURL("https://\u00ED\u00CDabc/")));
 }
 
 TEST(WTF_URLExtras, URLExtras_DivisionSign)

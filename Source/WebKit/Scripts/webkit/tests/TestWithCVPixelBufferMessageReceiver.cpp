@@ -26,50 +26,21 @@
 #include "TestWithCVPixelBuffer.h"
 
 #if USE(AVFOUNDATION)
-#include "ArgumentCodersCF.h"
+#include "ArgumentCodersCF.h" // NOLINT
 #endif
-#include "Decoder.h"
-#include "HandleMessage.h"
-#include "TestWithCVPixelBufferMessages.h"
+#include "Decoder.h" // NOLINT
+#include "HandleMessage.h" // NOLINT
+#include "TestWithCVPixelBufferMessages.h" // NOLINT
 #if USE(AVFOUNDATION)
-#include <WebCore/CVUtilities.h>
+#include <WebCore/CVUtilities.h> // NOLINT
 #endif
 #if USE(AVFOUNDATION)
-#include <wtf/RetainPtr.h>
+#include <wtf/RetainPtr.h> // NOLINT
 #endif
 
 #if ENABLE(IPC_TESTING_API)
 #include "JSIPCBinding.h"
 #endif
-
-namespace Messages {
-
-namespace TestWithCVPixelBuffer {
-
-#if USE(AVFOUNDATION)
-
-void ReceiveCVPixelBuffer::callReply(IPC::Decoder& decoder, CompletionHandler<void(RetainPtr<CVPixelBufferRef>&&)>&& completionHandler)
-{
-    std::optional<RetainPtr<CVPixelBufferRef>> r0;
-    decoder >> r0;
-    if (!r0) {
-        ASSERT_NOT_REACHED();
-        cancelReply(WTFMove(completionHandler));
-        return;
-    }
-    completionHandler(WTFMove(*r0));
-}
-
-void ReceiveCVPixelBuffer::cancelReply(CompletionHandler<void(RetainPtr<CVPixelBufferRef>&&)>&& completionHandler)
-{
-    completionHandler(IPC::AsyncReplyError<RetainPtr<CVPixelBufferRef>>::create());
-}
-
-#endif
-
-} // namespace TestWithCVPixelBuffer
-
-} // namespace Messages
 
 namespace WebKit {
 
@@ -79,8 +50,6 @@ void TestWithCVPixelBuffer::didReceiveMessage(IPC::Connection& connection, IPC::
 #if USE(AVFOUNDATION)
     if (decoder.messageName() == Messages::TestWithCVPixelBuffer::SendCVPixelBuffer::name())
         return IPC::handleMessage<Messages::TestWithCVPixelBuffer::SendCVPixelBuffer>(connection, decoder, this, &TestWithCVPixelBuffer::sendCVPixelBuffer);
-#endif
-#if USE(AVFOUNDATION)
     if (decoder.messageName() == Messages::TestWithCVPixelBuffer::ReceiveCVPixelBuffer::name())
         return IPC::handleMessageAsync<Messages::TestWithCVPixelBuffer::ReceiveCVPixelBuffer>(connection, decoder, this, &TestWithCVPixelBuffer::receiveCVPixelBuffer);
 #endif

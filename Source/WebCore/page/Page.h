@@ -22,14 +22,18 @@
 
 #include "ActivityState.h"
 #include "AnimationFrameRate.h"
+#include "BadgeClient.h"
 #include "Color.h"
 #include "ContentSecurityPolicy.h"
 #include "DisabledAdaptations.h"
 #include "Document.h"
 #include "EventTrackingRegions.h"
+#include "FilterRenderingMode.h"
 #include "FindOptions.h"
+#include "Frame.h"
 #include "FrameLoaderTypes.h"
 #include "IntRectHash.h"
+#include "KeyboardScrollingAnimator.h"
 #include "LayoutMilestone.h"
 #include "LayoutRect.h"
 #include "LengthBox.h"
@@ -85,6 +89,10 @@ namespace JSC {
 class Debugger;
 }
 
+namespace PAL {
+class HysteresisActivity;
+}
+
 namespace WTF {
 class TextStream;
 }
@@ -117,7 +125,6 @@ class EditorClient;
 class Element;
 class FocusController;
 class FormData;
-class Frame;
 class HTMLElement;
 class HTMLMediaElement;
 class HistoryItem;
@@ -126,7 +133,7 @@ class ImageOverlayController;
 class InspectorClient;
 class InspectorController;
 class IntSize;
-class LibWebRTCProvider;
+class WebRTCProvider;
 class LowPowerModeNotifier;
 class MediaCanStartListener;
 class MediaPlaybackTarget;
@@ -142,7 +149,6 @@ class PaymentCoordinator;
 class PerformanceLogging;
 class PerformanceLoggingClient;
 class PerformanceMonitor;
-class PermissionController;
 class PluginData;
 class PluginInfoProvider;
 class PointerCaptureController;
@@ -151,6 +157,7 @@ class ProgressTracker;
 class RenderObject;
 class ResourceUsageOverlay;
 class RenderingUpdateScheduler;
+class ScreenOrientationManager;
 class ScrollLatchingController;
 class ScrollingCoordinator;
 class ServicesOverlayController;
@@ -228,6 +235,15 @@ enum class RenderingUpdateStep : uint32_t {
     FlushAutofocusCandidates        = 1 << 14,
     VideoFrameCallbacks             = 1 << 15,
     PrepareCanvasesForDisplay       = 1 << 16,
+    CaretAnimation                  = 1 << 17,
+    FocusFixup                      = 1 << 18,
+};
+
+enum class LookalikeCharacterSanitizationTrigger : uint8_t {
+    Unspecified,
+    Navigation,
+    Copy,
+    Paste,
 };
 
 constexpr OptionSet<RenderingUpdateStep> updateRenderingSteps = {
@@ -245,6 +261,7 @@ constexpr OptionSet<RenderingUpdateStep> updateRenderingSteps = {
     RenderingUpdateStep::CursorUpdate,
     RenderingUpdateStep::EventRegionUpdate,
     RenderingUpdateStep::PrepareCanvasesForDisplay,
+    RenderingUpdateStep::CaretAnimation,
 };
 
 constexpr auto allRenderingUpdateSteps = updateRenderingSteps | OptionSet<RenderingUpdateStep> {
@@ -278,6 +295,8 @@ public:
     WEBCORE_EXPORT OptionSet<DisabledAdaptations> disabledAdaptations() const;
     WEBCORE_EXPORT ViewportArguments viewportArguments() const;
 
+    WEBCORE_EXPORT void reloadExecutionContextsForOrigin(const ClientOrigin&, std::optional<FrameIdentifier> triggeringFrame) const;
+
     const std::optional<ViewportArguments>& overrideViewportArguments() const { return m_overrideViewportArguments; }
     WEBCORE_EXPORT void setOverrideViewportArguments(const std::optional<ViewportArguments>&);
 
@@ -290,8 +309,8 @@ public:
 
     EditorClient& editorClient() { return m_editorClient.get(); }
 
-    Frame& mainFrame() { return m_mainFrame.get(); }
-    const Frame& mainFrame() const { return m_mainFrame.get(); }
+    AbstractFrame& mainFrame() { return m_mainFrame.get(); }
+    const AbstractFrame& mainFrame() const { return m_mainFrame.get(); }
 
     bool openedByDOM() const;
     WEBCORE_EXPORT void setOpenedByDOM();
@@ -319,9 +338,14 @@ public:
     bool insideNestedRunLoop() const { return m_nestedRunLoopCount > 0; }
     WEBCORE_EXPORT void whenUnnested(Function<void()>&&);
 
+    void setCurrentKeyboardScrollingAnimator(KeyboardScrollingAnimator*);
+    KeyboardScrollingAnimator* currentKeyboardScrollingAnimator() const { return m_currentKeyboardScrollingAnimator.get(); }
+
+    bool isLoadingInHeadlessMode() const;
+
 #if ENABLE(REMOTE_INSPECTOR)
-    WEBCORE_EXPORT bool remoteInspectionAllowed() const;
-    WEBCORE_EXPORT void setRemoteInspectionAllowed(bool);
+    WEBCORE_EXPORT bool inspectable() const;
+    WEBCORE_EXPORT void setInspectable(bool);
     WEBCORE_EXPORT String remoteInspectionNameOverride() const;
     WEBCORE_EXPORT void setRemoteInspectionNameOverride(const String&);
     void remoteInspectorInformationDidChange() const;
@@ -342,7 +366,7 @@ public:
 #if ENABLE(POINTER_LOCK)
     PointerLockController& pointerLockController() const { return *m_pointerLockController; }
 #endif
-    LibWebRTCProvider& libWebRTCProvider() { return m_libWebRTCProvider.get(); }
+    WebRTCProvider& webRTCProvider() { return m_webRTCProvider.get(); }
     RTCController& rtcController() { return m_rtcController; }
     WEBCORE_EXPORT void disableICECandidateFiltering();
     WEBCORE_EXPORT void enableICECandidateFiltering();
@@ -505,7 +529,7 @@ public:
     WEBCORE_EXPORT void recomputeTextAutoSizingInAllFrames();
 #endif
 
-    bool acceleratedFiltersEnabled() const;
+    OptionSet<FilterRenderingMode> preferredFilterRenderingModes() const;
 
     const FloatBoxExtent& fullscreenInsets() const { return m_fullscreenInsets; }
     WEBCORE_EXPORT void setFullscreenInsets(const FloatBoxExtent&);
@@ -533,14 +557,12 @@ public:
     // FrameView.
     const Pagination& pagination() const { return m_pagination; }
     WEBCORE_EXPORT void setPagination(const Pagination&);
-    bool paginationLineGridEnabled() const { return m_paginationLineGridEnabled; }
-    WEBCORE_EXPORT void setPaginationLineGridEnabled(bool flag);
 
     WEBCORE_EXPORT unsigned pageCount() const;
 
     WEBCORE_EXPORT DiagnosticLoggingClient& diagnosticLoggingClient() const;
 
-    WEBCORE_EXPORT void logMediaDiagnosticMessage(const FormData*) const;
+    WEBCORE_EXPORT void logMediaDiagnosticMessage(const RefPtr<FormData>&) const;
 
     PerformanceLoggingClient* performanceLoggingClient() const { return m_performanceLoggingClient.get(); }
 
@@ -591,6 +613,8 @@ public:
     bool isServiceWorkerPage() const { return m_isServiceWorkerPage; }
     void markAsServiceWorkerPage() { m_isServiceWorkerPage = true; }
 
+    WEBCORE_EXPORT static Page* serviceWorkerPage(ScriptExecutionContextIdentifier);
+
 #if ENABLE(SERVICE_WORKER)
     // Service worker pages have an associated ServiceWorkerGlobalScope on the main thread.
     void setServiceWorkerGlobalScope(ServiceWorkerGlobalScope&);
@@ -624,7 +648,15 @@ public:
     WEBCORE_EXPORT void updateRendering();
     // A call to updateRendering() that is not followed by a call to finalizeRenderingUpdate().
     WEBCORE_EXPORT void isolatedUpdateRendering();
+    // Called when the rendering update steps are complete, but before painting.
     WEBCORE_EXPORT void finalizeRenderingUpdate(OptionSet<FinalizeRenderingUpdateFlags>);
+
+    // Called before and after the "display" steps of the rendering update: painting, and when we push
+    // layers to the platform compositor.
+    WEBCORE_EXPORT void willStartRenderingUpdateDisplay();
+    WEBCORE_EXPORT void didCompleteRenderingUpdateDisplay();
+    // Called after didCompleteRenderingUpdateDisplay, but in the same run loop iteration (i.e. before zero-delay timers triggered from the rendering update).
+    WEBCORE_EXPORT void didCompleteRenderingFrame();
 
     // Schedule a rendering update that coordinates with display refresh.
     WEBCORE_EXPORT void scheduleRenderingUpdate(OptionSet<RenderingUpdateStep> requestedSteps);
@@ -635,14 +667,17 @@ public:
     WEBCORE_EXPORT void startTrackingRenderingUpdates();
     WEBCORE_EXPORT unsigned renderingUpdateCount() const;
 
-    // A "platform rendering update" here describes the work done by the system graphics framework before work is submitted to the system compositor.
-    // On macOS, this is a CoreAnimation commit.
-    WEBCORE_EXPORT void willStartPlatformRenderingUpdate();
-    WEBCORE_EXPORT void didCompletePlatformRenderingUpdate();
-
     WEBCORE_EXPORT void suspendScriptedAnimations();
     WEBCORE_EXPORT void resumeScriptedAnimations();
     bool scriptedAnimationsSuspended() const { return m_scriptedAnimationsSuspended; }
+
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+    void updatePlayStateForAllAnimations();
+    WEBCORE_EXPORT void setImageAnimationEnabled(bool);
+    void addIndividuallyPlayingAnimationElement(HTMLImageElement&);
+    void removeIndividuallyPlayingAnimationElement(HTMLImageElement&);
+#endif
+    bool imageAnimationEnabled() const { return m_imageAnimationEnabled; }
 
     void userStyleSheetLocationChanged();
     const String& userStyleSheet() const;
@@ -664,13 +699,11 @@ public:
 
     void invalidateInjectedStyleSheetCacheInAllFrames();
 
-    StorageNamespace* sessionStorage(bool optionalCreate = true);
-    void setSessionStorage(RefPtr<StorageNamespace>&&);
-
     bool hasCustomHTMLTokenizerTimeDelay() const;
     double customHTMLTokenizerTimeDelay() const;
 
     WEBCORE_EXPORT void setCORSDisablingPatterns(Vector<UserContentURLPattern>&&);
+    const Vector<UserContentURLPattern>& corsDisablingPatterns() const { return m_corsDisablingPatterns; }
 
     WEBCORE_EXPORT void setMemoryCacheClientCallsEnabled(bool);
     bool areMemoryCacheClientCallsEnabled() const { return m_areMemoryCacheClientCallsEnabled; }
@@ -679,7 +712,10 @@ public:
     // This seems like a reasonable upper bound, and otherwise mutually
     // recursive frameset pages can quickly bring the program to its knees
     // with exponential growth in the number of frames.
-    static const int maxNumberOfFrames = 1000;
+    static constexpr int maxNumberOfFrames = 1000;
+
+    // Don't allow more than a certain frame depth to avoid stack exhaustion.
+    static constexpr int maxFrameDepth = 32;
 
     void setEditable(bool isEditable) { m_isEditable = isEditable; }
     bool isEditable() const { return m_isEditable; }
@@ -771,6 +807,8 @@ public:
 
     WEBCORE_EXPORT UserContentProvider& userContentProvider();
     WEBCORE_EXPORT void setUserContentProvider(Ref<UserContentProvider>&&);
+
+    ScreenOrientationManager* screenOrientationManager() const;
 
     VisitedLinkStore& visitedLinkStore();
     WEBCORE_EXPORT void setVisitedLinkStore(Ref<VisitedLinkStore>&&);
@@ -903,6 +941,7 @@ public:
 
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
     bool shouldBuildInteractionRegions() const;
+    WEBCORE_EXPORT void setInteractionRegionsEnabled(bool);
 #endif
 
 #if ENABLE(DEVICE_ORIENTATION) && PLATFORM(IOS_FAMILY)
@@ -915,6 +954,7 @@ public:
     void forEachFrame(const Function<void(Frame&)>&);
 
     bool shouldDisableCorsForRequestTo(const URL&) const;
+    const HashSet<String>& maskedURLSchemes() const { return m_maskedURLSchemes; }
 
     WEBCORE_EXPORT void injectUserStyleSheet(UserStyleSheet&);
     WEBCORE_EXPORT void removeInjectedUserStyleSheet(UserStyleSheet&);
@@ -929,6 +969,10 @@ public:
 
     bool httpsUpgradeEnabled() const { return m_httpsUpgradeEnabled; }
 
+    URL sanitizeLookalikeCharacters(const URL&, LookalikeCharacterSanitizationTrigger) const;
+    String sanitizeLookalikeCharacters(const String&, LookalikeCharacterSanitizationTrigger) const;
+    URL allowedLookalikeCharacters(const URL&) const;
+
     LoadSchedulingMode loadSchedulingMode() const { return m_loadSchedulingMode; }
     void setLoadSchedulingMode(LoadSchedulingMode);
 
@@ -940,7 +984,6 @@ public:
     void resetImageAnalysisQueue();
 #endif
 
-    WEBCORE_EXPORT PermissionController& permissionController();
     WEBCORE_EXPORT StorageConnection& storageConnection();
 
     ModelPlayerProvider& modelPlayerProvider();
@@ -965,6 +1008,15 @@ public:
     ContentSecurityPolicyModeForExtension contentSecurityPolicyModeForExtension() const { return m_contentSecurityPolicyModeForExtension; }
 
     WEBCORE_EXPORT void forceRepaintAllFrames();
+
+#if ENABLE(IMAGE_ANALYSIS)
+    WEBCORE_EXPORT void analyzeImagesForFindInPage(Function<void()>&& callback);
+#endif
+
+    BadgeClient& badgeClient() { return m_badgeClient.get(); }
+
+    void willBeginScrolling();
+    void didFinishScrolling();
 
 private:
     struct Navigation {
@@ -1040,7 +1092,7 @@ private:
     const std::unique_ptr<ProgressTracker> m_progress;
 
     const std::unique_ptr<BackForwardController> m_backForwardController;
-    Ref<Frame> m_mainFrame;
+    Ref<AbstractFrame> m_mainFrame;
 
     RefPtr<PluginData> m_pluginData;
 
@@ -1060,7 +1112,7 @@ private:
     UniqueRef<SpeechRecognitionProvider> m_speechRecognitionProvider;
 
     UniqueRef<MediaRecorderProvider> m_mediaRecorderProvider;
-    UniqueRef<LibWebRTCProvider> m_libWebRTCProvider;
+    UniqueRef<WebRTCProvider> m_webRTCProvider;
     RTCController m_rtcController;
 
     PlatformDisplayID m_displayID { 0 };
@@ -1114,12 +1166,11 @@ private:
     ScrollElasticity m_horizontalScrollElasticity { ScrollElasticity::Allowed };
 
     Pagination m_pagination;
-    bool m_paginationLineGridEnabled { false };
 
     String m_userStyleSheetPath;
     mutable String m_userStyleSheet;
     mutable bool m_didLoadUserStyleSheet { false };
-    mutable std::optional<WallTime> m_userStyleSheetModificationTime;
+    mutable Markable<WallTime> m_userStyleSheetModificationTime;
 
     String m_captionUserPreferencesStyleSheet;
 
@@ -1129,8 +1180,9 @@ private:
     JSC::Debugger* m_debugger { nullptr };
 
     bool m_canStartMedia { true };
-
-    RefPtr<StorageNamespace> m_sessionStorage;
+    bool m_imageAnimationEnabled { true };
+    // Elements containing animations that are individually playing (potentially overriding the page-wide m_imageAnimationEnabled state).
+    WeakHashSet<HTMLImageElement, WeakPtrImplWithEventTargetData> m_individuallyPlayingAnimationElements;
 
     TimerThrottlingState m_timerThrottlingState { TimerThrottlingState::Disabled };
     MonotonicTime m_timerThrottlingStateLastChangedTime;
@@ -1183,13 +1235,14 @@ private:
     Ref<PluginInfoProvider> m_pluginInfoProvider;
     Ref<StorageNamespaceProvider> m_storageNamespaceProvider;
     Ref<UserContentProvider> m_userContentProvider;
+    WeakPtr<ScreenOrientationManager> m_screenOrientationManager;
     Ref<VisitedLinkStore> m_visitedLinkStore;
     Ref<BroadcastChannelRegistry> m_broadcastChannelRegistry;
     RefPtr<WheelEventTestMonitor> m_wheelEventTestMonitor;
     WeakHashSet<ActivityStateChangeObserver> m_activityStateChangeObservers;
 
 #if ENABLE(SERVICE_WORKER)
-    WeakPtr<ServiceWorkerGlobalScope> m_serviceWorkerGlobalScope;
+    WeakPtr<ServiceWorkerGlobalScope, WeakPtrImplWithEventTargetData> m_serviceWorkerGlobalScope;
 #endif
 
 #if ENABLE(RESOURCE_USAGE)
@@ -1289,6 +1342,7 @@ private:
 #endif
 
     Vector<UserContentURLPattern> m_corsDisablingPatterns;
+    HashSet<String> m_maskedURLSchemes;
     Vector<UserStyleSheet> m_userStyleSheetsPendingInjection;
     std::optional<MemoryCompactLookupOnlyRobinHoodHashSet<String>> m_allowedNetworkHosts;
     bool m_isTakingSnapshotsForApplicationSuspension { false };
@@ -1307,9 +1361,10 @@ private:
     const bool m_httpsUpgradeEnabled { true };
     mutable MediaSessionGroupIdentifier m_mediaSessionGroupIdentifier;
 
-    Ref<PermissionController> m_permissionController;
     UniqueRef<StorageProvider> m_storageProvider;
     UniqueRef<ModelPlayerProvider> m_modelPlayerProvider;
+
+    WeakPtr<KeyboardScrollingAnimator> m_currentKeyboardScrollingAnimator;
 
 #if ENABLE(ATTACHMENT_ELEMENT)
     std::unique_ptr<AttachmentElementClient> m_attachmentElementClient;
@@ -1317,7 +1372,7 @@ private:
 
 #if ENABLE(IMAGE_ANALYSIS)
     using CachedTextRecognitionResult = std::pair<TextRecognitionResult, IntRect>;
-    WeakHashMap<HTMLElement, CachedTextRecognitionResult> m_textRecognitionResults;
+    WeakHashMap<HTMLElement, CachedTextRecognitionResult, WeakPtrImplWithEventTargetData> m_textRecognitionResults;
 #endif
 
 #if USE(ATSPI)
@@ -1325,6 +1380,8 @@ private:
 #endif
 
     ContentSecurityPolicyModeForExtension m_contentSecurityPolicyModeForExtension { ContentSecurityPolicyModeForExtension::None };
+
+    Ref<BadgeClient> m_badgeClient;
 };
 
 inline PageGroup& Page::group()

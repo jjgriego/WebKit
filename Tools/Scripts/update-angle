@@ -17,20 +17,45 @@ regenerate_changes_diff() {
         ':(exclude)changes.diff' \
         ':(exclude)gni-to-cmake.py' \
         ':(exclude)src/angle_commit.h' \
+        ':(exclude)src/angle_code_affecting_program_serialize.xcfilelist' \
+        ':(exclude)src/ANGLEShaderProgramVersion.h' \
         ':(exclude)Makefile' \
         ':(exclude)src/empty.cpp' \
         ':(exclude)third_party/zlib/google/compression_utils_portable*' \
+        ':(exclude)third_party/kotlin_stdlib*' \
         ':(exclude)**.DS_Store' \
         ':(exclude)update-angle.sh' \
         ':(exclude)WebKitBuild' \
         ':(exclude)ChangeLog*' \
         ':(exclude)scripts/copy-frameworks-to-secondary-path.sh' \
         ':(exclude)third_party/r8/custom_d8.jar' \
+        ':(exclude)parsetab.py' \
         > changes.diff
 }
 
+regenerate_program_version_id() {
+    echo "Regenerating ANGLEShaderProgramVersion.h."
+    ./src/program_serialize_data_version.py src/common/ANGLEShaderProgramVersion.h.TEMP src/angle_code_affecting_program_serialize.xcfilelist
+    echo "Moving ANGLEShaderProgramVersion.h into place"
+    mv src/common/ANGLEShaderProgramVersion.h.TEMP src/common/ANGLEShaderProgramVersion.h
+}
+
+usage() {
+    SCRIPT_NAME=$(basename "$0")
+    echo "USAGE: $SCRIPT_NAME [-h|--help] -[--regenerate-changes-diff[-main]]"
+    echo "  -h | --help                      Print this help message."
+    echo "  --regenerate-changes-diff        Regenerate ANGLE changes.diff to last upstream merge."
+    echo "  --regenerate-changes-diff-main   Regenerate ANGLE changes.diff to upstream origin/main."
+    echo "  --regenerate-program-version-id  Regenerate ANGLE ANGLEShaderProgramVersion.h."
+}
+
 if [ ! -z "$1" ] ; then
-    if [ "$1" = "--regenerate-changes-diff" ] ; then
+    if [ "$1" = "-h" -o "$1" = "--help" ] ; then
+        usage
+        exit 1
+    
+    
+    elif [ "$1" = "--regenerate-changes-diff" ] ; then
         echo "Regenerating Source/ThirdParty/ANGLE/changes.diff"
         PREVIOUS_ANGLE_COMMIT_HASH=$(grep -m 1 -o -E "[a-z0-9]{40}" ANGLE.plist)
         rm -rf .git
@@ -58,8 +83,16 @@ if [ ! -z "$1" ] ; then
         echo
         echo "Success."
         exit 0
+
+
+    elif [ "$1" = "--regenerate-program-version-id" ] ; then
+        regenerate_program_version_id
+        echo
+        echo "Success."
+        exit 0
     fi
-    echo "Unrecognized argument: $1"
+    echo "ERROR: Unrecognized argument: $1"
+    usage
     exit 1
 fi
 
@@ -109,7 +142,8 @@ cleanup_after_successful_rebase_and_exit() {
     echo "Rebase complete!"
     echo "Above are the changes to Compiler.cmake and GLESv2.cmake."
     echo "Now you'll need to apply the equivalent changes to the ANGLE XCode"
-    echo "project and make sure it builds. Please examine changes.diff and"
+    echo "project, angle_code_affecting_program_serialize.xcfilelist"
+    echo "and make sure it builds. Please examine changes.diff and"
     echo "undo any unintentional changes or unnecessary added files."
     echo "You can examine the rebased history in the temporary git repository in"
     echo "Source/ThirdParty/ANGLE to see where changes came from."
@@ -120,6 +154,7 @@ cleanup_after_successful_rebase_and_exit() {
     echo
     echo "Press Enter to continue after fixing build:"
     read -r
+    regenerate_program_version_id
     regenerate_changes_diff "origin/main"
     echo "Generating contents of commit message into commit-message.txt."
     echo "Be sure to copy out this file's contents and delete it before committing."

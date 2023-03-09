@@ -1,0 +1,40 @@
+This is a link, outside the layer.
+This is a link, inside the layer.
+(GraphicsLayer
+  (anchor 0.00 0.00)
+  (bounds 800.00 600.00)
+  (children 1
+    (GraphicsLayer
+      (bounds 800.00 600.00)
+      (contentsOpaque 1)
+      (drawsContent 1)
+      (backgroundColor #FFFFFF)
+      (event region
+        (rect (0,0) width=800 height=600)
+
+      (interaction regions [
+        (interaction
+            (rect (-3,-3) width=35 height=25)
+)
+        (borderRadius 0.00)])
+      )
+      (children 1
+        (GraphicsLayer
+          (position 0.00 20.00)
+          (bounds 200.00 200.00)
+          (drawsContent 1)
+          (event region
+            (rect (0,0) width=200 height=200)
+
+          (interaction regions [
+            (interaction
+                (rect (-3,-3) width=35 height=25)
+)
+            (borderRadius 0.00)])
+          )
+        )
+      )
+    )
+  )
+)
+

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,6 +29,7 @@
 #import "PlatformUtilities.h"
 #import "Test.h"
 #import "TestURLSchemeHandler.h"
+#import <WebCore/SQLiteFileSystem.h>
 #import <WebKit/WKPreferencesPrivate.h>
 #import <WebKit/WKPreferencesRefPrivate.h>
 #import <WebKit/WKProcessPoolPrivate.h>
@@ -39,6 +40,7 @@
 #import <WebKit/WebKit.h>
 #import <WebKit/_WKProcessPoolConfiguration.h>
 #import <WebKit/_WKUserStyleSheet.h>
+#import <WebKit/_WKWebsiteDataStoreConfiguration.h>
 #import <wtf/RetainPtr.h>
 
 @interface IndexedDBMessageHandler : NSObject <WKScriptMessageHandler>
@@ -413,7 +415,7 @@ TEST(IndexedDB, MigrateThirdPartyDataToGeneralStorageDirectory)
     auto websiteDataStoreConfiguration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] init]);
     websiteDataStoreConfiguration.get()._indexedDBDatabaseDirectory = idbDirectory;
     websiteDataStoreConfiguration.get().generalStorageDirectory = generalStorageDirectory;
-    websiteDataStoreConfiguration.get().shouldUseCustomStoragePaths = false;
+    websiteDataStoreConfiguration.get().unifiedOriginStorageLevel = _WKUnifiedOriginStorageLevelBasic;
     auto websiteDataStore = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:websiteDataStoreConfiguration.get()]);
     [configuration setWebsiteDataStore:websiteDataStore.get()];
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);

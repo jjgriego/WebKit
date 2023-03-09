@@ -39,6 +39,7 @@
 #import <pal/spi/cf/CFUtilitiesSPI.h>
 #import <wtf/LogInitialization.h>
 #import <wtf/MainThread.h>
+#import <wtf/OSObjectPtr.h>
 #import <wtf/spi/darwin/XPCSPI.h>
 
 using WebKit::Daemon::EncodedMessage;
@@ -77,8 +78,14 @@ static void applySandbox()
 {
 #if PLATFORM(MAC)
     NSBundle *bundle = [NSBundle bundleWithIdentifier:@"com.apple.WebKit"];
-    auto profilePath = makeString(String([bundle resourcePath]), "/com.apple.WebKit.webpushd.sb");
-    AuxiliaryProcess::applySandboxProfileForDaemon(profilePath, "com.apple.webkit.webpushd"_s);
+    auto profilePath = makeString(String([bundle resourcePath]), "/com.apple.WebKit.webpushd.mac.sb"_s);
+    if (FileSystem::fileExists(profilePath)) {
+        AuxiliaryProcess::applySandboxProfileForDaemon(profilePath, "com.apple.webkit.webpushd"_s);
+        return;
+    }
+
+    auto oldProfilePath = makeString(String([bundle resourcePath]), "/com.apple.WebKit.webpushd.sb"_s);
+    AuxiliaryProcess::applySandboxProfileForDaemon(oldProfilePath, "com.apple.webkit.webpushd"_s);
 #endif
 }
 
@@ -86,6 +93,8 @@ int WebPushDaemonMain(int argc, char** argv)
 {
     @autoreleasepool {
         WTF::initializeMainThread();
+        
+        auto transaction = adoptOSObject(os_transaction_create("com.apple.webkit.webpushd.push-service-main"));
 
 #if ENABLE(CFPREFS_DIRECT_MODE)
         _CFPrefsSetDirectModeEnabled(YES);

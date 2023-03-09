@@ -50,17 +50,33 @@
 
 - (NSString *)protocol
 {
-    return _securityOrigin->securityOrigin().protocol;
+    return _securityOrigin->securityOrigin().protocol();
 }
 
 - (NSString *)host
 {
-    return _securityOrigin->securityOrigin().host;
+    return _securityOrigin->securityOrigin().host();
 }
 
 - (NSInteger)port
 {
-    return _securityOrigin->securityOrigin().port.value_or(0);
+    return _securityOrigin->securityOrigin().port().value_or(0);
+}
+
+-(BOOL)isSameSiteAsOrigin:(WKSecurityOrigin *)origin
+{
+    auto thisOrigin = _securityOrigin->securityOrigin().securityOrigin();
+    auto otherOrigin = origin->_securityOrigin->securityOrigin().securityOrigin();
+
+    return thisOrigin->isSameSiteAs(otherOrigin.get());
+}
+
+-(BOOL)isSameSiteAsURL:(NSURL *)url
+{
+    auto thisOrigin = _securityOrigin->securityOrigin().securityOrigin();
+    auto otherOrigin = WebCore::SecurityOrigin::create(URL { url });
+
+    return thisOrigin->isSameSiteAs(otherOrigin.get());
 }
 
 #pragma mark WKObject protocol implementation

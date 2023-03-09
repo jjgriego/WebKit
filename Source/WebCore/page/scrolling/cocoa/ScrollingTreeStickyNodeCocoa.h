@@ -32,8 +32,6 @@
 #include "ScrollingTreeStickyNode.h"
 #include <wtf/RetainPtr.h>
 
-OBJC_CLASS CALayer;
-
 namespace WebCore {
 
 class ScrollingTreeStickyNodeCocoa : public ScrollingTreeStickyNode {
@@ -42,16 +40,18 @@ public:
 
     virtual ~ScrollingTreeStickyNodeCocoa() = default;
 
-    CALayer *layer() { return m_layer.get(); }
-
 private:
     ScrollingTreeStickyNodeCocoa(ScrollingTree&, ScrollingNodeID);
 
     void commitStateBeforeChildren(const ScrollingStateNode&) final;
     void applyLayerPositions() final WTF_REQUIRES_LOCK(scrollingTree().treeLock());
     FloatPoint layerTopLeft() const final;
+    CALayer* layer() const final { return m_layer.get(); }
 
     RetainPtr<CALayer> m_layer;
+#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
+    RetainPtr<CALayer> m_interactionRegionsLayer;
+#endif
 };
 
 } // namespace WebCore

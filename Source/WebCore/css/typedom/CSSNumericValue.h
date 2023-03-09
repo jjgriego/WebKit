@@ -25,15 +25,14 @@
 
 #pragma once
 
-#if ENABLE(CSS_TYPED_OM)
-
 #include "CSSNumericType.h"
 #include "CSSStyleValue.h"
 #include <variant>
-#include <wtf/FixedVector.h>
+#include <wtf/HashMap.h>
 
 namespace WebCore {
 
+class CSSCalcExpressionNode;
 class CSSNumericValue;
 class CSSUnitValue;
 class CSSMathSum;
@@ -64,8 +63,6 @@ public:
     static ExceptionOr<Ref<CSSNumericValue>> parse(String&&);
     static Ref<CSSNumericValue> rectifyNumberish(CSSNumberish&&);
 
-    CSSStyleValueType getType() const override { return CSSStyleValueType::CSSNumericValue; }
-
     // https://drafts.css-houdini.org/css-typed-om/#sum-value-value
     using UnitMap = HashMap<CSSUnitType, int, WTF::IntHash<CSSUnitType>, WTF::StrongEnumHashTraits<CSSUnitType>>;
     struct Addend {
@@ -74,6 +71,11 @@ public:
     };
     using SumValue = Vector<Addend>;
     virtual std::optional<SumValue> toSumValue() const = 0;
+    virtual bool equals(const CSSNumericValue&) const = 0;
+
+    virtual RefPtr<CSSCalcExpressionNode> toCalcExpressionNode() const = 0;
+
+    static ExceptionOr<Ref<CSSNumericValue>> reifyMathExpression(const CSSCalcExpressionNode&);
 
 protected:
     ExceptionOr<Ref<CSSNumericValue>> addInternal(Vector<Ref<CSSNumericValue>>&&);
@@ -91,5 +93,3 @@ protected:
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::CSSNumericValue)
     static bool isType(const WebCore::CSSStyleValue& styleValue) { return isCSSNumericValue(styleValue.getType()); }
 SPECIALIZE_TYPE_TRAITS_END()
-
-#endif

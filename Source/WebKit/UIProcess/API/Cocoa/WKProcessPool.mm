@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,7 +39,6 @@
 #import "WKWebViewInternal.h"
 #import "WKWebsiteDataStoreInternal.h"
 #import "WebBackForwardCache.h"
-#import "WebCertificateInfo.h"
 #import "WebNotificationManagerProxy.h"
 #import "WebProcessCache.h"
 #import "WebProcessMessages.h"
@@ -502,12 +501,17 @@ static RetainPtr<WKProcessPool>& sharedProcessPool()
 
 + (void)_setCaptivePortalModeEnabledGloballyForTesting:(BOOL)isEnabled
 {
-    WebKit::setCaptivePortalModeEnabledGloballyForTesting(!!isEnabled);
+    WebKit::setLockdownModeEnabledGloballyForTesting(!!isEnabled);
+}
+
++ (BOOL)_lockdownModeEnabledGloballyForTesting
+{
+    return WebKit::lockdownModeEnabledBySystem();
 }
 
 + (void)_clearCaptivePortalModeEnabledGloballyForTesting
 {
-    WebKit::setCaptivePortalModeEnabledGloballyForTesting(std::nullopt);
+    WebKit::setLockdownModeEnabledGloballyForTesting(std::nullopt);
 }
 
 - (BOOL)_isCookieStoragePartitioningEnabled
@@ -559,7 +563,7 @@ static RetainPtr<WKProcessPool>& sharedProcessPool()
 
 - (void)_seedResourceLoadStatisticsForTestingWithFirstParty:(NSURL *)firstPartyURL thirdParty:(NSURL *)thirdPartyURL shouldScheduleNotification:(BOOL)shouldScheduleNotification completionHandler:(void(^)(void))completionHandler
 {
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     _processPool->seedResourceLoadStatisticsForTesting(WebCore::RegistrableDomain { firstPartyURL }, WebCore::RegistrableDomain { thirdPartyURL }, shouldScheduleNotification, [completionHandler = makeBlockPtr(completionHandler)] () {
         completionHandler();
     });

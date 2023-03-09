@@ -52,6 +52,10 @@
 #include "AudioSession.h"
 #endif
 
+#if USE(APPLE_INTERNAL_SDK)
+#include "InternalsAdditions.h"
+#endif
+
 OBJC_CLASS DDScannerResult;
 OBJC_CLASS VKCImageAnalysis;
 
@@ -83,6 +87,7 @@ class Frame;
 class GCObservation;
 class HTMLAnchorElement;
 class HTMLAttachmentElement;
+class HTMLCanvasElement;
 class HTMLImageElement;
 class HTMLInputElement;
 class HTMLLinkElement;
@@ -100,6 +105,7 @@ class MallocStatistics;
 class MediaStream;
 class MediaStreamTrack;
 class MemoryInfo;
+class MessagePort;
 class MockCDMFactory;
 class MockContentFilterSettings;
 class MockPageOverlay;
@@ -114,6 +120,8 @@ class ScrollableArea;
 class SerializedScriptValue;
 class SharedBuffer;
 class SourceBuffer;
+class SpeechSynthesisUtterance;
+class StaticRange;
 class StringCallback;
 class StyleSheet;
 class TextIterator;
@@ -134,6 +142,7 @@ class MediaKeySession;
 
 #if ENABLE(VIDEO)
 class TextTrackCueGeneric;
+class VTTCue;
 #endif
 
 #if ENABLE(SERVICE_WORKER)
@@ -160,6 +169,10 @@ class MockMediaSessionCoordinator;
 
 #if ENABLE(ARKIT_INLINE_PREVIEW_MAC)
 class HTMLModelElement;
+#endif
+
+#if ENABLE(SPEECH_SYNTHESIS)
+class PlatformSpeechSynthesizerMock;
 #endif
 
 template<typename IDLType> class DOMPromiseDeferred;
@@ -218,10 +231,13 @@ public:
     void setImageFrameDecodingDuration(HTMLImageElement&, float duration);
     void resetImageAnimation(HTMLImageElement&);
     bool isImageAnimating(HTMLImageElement&);
+    void setImageAnimationEnabled(bool);
+    void resumeImageAnimation(HTMLImageElement&);
+    void pauseImageAnimation(HTMLImageElement&);
     unsigned imagePendingDecodePromisesCountForTesting(HTMLImageElement&);
     void setClearDecoderAfterAsyncFrameRequestForTesting(HTMLImageElement&, bool enabled);
     unsigned imageDecodeCount(HTMLImageElement&);
-    unsigned pdfDocumentCachingCount(HTMLImageElement&);
+    unsigned imageCachedSubimageCreateCount(HTMLImageElement&);
     unsigned remoteImagesCountForTesting() const;
     void setLargeImageAsyncDecodingEnabledForTesting(HTMLImageElement&, bool enabled);
     void setForceUpdateImageDataEnabledForTesting(HTMLImageElement&, bool enabled);
@@ -310,7 +326,6 @@ public:
     ExceptionOr<void> setMarkedTextMatchesAreHighlighted(bool);
 
     void invalidateFontCache();
-    void setFontSmoothingEnabled(bool);
 
     ExceptionOr<void> setLowPowerModeEnabled(bool);
     ExceptionOr<void> setOutsideViewportThrottlingEnabled(bool);
@@ -328,7 +343,6 @@ public:
     ExceptionOr<void> setViewBaseBackgroundColor(const String& colorValue);
 
     ExceptionOr<void> setPagination(const String& mode, int gap, int pageLength);
-    ExceptionOr<void> setPaginationLineGridEnabled(bool);
     ExceptionOr<uint64_t> lineIndexAfterPageBreak(Element&);
     ExceptionOr<String> configurationForViewport(float devicePixelRatio, int deviceWidth, int deviceHeight, int availableWidth, int availableHeight);
 
@@ -337,10 +351,11 @@ public:
     void setAutofilled(HTMLInputElement&, bool enabled);
     void setAutoFilledAndViewable(HTMLInputElement&, bool enabled);
     void setAutoFilledAndObscured(HTMLInputElement&, bool enabled);
-    enum class AutoFillButtonType { None, Contacts, Credentials, StrongPassword, CreditCard };
+    enum class AutoFillButtonType { None, Contacts, Credentials, StrongPassword, CreditCard, Loading };
     void setShowAutoFillButton(HTMLInputElement&, AutoFillButtonType);
     AutoFillButtonType autoFillButtonType(const HTMLInputElement&);
     AutoFillButtonType lastAutoFillButtonType(const HTMLInputElement&);
+    Vector<String> recentSearches(const HTMLInputElement&);
     ExceptionOr<void> scrollElementToRect(Element&, int x, int y, int w, int h);
 
     ExceptionOr<String> autofillFieldName(Element&);
@@ -433,6 +448,8 @@ public:
     unsigned workerThreadCount() const;
     ExceptionOr<bool> areSVGAnimationsPaused() const;
     ExceptionOr<double> svgAnimationsInterval(SVGSVGElement&) const;
+    // Some SVGSVGElements are not accessible via JavaScript (e.g. those in CSS `background: url(data:image/svg+xml;utf8,<svg>...)`, but we need access to them for testing.
+    Vector<Ref<SVGSVGElement>> allSVGSVGElements() const;
 
     enum {
         // Values need to be kept in sync with Internals.idl.
@@ -447,6 +464,7 @@ public:
         LAYER_TREE_INCLUDES_ROOT_LAYER_PROPERTIES = 256,
         LAYER_TREE_INCLUDES_EVENT_REGION = 512,
         LAYER_TREE_INCLUDES_DEEP_COLOR = 1024,
+        LAYER_TREE_INCLUDES_DEVICE_SCALE = 2048,
     };
     ExceptionOr<String> layerTreeAsText(Document&, unsigned short flags) const;
     ExceptionOr<uint64_t> layerIDForElement(Element&);
@@ -468,6 +486,7 @@ public:
 
     ExceptionOr<String> scrollingStateTreeAsText() const;
     ExceptionOr<String> scrollingTreeAsText() const;
+    ExceptionOr<bool> haveScrollingTree() const;
     ExceptionOr<String> synchronousScrollingReasons() const;
     ExceptionOr<Ref<DOMRectList>> nonFastScrollableRects() const;
 
@@ -484,6 +503,7 @@ public:
 
     void setForceUseGlyphDisplayListForTesting(bool enabled);
     ExceptionOr<String> cachedGlyphDisplayListsForTextNode(Node&, unsigned short flags);
+    void clearGlyphDisplayListCacheForTesting();
 
     ExceptionOr<void> garbageCollectDocumentResources() const;
 
@@ -512,6 +532,9 @@ public:
 
     String documentIdentifier(const Document&) const;
     bool isDocumentAlive(const String& documentIdentifier) const;
+
+    uint64_t messagePortIdentifier(const MessagePort&) const;
+    bool isMessagePortAlive(uint64_t messagePortIdentifier) const;
 
     uint64_t storageAreaMapCount() const;
 
@@ -649,6 +672,9 @@ public:
 
 #if ENABLE(SPEECH_SYNTHESIS)
     void enableMockSpeechSynthesizer();
+    void enableMockSpeechSynthesizerForMediaElement(HTMLMediaElement&);
+    ExceptionOr<void> setSpeechUtteranceDuration(double);
+    unsigned minimumExpectedVoiceCount();
 #endif
 
 #if ENABLE(MEDIA_STREAM)
@@ -720,6 +746,7 @@ public:
 #endif
 
     ExceptionOr<Ref<DOMRect>> selectionBounds();
+    ExceptionOr<RefPtr<StaticRange>> selectedRange();
     void setSelectionWithoutValidation(Ref<Node> baseNode, unsigned baseOffset, RefPtr<Node> extentNode, unsigned extentOffset);
 
     ExceptionOr<bool> isPluginUnavailabilityIndicatorObscured(Element&);
@@ -752,6 +779,7 @@ public:
     bool isPlayerVisibleInViewport(const HTMLMediaElement&) const;
     bool isPlayerMuted(const HTMLMediaElement&) const;
     void beginAudioSessionInterruption();
+    void endAudioSessionInterruption();
 #endif
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
@@ -808,7 +836,7 @@ public:
     void setShowAllPlugins(bool);
 
     String resourceLoadStatisticsForURL(const DOMURL&);
-    void setResourceLoadStatisticsEnabled(bool);
+    void setTrackingPreventionEnabled(bool);
 
     bool isReadableStreamDisturbed(JSC::JSGlobalObject&, JSC::JSValue);
     JSC::JSValue cloneArrayBuffer(JSC::JSGlobalObject&, JSC::JSValue, JSC::JSValue, JSC::JSValue);
@@ -824,6 +852,8 @@ public:
     bool userIsInteracting();
 
     bool hasTransientActivation();
+
+    bool consumeTransientActivation();
 
     RefPtr<GCObservation> observeGC(JSC::JSValue);
 
@@ -1054,7 +1084,6 @@ public:
         bool isMediaDocumentAndNotOwnerElement;
         bool pageExplicitlyAllowsElementToAutoplayInline;
         bool requiresFullscreenForVideoPlaybackAndFullscreenNotPermitted;
-        bool hasHadUserInteractionAndQuirksContainsShouldAutoplayForArbitraryUserGesture;
         bool isVideoAndRequiresUserGestureForVideoRateChange;
         bool isAudioAndRequiresUserGestureForAudioRateChange;
         bool isVideoAndRequiresUserGestureForVideoDueToLowPowerMode;
@@ -1086,7 +1115,13 @@ public:
     size_t mediaElementCount() const;
 
     void setMediaElementVolumeLocked(HTMLMediaElement&, bool);
+
+#if ENABLE(SPEECH_SYNTHESIS)
+    ExceptionOr<RefPtr<SpeechSynthesisUtterance>> speechSynthesisUtteranceForCue(const VTTCue&);
+    ExceptionOr<RefPtr<VTTCue>> mediaElementCurrentlySpokenCue(HTMLMediaElement&);
 #endif
+
+#endif // ENABLE(VIDEO)
 
     void setCaptureExtraNetworkLoadMetricsEnabled(bool);
     String ongoingLoadsDescriptions() const;
@@ -1179,6 +1214,7 @@ public:
         bool useBoundingRectAndPaintAllContentForComplexRanges { false };
         bool computeEstimatedBackgroundColor { false };
         bool respectTextColor { false };
+        bool useUserSelectAllCommonAncestor { false };
 
         OptionSet<WebCore::TextIndicatorOption> coreOptions()
         {
@@ -1189,6 +1225,8 @@ public:
                 options.add(TextIndicatorOption::ComputeEstimatedBackgroundColor);
             if (respectTextColor)
                 options.add(TextIndicatorOption::RespectTextColor);
+            if (useUserSelectAllCommonAncestor)
+                options.add(TextIndicatorOption::UseUserSelectAllCommonAncestor);
             return options;
         }
     };
@@ -1209,7 +1247,8 @@ public:
     bool hasSandboxMachLookupAccessToGlobalName(const String& process, const String& service);
     bool hasSandboxMachLookupAccessToXPCServiceName(const String& process, const String& service);
     bool hasSandboxIOKitOpenAccessToClass(const String& process, const String& ioKitClass);
-
+    bool hasSandboxUnixSyscallAccess(const String& process, unsigned syscall) const;
+        
     String highlightPseudoElementColor(const AtomString& highlightName, Element&);
 
     String windowLocationHost(DOMWindow&);
@@ -1222,6 +1261,7 @@ public:
     void setSystemHasACForTesting(bool);
 
     void setHardwareVP9DecoderDisabledForTesting(bool);
+    void setVP9DecoderDisabledForTesting(bool);
     void setVP9ScreenSizeAndScaleForTesting(double, double, double);
 
     int readPreferenceInteger(const String& domain, const String& key);
@@ -1317,6 +1357,21 @@ public:
     String modelInlinePreviewUUIDForModelElement(const HTMLModelElement&) const;
 #endif
 
+    void avoidIOSurfaceSizeCheckInWebProcess(HTMLCanvasElement&);
+    bool hasSleepDisabler() const;
+
+    void acceptTypedArrays(Int32Array&);
+
+    struct SelectorFilterHashCounts {
+        size_t ids { 0 };
+        size_t classes { 0 };
+        size_t tags { 0 };
+        size_t attributes { 0 };
+    };
+    SelectorFilterHashCounts selectorFilterHashCounts(const String& selector);
+
+    bool isVisuallyNonEmpty() const;
+
 private:
     explicit Internals(Document&);
     Document* contextDocument() const;
@@ -1365,6 +1420,9 @@ private:
     RefPtr<WebXRTest> m_xrTest;
 #endif
 
+#if ENABLE(SPEECH_SYNTHESIS)
+    RefPtr<PlatformSpeechSynthesizerMock> m_platformSpeechSynthesizer;
+#endif
 #if ENABLE(MEDIA_SESSION_COORDINATOR)
     RefPtr<MockMediaSessionCoordinator> m_mockMediaSessionCoordinator;
 #endif

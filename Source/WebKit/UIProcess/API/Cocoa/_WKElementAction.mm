@@ -64,6 +64,10 @@ UIActionIdentifier const WKElementActionTypeToggleShowLinkPreviewsIdentifier = @
 static UIActionIdentifier const WKElementActionTypeImageExtractionIdentifier = @"WKElementActionTypeImageExtraction";
 static UIActionIdentifier const WKElementActionTypeRevealImageIdentifier = @"WKElementActionTypeRevealImage";
 static UIActionIdentifier const WKElementActionTypeCopySubjectIdentifier = @"WKElementActionTypeCopySubject";
+static UIActionIdentifier const WKElementActionPlayAllAnimationsIdentifier = @"WKElementActionPlayAllAnimations";
+static UIActionIdentifier const WKElementActionPauseAllAnimationsIdentifier = @"WKElementActionPauseAllAnimations";
+static UIActionIdentifier const WKElementActionPlayAnimationIdentifier = @"WKElementActionPlayAnimation";
+static UIActionIdentifier const WKElementActionPauseAnimationIdentifier = @"WKElementActionPauseAnimation";
 
 static NSString * const webkitShowLinkPreviewsPreferenceKey = @"WebKitShowLinkPreviews";
 static NSString * const webkitShowLinkPreviewsPreferenceChangedNotification = @"WebKitShowLinkPreviewsPreferenceChanged";
@@ -140,7 +144,7 @@ static void addToReadingList(NSURL *targetURL, NSString *title)
         };
         break;
     case _WKElementActionTypeSaveImage:
-        title = WEB_UI_STRING("Add to Photos", "Title for Add to Photos action button");
+        title = WEB_UI_STRING("Save to Photos", "Title for Save to Photos action button");
         handler = ^(WKActionSheetAssistant *assistant, _WKActivatedElementInfo *actionInfo) {
             [assistant handleElementActionWithType:type element:actionInfo needsInteraction:YES];
         };
@@ -181,6 +185,22 @@ static void addToReadingList(NSURL *targetURL, NSString *title)
     case _WKElementActionTypeCopyCroppedImage:
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
         title = WebCore::contextMenuItemTagCopySubject();
+        handler = ^(WKActionSheetAssistant *assistant, _WKActivatedElementInfo *actionInfo) {
+            [assistant handleElementActionWithType:type element:actionInfo needsInteraction:YES];
+        };
+#endif
+        break;
+    case _WKElementActionPlayAnimation:
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+        title = WEB_UI_STRING("Play Animation", "Title for play animation action button");
+        handler = ^(WKActionSheetAssistant *assistant, _WKActivatedElementInfo *actionInfo) {
+            [assistant handleElementActionWithType:type element:actionInfo needsInteraction:YES];
+        };
+#endif
+        break;
+    case _WKElementActionPauseAnimation:
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+        title = WEB_UI_STRING("Pause Animation", "Title for pause animation action button");
         handler = ^(WKActionSheetAssistant *assistant, _WKActivatedElementInfo *actionInfo) {
             [assistant handleElementActionWithType:type element:actionInfo needsInteraction:YES];
         };
@@ -268,11 +288,15 @@ static void addToReadingList(NSURL *targetURL, NSString *title)
         return nil;
 #endif
     case _WKElementActionTypeCopyCroppedImage:
-        return [UIImage systemImageNamed:@"person.fill.viewfinder"];
+        return [UIImage _systemImageNamed:@"circle.dashed.rectangle"];
+    case _WKElementActionPlayAnimation:
+        return [UIImage systemImageNamed:@"play.circle"];
+    case _WKElementActionPauseAnimation:
+        return [UIImage systemImageNamed:@"pause.circle"];
     }
 }
 
-static UIActionIdentifier elementActionTypeToUIActionIdentifier(_WKElementActionType actionType)
+UIActionIdentifier elementActionTypeToUIActionIdentifier(_WKElementActionType actionType)
 {
     switch (actionType) {
     case _WKElementActionTypeCustom:
@@ -305,6 +329,10 @@ static UIActionIdentifier elementActionTypeToUIActionIdentifier(_WKElementAction
         return WKElementActionTypeRevealImageIdentifier;
     case _WKElementActionTypeCopyCroppedImage:
         return WKElementActionTypeCopySubjectIdentifier;
+    case _WKElementActionPlayAnimation:
+        return WKElementActionPlayAnimationIdentifier;
+    case _WKElementActionPauseAnimation:
+        return WKElementActionPauseAnimationIdentifier;
     }
 }
 
@@ -340,6 +368,10 @@ static _WKElementActionType uiActionIdentifierToElementActionType(UIActionIdenti
         return _WKElementActionTypeRevealImage;
     if ([identifier isEqualToString:WKElementActionTypeCopySubjectIdentifier])
         return _WKElementActionTypeCopyCroppedImage;
+    if ([identifier isEqualToString:WKElementActionPlayAnimationIdentifier])
+        return _WKElementActionPlayAnimation;
+    if ([identifier isEqualToString:WKElementActionPauseAnimationIdentifier])
+        return _WKElementActionPauseAnimation;
     return _WKElementActionTypeCustom;
 }
 

@@ -371,7 +371,7 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
     spreadsheetTextFieldInitialCompletionIndex(textField, completions)
     {
         if (textField === this._nameTextField && WI.settings.experimentalCSSSortPropertyNameAutocompletionByUsage.value)
-            return completions.minIndex(WI.CSSProperty.sortByPropertyNameUsageCount);
+            return WI.CSSProperty.indexOfCompletionForMostUsedPropertyName(completions);
         return 0;
     }
 
@@ -430,9 +430,12 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
         this._addCSSDocumentationButton();
 
         let focusedOutsideThisProperty = event.relatedTarget !== this._nameElement && event.relatedTarget !== this._valueElement;
-        if (focusedOutsideThisProperty && (!this._nameTextField.value.trim() || !this._valueTextField.value.trim())) {
-            this.remove();
-            return;
+        if (focusedOutsideThisProperty) {
+            if (!this._nameTextField.value.trim() || !this._valueTextField.value.trim()) {
+                this.remove();
+                return;
+            }
+            this._property.isNewProperty = false;
         }
 
         if (textField === this._valueTextField)
@@ -469,7 +472,6 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
 
     willDismissPopover()
     {
-        this._valueElement.classList.remove(WI.Popover.IgnoreAutoDismissClassName);
         this._cssDocumentationPopover = null;
     }
 
@@ -581,8 +583,6 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
     {
         this._cssDocumentationPopover ??= new WI.CSSDocumentationPopover(this._property, this);
         this._cssDocumentationPopover.show(this._nameElement);
-        if (this._isEditable())
-            this._valueElement.classList.add(WI.Popover.IgnoreAutoDismissClassName);
     }
 
     _createInlineSwatch(type, contents, valueObject)
@@ -620,7 +620,7 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
 
         swatch.addEventListener(WI.InlineSwatch.Event.Activated, function(event) {
             this._activeInlineSwatch = swatch;
-            this._delegate?.stylePropertyInlineSwatchActivated();
+            this._delegate?.stylePropertyInlineSwatchActivated?.();
         }, this);
 
         if (this._delegate && typeof this._delegate.stylePropertyInlineSwatchDeactivated === "function") {
@@ -720,7 +720,10 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
             if (token.type && token.type.includes("hex-color")) {
                 // Hex
                 pushPossibleColorToken(token.value, token);
-            } else if (WI.Color.FunctionNames.has(token.value) && token.type && (token.type.includes("atom") || token.type.includes("keyword"))) {
+            } else if (isNaN(colorFunctionStartIndex)
+                && WI.Color.FunctionNames.has(token.value)
+                && tokens[i + 1]?.value === "("
+                && (token.type?.includes("atom") || token.type?.includes("keyword"))) {
                 // Color Function start
                 colorFunctionStartIndex = i;
             } else if (isNaN(colorFunctionStartIndex) && token.type && (token.type.includes("atom") || token.type.includes("keyword"))) {
@@ -738,12 +741,21 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
                 if (--openParentheses)
                     continue;
 
-                let rawTokens = tokens.slice(colorFunctionStartIndex, i + 1);
+                // A function will always have a `(` after the function name.
+                let functionOpeningTokens = tokens.slice(colorFunctionStartIndex, colorFunctionStartIndex + 2);
 
-                let text = this._resolveVariables(rawTokens.map((token) => token.value).join(""));
-                rawTokens = this._addVariableTokens(rawTokens);
+                // Functions may contain additional functions that can be represented by a color swatch. (e.g. `color-mix`)
+                let functionInnerTokens = tokens.slice(colorFunctionStartIndex + 2, i);
+                functionInnerTokens = this._addColorTokens(functionInnerTokens);
 
-                pushPossibleColorToken(text, ...rawTokens);
+                let functionClosingToken = tokens[i];
+
+                let functionTokens = [...functionOpeningTokens, ...functionInnerTokens, functionClosingToken];
+
+                let text = this._resolveVariables(functionTokens.map((token) => token.value).join(""));
+                functionTokens = this._addVariableTokens(functionTokens);
+
+                pushPossibleColorToken(text, ...functionTokens);
                 colorFunctionStartIndex = NaN;
             } else
                 newTokens.push(token);
@@ -754,6 +766,9 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
 
     _addTimingFunctionTokens(tokens, tokenType)
     {
+        if (!this._isEditable())
+            return tokens;
+
         let newTokens = [];
         let startIndex = NaN;
         let openParenthesis = 0;
@@ -803,6 +818,9 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
 
     _addBoxShadowTokens(tokens)
     {
+        if (!this._isEditable())
+            return tokens;
+
         let newTokens = [];
         let startIndex = 0;
         let openParentheses = 0;
@@ -887,7 +905,7 @@ WI.SpreadsheetStyleProperty = class SpreadsheetStyleProperty extends WI.Object
                     continue;
 
                 let rawTokens = tokens.slice(startIndex, i + 1);
-                let variableNameIndex = rawTokens.findIndex((token) => token.value.startsWith("--") && /\bvariable-2\b/.test(token.type));
+                let variableNameIndex = rawTokens.findIndex((token) => WI.CSSProperty.isVariable(token.value) && /\bvariable-2\b/.test(token.type));
                 if (variableNameIndex !== -1) {
                     let contents = rawTokens.slice(0, variableNameIndex + 1);
 

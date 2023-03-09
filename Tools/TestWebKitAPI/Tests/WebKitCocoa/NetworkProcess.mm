@@ -77,7 +77,9 @@ TEST(WebKit, HTTPReferer)
     };
     
     Vector<char> a5k(5000, 'a');
+    a5k.append(0);
     Vector<char> a3k(3000, 'a');
+    a3k.append(0);
     NSString *longPath = [NSString stringWithFormat:@"http://webkit.org/%s?asdf", a5k.data()];
     NSString *shorterPath = [NSString stringWithFormat:@"http://webkit.org/%s?asdf", a3k.data()];
     NSString *longHost = [NSString stringWithFormat:@"http://webkit.org%s/path", a5k.data()];
@@ -134,29 +136,45 @@ TEST(NetworkProcess, CrashWhenNotAssociatedWithDataStore)
     EXPECT_NE(networkProcessPID, [webView configuration].websiteDataStore._networkProcessIdentifier);
 }
 
-TEST(NetworkProcess, TerminateWhenUnused)
+TEST(NetworkProcess, TerminateWhenNoWebsiteDataStore)
 {
-    RetainPtr<WKProcessPool> retainedPool;
+    pid_t networkProcessIdentifier = 0;
     @autoreleasepool {
         auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
-        configuration.get().websiteDataStore = [WKWebsiteDataStore nonPersistentDataStore];
-        retainedPool = configuration.get().processPool;
+        auto nonPersistentStore = [WKWebsiteDataStore nonPersistentDataStore];
+        configuration.get().websiteDataStore = nonPersistentStore;
         auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 0, 0) configuration:configuration.get()]);
         [webView synchronouslyLoadTestPageNamed:@"simple"];
         EXPECT_TRUE([WKWebsiteDataStore _defaultNetworkProcessExists]);
+
+        networkProcessIdentifier = [nonPersistentStore _networkProcessIdentifier];
+        EXPECT_NE(networkProcessIdentifier, 0);
     }
-    while ([WKWebsiteDataStore _defaultNetworkProcessExists])
+
+    while (!kill(networkProcessIdentifier, 0))
         TestWebKitAPI::Util::spinRunLoop();
-    
-    retainedPool = nil;
-    
+    EXPECT_TRUE(errno == ESRCH);
+    EXPECT_FALSE([WKWebsiteDataStore _defaultNetworkProcessExists]);
+}
+
+TEST(NetworkProcess, TerminateWhenNoDefaultWebsiteDataStore)
+{
+    pid_t networkProcessIdentifier = 0;
     @autoreleasepool {
         auto webView = adoptNS([WKWebView new]);
         [webView synchronouslyLoadTestPageNamed:@"simple"];
         EXPECT_TRUE([WKWebsiteDataStore _defaultNetworkProcessExists]);
+
+        networkProcessIdentifier = [webView.get().configuration.websiteDataStore _networkProcessIdentifier];
+        EXPECT_NE(networkProcessIdentifier, 0);
     }
-    while ([WKWebsiteDataStore _defaultNetworkProcessExists])
+
+    [WKWebsiteDataStore _deleteDefaultDataStoreForTesting];
+
+    while (!kill(networkProcessIdentifier, 0))
         TestWebKitAPI::Util::spinRunLoop();
+    EXPECT_TRUE(errno == ESRCH);
+    EXPECT_FALSE([WKWebsiteDataStore _defaultNetworkProcessExists]);
 }
 
 TEST(NetworkProcess, DoNotLaunchOnDataStoreDestruction)
@@ -224,11 +242,21 @@ TEST(NetworkProcess, CORSPreflightCachePartitioned)
 
 static Vector<RetainPtr<WKScriptMessage>> receivedMessagesVector;
 static bool receivedMessage = false;
+static RetainPtr<WKScriptMessage> waitAndGetNextMessage()
+{
+    if (receivedMessagesVector.isEmpty()) {
+        receivedMessage = false;
+        TestWebKitAPI::Util::run(&receivedMessage);
+    }
 
-@interface BroadcastChannelMessageHandler : NSObject <WKScriptMessageHandler>
+    EXPECT_EQ(receivedMessagesVector.size(), 1U);
+    return receivedMessagesVector.takeLast();
+}
+
+@interface NetworkProcessTestMessageHandler : NSObject <WKScriptMessageHandler>
 @end
 
-@implementation BroadcastChannelMessageHandler
+@implementation NetworkProcessTestMessageHandler
 - (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message
 {
     receivedMessagesVector.append(message);
@@ -260,7 +288,7 @@ static void waitUntilNetworkProcessIsResponsive(WKWebView *webView1, WKWebView *
 TEST(NetworkProcess, BroadcastChannelCrashRecovery)
 {
     auto webViewConfiguration = adoptNS([[WKWebViewConfiguration alloc] init]);
-    auto messageHandler = adoptNS([[BroadcastChannelMessageHandler alloc] init]);
+    auto messageHandler = adoptNS([[NetworkProcessTestMessageHandler alloc] init]);
     [[webViewConfiguration userContentController] addScriptMessageHandler:messageHandler.get() name:@"test"];
 
     auto webView1 = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
@@ -680,3 +708,105 @@ TEST(_WKDataTask, Crash)
 }
 
 #endif // HAVE(NSURLSESSION_TASK_DELEGATE)
+
+TEST(WKWebView, CrossOriginDoubleRedirectAuthentication)
+{
+    using namespace TestWebKitAPI;
+    bool done { false };
+
+    auto hasAuthorizationHeaderField = [] (const Vector<char>& request) {
+        const char* field = "Authorization: TestValue\r\n";
+        return memmem(request.data(), request.size(), field, strlen(field));
+    };
+
+    HTTPServer server(HTTPServer::UseCoroutines::Yes, [&](Connection connection) -> Task {
+        while (true) {
+            auto request = co_await connection.awaitableReceiveHTTPRequest();
+            auto path = HTTPServer::parsePath(request);
+            if (path == "http://example.com/original-target"_s) {
+                EXPECT_TRUE(hasAuthorizationHeaderField(request));
+                co_await connection.awaitableSend(HTTPResponse(302, { { "Location"_s, "http://not-example.com/first-redirect"_s } }, { }).serialize());
+            } else if (path == "http://not-example.com/first-redirect"_s) {
+                EXPECT_FALSE(hasAuthorizationHeaderField(request));
+                co_await connection.awaitableSend(HTTPResponse(302, { { "Location"_s, "http://not-example.com/second-redirect"_s } }, { }).serialize());
+            } else if (path == "http://not-example.com/second-redirect"_s) {
+                EXPECT_FALSE(hasAuthorizationHeaderField(request));
+                done = true;
+            } else
+                EXPECT_FALSE(true);
+        }
+    });
+
+    auto storeConfiguration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] initNonPersistentConfiguration]);
+    [storeConfiguration setProxyConfiguration:@{
+        (NSString *)kCFStreamPropertyHTTPProxyHost: @"127.0.0.1",
+        (NSString *)kCFStreamPropertyHTTPProxyPort: @(server.port())
+    }];
+    auto dataStore = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:storeConfiguration.get()]);
+    auto viewConfiguration = adoptNS([WKWebViewConfiguration new]);
+    [viewConfiguration setWebsiteDataStore:dataStore.get()];
+
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"http://example.com/original-target"]];
+    [request setValue:@"TestValue" forHTTPHeaderField:@"Authorization"];
+
+    auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSZeroRect configuration:viewConfiguration.get()]);
+    [webView loadRequest:request];
+    Util::run(&done);
+}
+
+static constexpr auto mainBytes = R"TESTRESOURCE(
+<script>
+function terminateWorker()
+{
+    worker.terminate();
+    worker = null;
+}
+
+var worker = new Worker('worker.js');
+worker.onerror = (event) => {
+    window.webkit.messageHandlers.testHandler.postMessage(event);
+};
+worker.onmessage = (event) => {
+    window.webkit.messageHandlers.testHandler.postMessage(event.data);
+};
+</script>
+)TESTRESOURCE"_s;
+
+static constexpr auto workerBytes = R"TESTRESOURCE(
+caches.open("test").then(() => {
+    self.postMessage('cache is opened');
+}, () => {
+    self.postMessage('cache cannot be opened');
+});
+)TESTRESOURCE"_s;
+
+TEST(NetworkProcess, DoNotLaunchForDOMCacheDestruction)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { mainBytes } },
+        { "/worker.js"_s, { { { "Content-Type"_s, "text/javascript"_s } }, workerBytes } }
+    });
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    [configuration.get().websiteDataStore _setResourceLoadStatisticsEnabled:NO];
+    auto messageHandler = adoptNS([[NetworkProcessTestMessageHandler alloc] init]);
+    [[configuration userContentController] addScriptMessageHandler:messageHandler.get() name:@"testHandler"];
+    auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get() addToWindow:YES]);
+    [webView loadRequest:server.request()];
+    EXPECT_WK_STREQ(@"cache is opened", (NSString *)[waitAndGetNextMessage() body]);
+    EXPECT_TRUE([configuration.get().websiteDataStore _networkProcessExists]);
+
+    kill(configuration.get().websiteDataStore._networkProcessIdentifier, SIGKILL);
+    while ([configuration.get().websiteDataStore _networkProcessExists])
+        TestWebKitAPI::Util::spinRunLoop();
+
+    // Unregister service worker client.
+    bool done = false;
+    [webView evaluateJavaScript:@"terminateWorker()" completionHandler:[&] (id result, NSError *error) {
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+    [configuration.get().processPool _garbageCollectJavaScriptObjectsForTesting];
+
+    TestWebKitAPI::Util::spinRunLoop(50);
+    EXPECT_FALSE([configuration.get().websiteDataStore _networkProcessExists]);
+}

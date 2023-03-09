@@ -117,7 +117,6 @@ WK_EXPORT WKFrameRef WKPageGetFrameSetLargestFrame(WKPageRef page) WK_C_API_DEPR
 WK_EXPORT double WKPageGetEstimatedProgress(WKPageRef page);
 
 WK_EXPORT uint64_t WKPageGetRenderTreeSize(WKPageRef page);
-WK_EXPORT uint64_t WKPageGetIdentifier(WKPageRef page);
 
 WK_EXPORT WKWebsiteDataStoreRef WKPageGetWebsiteDataStore(WKPageRef page);
 
@@ -130,8 +129,6 @@ WK_EXPORT void WKPageSetApplicationNameForUserAgent(WKPageRef page, WKStringRef 
 
 WK_EXPORT WKStringRef WKPageCopyCustomUserAgent(WKPageRef page);
 WK_EXPORT void WKPageSetCustomUserAgent(WKPageRef page, WKStringRef userAgent);
-
-WK_EXPORT void WKPageSetUserContentExtensionsEnabled(WKPageRef, bool);
     
 WK_EXPORT bool WKPageSupportsTextEncoding(WKPageRef page);
 WK_EXPORT WKStringRef WKPageCopyCustomTextEncodingName(WKPageRef page);
@@ -276,6 +273,8 @@ WK_EXPORT void WKPageExecuteCommand(WKPageRef page, WKStringRef command);
 WK_EXPORT void WKPagePostMessageToInjectedBundle(WKPageRef page, WKStringRef messageName, WKTypeRef messageBody);
 
 WK_EXPORT void WKPageSelectContextMenuItem(WKPageRef page, WKContextMenuItemRef item);
+
+WK_EXPORT void WKPageClearNotificationPermissionState(WKPageRef page);
 
 #ifdef __cplusplus
 }

@@ -7,10 +7,6 @@ list(APPEND JavaScriptCore_PUBLIC_FRAMEWORK_HEADERS
     API/JavaScriptCore.h
 )
 
-list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
-    ${CMAKE_BINARY_DIR}/../include/private
-)
-
 if (USE_CF)
     list(APPEND JavaScriptCore_SOURCES
         API/JSStringRefCF.cpp
@@ -21,13 +17,7 @@ if (USE_CF)
     )
 
     list(APPEND JavaScriptCore_LIBRARIES
-        ${COREFOUNDATION_LIBRARY}
-    )
-endif ()
-
-if (NOT WTF_PLATFORM_WIN_CAIRO)
-    list(APPEND JavaScriptCore_LIBRARIES
-        winmm
+        Apple::CoreFoundation
     )
 endif ()
 
@@ -38,11 +28,3 @@ else ()
         inspector/JSGlobalObjectInspectorController.cpp
     )
 endif ()
-
-file(COPY
-    "${JAVASCRIPTCORE_DIR}/JavaScriptCore.vcxproj/JavaScriptCore.resources"
-    DESTINATION
-    ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}
-)
-
-set(JavaScriptCore_OUTPUT_NAME JavaScriptCore${DEBUG_SUFFIX})

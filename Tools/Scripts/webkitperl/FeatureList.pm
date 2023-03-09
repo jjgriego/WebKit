@@ -1,4 +1,5 @@
 # Copyright (C) 2012 Google Inc. All rights reserved.
+# Copyright (C) 2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -31,12 +32,14 @@
 # * A feature enabled here but not WebKitFeatures.cmake is EXPERIMENTAL.
 # * A feature enabled in WebKitFeatures.cmake but not here is a BUG.
 
+package webkitperl::FeatureList;
+
 use strict;
 use warnings;
 
 use FindBin;
 use lib $FindBin::Bin;
-use webkitdirs;
+use autouse 'webkitdirs' => qw(prohibitUnknownPort);
 
 BEGIN {
    use Exporter   ();
@@ -85,6 +88,7 @@ my (
     $downloadAttributeSupport,
     $dragSupportSupport,
     $encryptedMediaSupport,
+    $fatalWarnings,
     $filtersLevel2Support,
     $ftlJITSupport,
     $ftpDirSupport,
@@ -101,7 +105,6 @@ my (
     $inputTypeWeekSupport,
     $inspectorAlternateDispatchersSupport,
     $inspectorTelemetrySupport,
-    $intelligentTrackingPrevention,
     $iosGestureEventsSupport,
     $iosTouchEventsSupport,
     $jitSupport,
@@ -112,6 +115,7 @@ my (
     $legacyEncryptedMediaSupport,
     $letterpressSupport,
     $macGestureEventsSupport,
+    $managedMediaSourceSupport,
     $mathmlSupport,
     $mediaCaptureSupport,
     $mediaControlsScriptSupport,
@@ -133,6 +137,7 @@ my (
     $orientationEventsSupport,
     $overflowScrollingTouchSupport,
     $paymentRequestSupport,
+    $pdfJS,
     $pdfkitPluginSupport,
     $pictureInPictureAPISupport,
     $pointerLockSupport,
@@ -160,6 +165,7 @@ my (
     $threeDTransformsSupport,
     $touchEventsSupport,
     $touchSliderSupport,
+    $trackingPrevention,
     $unifiedBuildsSupport,
     $userMessageHandlersSupport,
     $userselectAllSupport,
@@ -173,6 +179,7 @@ my (
     $webAssemblyB3JITSupport,
     $webAudioSupport,
     $webAuthNSupport,
+    $webCodecsSupport,
     $webCryptoSupport,
     $webRTCSupport,
     $webdriverKeyboardInteractionsSupport,
@@ -180,16 +187,16 @@ my (
     $webdriverSupport,
     $webdriverTouchInteractionsSupport,
     $webdriverWheelInteractionsSupport,
-    $webgl2Support,
     $webglSupport,
     $webXRSupport,
     $wirelessPlaybackTargetSupport,
     $xsltSupport,
 );
 
-prohibitUnknownPort();
-
 my @features = (
+    { option => "fatal-warnings", desc => "Toggle warnings as errors (CMake only)",
+      define => "DEVELOPER_MODE_FATAL_WARNINGS", value => \$fatalWarnings },
+
     { option => "3d-rendering", desc => "Toggle 3D rendering support",
       define => "ENABLE_3D_TRANSFORMS", value => \$threeDTransformsSupport },
 
@@ -334,9 +341,6 @@ my @features = (
     { option => "inspector-telemetry", desc => "Toggle inspector telemetry support",
       define => "ENABLE_INSPECTOR_TELEMETRY", value => \$inspectorTelemetrySupport },
 
-    { option => "intelligent-tracking-prevention", desc => "Toggle intelligent tracking prevention support",
-      define => "ENABLE_INTELLIGENT_TRACKING_PREVENTION", value => \$intelligentTrackingPrevention },
-
     { option => "ios-gesture-events", desc => "Toggle iOS gesture events support",
       define => "ENABLE_IOS_GESTURE_EVENTS", value => \$iosGestureEventsSupport },
 
@@ -366,6 +370,9 @@ my @features = (
 
     { option => "mac-gesture-events", desc => "Toggle Mac gesture events support",
       define => "ENABLE_MAC_GESTURE_EVENTS", value => \$macGestureEventsSupport },
+
+    { option => "managed-media-source", desc => "Toggle Managed Media Source support",
+      define => "ENABLE_MANAGED_MEDIA_SOURCE", value => \$managedMediaSourceSupport },
 
     { option => "mathml", desc => "Toggle MathML support",
       define => "ENABLE_MATHML", value => \$mathmlSupport },
@@ -426,6 +433,9 @@ my @features = (
 
     { option => "payment-request", desc => "Toggle Payment Request support",
       define => "ENABLE_PAYMENT_REQUEST", value => \$paymentRequestSupport },
+
+    { option => "pdfjs", desc => "Toggle PDF.js integration",
+      define => "ENABLE_PDFJS", value => \$pdfJS },
 
     { option => "pdfkit-plugin", desc => "Toggle PDFKit plugin support",
       define => "ENABLE_PDFKIT_PLUGIN", value => \$pdfkitPluginSupport },
@@ -490,6 +500,9 @@ my @features = (
     { option => "touch-slider", desc => "Toggle Touch Slider support",
       define => "ENABLE_TOUCH_SLIDER", value => \$touchSliderSupport },
 
+    { option => "tracking-prevention", desc => "Toggle tracking prevention support",
+      define => "ENABLE_TRACKING_PREVENTION", value => \$trackingPrevention },
+
     { option => "unified-builds", desc => "Toggle unified builds",
       define => "ENABLE_UNIFIED_BUILDS", value => \$unifiedBuildsSupport },
 
@@ -532,9 +545,6 @@ my @features = (
     { option => "webgl", desc => "Toggle WebGL support",
       define => "ENABLE_WEBGL", value => \$webglSupport },
 
-    { option => "webgl2", desc => "Toggle WebGL2 support",
-      define => "ENABLE_WEBGL2", value => \$webgl2Support },
-
     { option => "webxr", desc => "Toggle WebXR support",
       define => "ENABLE_WEBXR", value => \$webXRSupport },
 
@@ -549,6 +559,9 @@ my @features = (
 
     { option => "web-crypto", desc => "Toggle WebCrypto Subtle-Crypto support",
       define => "ENABLE_WEB_CRYPTO", value => \$webCryptoSupport },
+
+    { option => "web-codecs", desc => "Toggle WebCodecs support",
+      define => "ENABLE_WEB_CODECS", value => \$webCodecsSupport },
 
     { option => "web-rtc", desc => "Toggle WebRTC support",
       define => "ENABLE_WEB_RTC", value => \$webRTCSupport },
@@ -571,6 +584,7 @@ my @features = (
 
 sub getFeatureOptionList()
 {
+    webkitdirs::prohibitUnknownPort();
     return @features;
 }
 

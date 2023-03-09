@@ -29,8 +29,6 @@
 #include "DOMWindow.h"
 #include "Document.h"
 #include "DocumentType.h"
-#include "FileChooser.h"
-#include "FileIconLoader.h"
 #include "FileList.h"
 #include "FloatRect.h"
 #include "Frame.h"
@@ -51,7 +49,9 @@
 #include "Settings.h"
 #include "ShareData.h"
 #include "StorageNamespace.h"
+#include "StorageNamespaceProvider.h"
 #include "WindowFeatures.h"
+#include "WorkerClient.h"
 #include <JavaScriptCore/VM.h>
 #include <wtf/SetForScope.h>
 #include <wtf/Vector.h>
@@ -195,10 +195,8 @@ Page* Chrome::createWindow(Frame& frame, const WindowFeatures& features, const N
     if (!newPage)
         return nullptr;
 
-    if (!features.noopener && !features.noreferrer) {
-        if (auto* oldSessionStorage = m_page.sessionStorage(false))
-            newPage->setSessionStorage(oldSessionStorage->copy(*newPage));
-    }
+    if (!features.noopener && !features.noreferrer)
+        m_page.storageNamespaceProvider().copySessionStorageNamespace(m_page, *newPage);
 
     return newPage;
 }
@@ -221,7 +219,12 @@ void Chrome::runModal() const
 
     // JavaScript that runs within the nested event loop must not be run in the context of the
     // script that called showModalDialog. Null out entryScope to break the connection.
-    SetForScope entryScopeNullifier { m_page.mainFrame().document()->vm().entryScope, nullptr };
+
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
+    if (!localMainFrame)
+        return;
+
+    SetForScope entryScopeNullifier { localMainFrame->document()->vm().entryScope, nullptr };
 
     TimerBase::fireTimersInNestedEventLoop();
     m_client.runModal();
@@ -336,8 +339,12 @@ void Chrome::setStatusbarText(Frame& frame, const String& status)
 
 void Chrome::mouseDidMoveOverElement(const HitTestResult& result, unsigned modifierFlags)
 {
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
+    if (!localMainFrame)
+        return;
+
     if (result.innerNode() && result.innerNode()->document().isDNSPrefetchEnabled())
-        m_page.mainFrame().loader().client().prefetchDNS(result.absoluteLinkURL().host().toString());
+        localMainFrame->loader().client().prefetchDNS(result.absoluteLinkURL().host().toString());
 
     String toolTip;
     TextDirection toolTipDirection;
@@ -534,9 +541,19 @@ void Chrome::setCursorHiddenUntilMouseMoves(bool hiddenUntilMouseMoves)
     m_client.setCursorHiddenUntilMouseMoves(hiddenUntilMouseMoves);
 }
 
-RefPtr<ImageBuffer> Chrome::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const DestinationColorSpace& colorSpace, PixelFormat pixelFormat) const
+RefPtr<ImageBuffer> Chrome::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const DestinationColorSpace& colorSpace, PixelFormat pixelFormat, bool avoidBackendSizeCheck) const
 {
-    return m_client.createImageBuffer(size, renderingMode, purpose, resolutionScale, colorSpace, pixelFormat);
+    return m_client.createImageBuffer(size, renderingMode, purpose, resolutionScale, colorSpace, pixelFormat, avoidBackendSizeCheck);
+}
+
+RefPtr<ImageBuffer> Chrome::sinkIntoImageBuffer(std::unique_ptr<SerializedImageBuffer> imageBuffer)
+{
+    return m_client.sinkIntoImageBuffer(WTFMove(imageBuffer));
+}
+
+std::unique_ptr<WorkerClient> Chrome::createWorkerClient(SerialFunctionDispatcher& dispatcher)
+{
+    return m_client.createWorkerClient(dispatcher);
 }
 
 #if ENABLE(WEBGL)

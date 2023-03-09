@@ -25,14 +25,15 @@ import six
 import re
 
 from datetime import datetime
+from webkitbugspy import Tracker
 from webkitscmpy import Contributor
 
 
 class Commit(object):
     HASH_RE = re.compile(r'^[a-f0-9A-F]+$')
-    REVISION_RE = re.compile(r'^[Rr]?(?P<revision>\d+)$')
-    IDENTIFIER_RE = re.compile(r'^((?P<branch_point>\d+)\.)?(?P<identifier>-?\d+)(@(?P<branch>\S*))?$')
-    NUMBER_RE = re.compile(r'^-?\d*$')
+    REVISION_RE = re.compile(r'^[Rr]?(?P<revision>\d{1,10})$')
+    IDENTIFIER_RE = re.compile(r'^((?P<branch_point>\d{1,10})\.)?(?P<identifier>-?\d{1,10})(@(?P<branch>\S*))?$')
+    NUMBER_RE = re.compile(r'^-?\d{1,10}$')
     HASH_LABEL_SIZE = 12
     UUID_MULTIPLIER = 100
 
@@ -86,7 +87,7 @@ class Commit(object):
             match = cls.REVISION_RE.match(revision)
             if match:
                 revision = int(match.group('revision'))
-            elif revision.isdigit():
+            elif cls.NUMBER_RE.match(revision):
                 revision = int(revision)
             else:
                 if do_assert:
@@ -277,6 +278,38 @@ class Commit(object):
         if self.timestamp is None:
             return None
         return self.timestamp * self.UUID_MULTIPLIER + self.order
+
+    @property
+    def issues(self):
+        if not self.message:
+            return []
+        result = []
+        links = set()
+        seen_empty = False
+        seen_first_line = False
+        prepend = False
+
+        for line in self.message.splitlines():
+            if not line and seen_empty:
+                break
+            elif not line:
+                seen_empty = True
+                prepend = False
+                continue
+            words = line.split()
+            for word in [words[0], words[-1]] if words[0] != words[-1] else [words[0]]:
+                candidate = Tracker.from_string(word)
+                if candidate and candidate.link not in links:
+                    links.add(candidate.link)
+                    if prepend:
+                        result.insert(len(result) - 1, candidate)
+                    else:
+                        result.append(candidate)
+
+                    if not seen_first_line:
+                        prepend = True
+            seen_first_line = True
+        return result
 
     def __repr__(self):
         if self.branch_point and self.identifier is not None and self.branch:

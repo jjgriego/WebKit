@@ -50,7 +50,7 @@ void forEachInArrayLike(JSGlobalObject* globalObject, JSObject* arrayLikeObject,
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    uint64_t length = static_cast<uint64_t>(toLength(globalObject, arrayLikeObject));
+    uint64_t length = toLength(globalObject, arrayLikeObject);
     RETURN_IF_EXCEPTION(scope, void());
     for (uint64_t index = 0; index < length; index++) {
         JSValue value = arrayLikeObject->getIndex(globalObject, index);
@@ -165,7 +165,7 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
                 return false;
             if (object->type() == ProxyObjectType && slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty)
                 return false;
-            if (isTypedArrayType(object->type()) && isCanonicalNumericIndexString(propertyName))
+            if (isTypedArrayType(object->type()) && isCanonicalNumericIndexString(propertyName.uid()))
                 return false;
         }
         JSValue prototype;
@@ -188,7 +188,7 @@ inline bool JSObject::getOwnPropertySlotInline(JSGlobalObject* globalObject, Pro
     return JSObject::getOwnPropertySlot(this, globalObject, propertyName, slot);
 }
 
-inline JSValue JSObject::getIfPropertyExists(JSGlobalObject* globalObject, PropertyName propertyName)
+template<typename PropertyNameType> inline JSValue JSObject::getIfPropertyExists(JSGlobalObject* globalObject, const PropertyNameType& propertyName)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -204,6 +204,32 @@ inline JSValue JSObject::getIfPropertyExists(JSGlobalObject* globalObject, Prope
         return get(globalObject, propertyName);
 
     return slot.getValue(globalObject, propertyName);
+}
+
+// FIXME: Given the single special purpose this is used for, it's unclear if this needs to be a JSObject member function.
+inline bool JSObject::noSideEffectMayHaveNonIndexProperty(VM& vm, PropertyName propertyName)
+{
+    // This function only supports non-index PropertyNames.
+    ASSERT(!parseIndex(propertyName));
+    ASSERT(propertyName != vm.propertyNames->length);
+    for (auto* object = this; object; object = object->getPrototypeDirect().getObject()) {
+        auto inlineTypeFlags = object->inlineTypeFlags();
+        if (UNLIKELY(TypeInfo::overridesGetOwnPropertySlot(inlineTypeFlags) && object->classInfo() != ArrayPrototype::info()))
+            return true;
+        auto& structure = *object->structureID().decode();
+        unsigned attributes;
+        if (UNLIKELY(isValidOffset(structure.get(vm, propertyName, attributes))))
+            return true;
+        if (TypeInfo::hasStaticPropertyTable(inlineTypeFlags) && !structure.staticPropertiesReified()) {
+            for (auto* ancestorClass = object->classInfo(); ancestorClass; ancestorClass = ancestorClass->parentClass) {
+                if (auto* table = ancestorClass->staticPropHashTable; UNLIKELY(table && table->entry(propertyName)))
+                    return true;
+            }
+        }
+        if (UNLIKELY(structure.typeInfo().overridesGetPrototype()))
+            return true;
+    }
+    return false;
 }
 
 inline bool JSObject::mayInterceptIndexedAccesses()
@@ -331,7 +357,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         unsigned currentAttributes;
         PropertyOffset offset = structure->get(vm, propertyName, currentAttributes);
         if (offset != invalidOffset) {
-            if ((mode == PutModePut || mode == PutModeDefineOwnProperty) && currentAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor)
+            if (mode == PutModePut && (currentAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor))
                 return ReadonlyPropertyChangeError;
 
             putDirectOffset(vm, offset, value);
@@ -339,9 +365,10 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
             // FIXME: Check attributes against PropertyAttribute::CustomAccessorOrValue. Changing GetterSetter should work w/o transition.
             // https://bugs.webkit.org/show_bug.cgi?id=214342
-            if ((mode == PutModeDefineOwnProperty || mode == PutModeDefineOwnPropertyIgnoringExtensibility) && (attributes != currentAttributes || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)))
-                setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, attributes));
-            else {
+            if (mode == PutModeDefineOwnProperty && (attributes != currentAttributes || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))) {
+                DeferredStructureTransitionWatchpointFire deferred(vm, structure);
+                setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, attributes, &deferred));
+            } else {
                 ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
                 slot.setExistingProperty(this, offset);
             }
@@ -349,7 +376,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             return { };
         }
 
-        if ((mode == PutModePut || mode == PutModeDefineOwnProperty) && !isStructureExtensible())
+        if (mode == PutModePut && !isStructureExtensible())
             return NonExtensibleObjectPropertyDefineError;
 
         offset = prepareToPutDirectWithoutTransition(vm, propertyName, attributes, structureID, structure);
@@ -388,7 +415,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     unsigned currentAttributes;
     offset = structure->get(vm, propertyName, currentAttributes);
     if (offset != invalidOffset) {
-        if ((mode == PutModePut || mode == PutModeDefineOwnProperty) && currentAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor)
+        if (mode == PutModePut && (currentAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor))
             return ReadonlyPropertyChangeError;
 
         structure->didReplaceProperty(offset);
@@ -396,7 +423,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
         // FIXME: Check attributes against PropertyAttribute::CustomAccessorOrValue. Changing GetterSetter should work w/o transition.
         // https://bugs.webkit.org/show_bug.cgi?id=214342
-        if ((mode == PutModeDefineOwnProperty || mode == PutModeDefineOwnPropertyIgnoringExtensibility) && (attributes != currentAttributes || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))) {
+        if (mode == PutModeDefineOwnProperty && (attributes != currentAttributes || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))) {
             // We want the structure transition watchpoint to fire after this object has switched structure.
             // This allows adaptive watchpoints to observe if the new structure is the one we want.
             DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
@@ -409,7 +436,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         return { };
     }
 
-    if ((mode == PutModePut || mode == PutModeDefineOwnProperty) && !isStructureExtensible())
+    if (mode == PutModePut && !isStructureExtensible())
         return NonExtensibleObjectPropertyDefineError;
     
     // We want the structure transition watchpoint to fire after this object has switched structure.
@@ -503,7 +530,7 @@ inline void JSObject::setIndexQuicklyForTypedArray(unsigned i, JSValue value)
     }
 }
 
-inline void JSObject::setIndexQuicklyForArrayStorageIndexingType(VM& vm, unsigned i, JSValue v)
+ALWAYS_INLINE void JSObject::setIndexQuicklyForArrayStorageIndexingType(VM& vm, unsigned i, JSValue v)
 {
     ArrayStorage* storage = this->butterfly()->arrayStorage();
     WriteBarrier<Unknown>& x = storage->m_vector[i];
@@ -779,6 +806,21 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
     ASSERT(newStructure->isBrandedStructure());
     ASSERT(newStructure->outOfLineCapacity() || !this->structure()->outOfLineCapacity());
     this->setStructure(vm, newStructure);
+}
+
+template<typename Functor>
+bool JSObject::fastForEachPropertyWithSideEffectFreeFunctor(VM& vm, const Functor& functor)
+{
+    if (!staticPropertiesReified())
+        return false;
+
+    Structure* structure = this->structure();
+
+    if (!structure->canPerformFastPropertyEnumeration())
+        return false;
+
+    structure->forEachProperty(vm, functor);
+    return true;
 }
 
 } // namespace JSC

@@ -39,11 +39,11 @@ protected:
     void doAsyncTask(JSValueRef) override;
 
 private:
+    void doAfterPresentationUpdate(JSValueRef) override;
+
     void setViewScale(double) override;
     void setMinimumEffectiveWidth(double) override;
     void setWebViewEditable(bool) override;
-    void becomeFirstResponder() override;
-    void resignFirstResponder() override;
     void removeViewFromWindow(JSValueRef) override;
     void addViewToWindow(JSValueRef) override;
     void overridePreference(JSStringRef, JSStringRef) override;
@@ -52,7 +52,10 @@ private:
     void setDefaultCalendarType(JSStringRef calendarIdentifier, JSStringRef localeIdentifier) override;
     JSRetainPtr<JSStringRef> lastUndoLabel() const override;
     JSRetainPtr<JSStringRef> firstRedoLabel() const override;
+    JSRetainPtr<JSStringRef> caLayerTreeAsText() const override;
     NSUndoManager *platformUndoManager() const override;
+
+    JSRetainPtr<JSStringRef> scrollingTreeAsText() const override;
 
     void setDidShowContextMenuCallback(JSValueRef) override;
     void setDidDismissContextMenuCallback(JSValueRef) override;

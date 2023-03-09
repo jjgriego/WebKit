@@ -1,4 +1,4 @@
-# Copyright (C) 2021 Apple Inc. All rights reserved.
+# Copyright (C) 2021-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -71,6 +71,9 @@ class Issue(object):
         self._project = None
         self._component = None
         self._version = None
+        self._milestone = None
+        self._keywords = None
+        self._classification = None
 
         self.tracker.populate(self, None)
 
@@ -181,8 +184,42 @@ class Issue(object):
             self.tracker.populate(self, 'version')
         return self._version
 
+    @property
+    def milestone(self):
+        if self._milestone is None:
+            self.tracker.populate(self, 'milestone')
+        return self._milestone or None
+
+    @property
+    def keywords(self):
+        if self._keywords is None:
+            self.tracker.populate(self, 'keywords')
+        return self._keywords
+
+    @property
+    def classification(self):
+        if self._classification is None:
+            self.tracker.populate(self, 'classification')
+        return self._classification
+
+    @property
+    def redacted(self):
+        match_string = ''
+        for member in ('title', 'project', 'component', 'version', 'classification'):
+            match_string += ';{}:{}'.format(member, getattr(self, member, ''))
+        for key, value in self.tracker._redact.items():
+            if key.search(match_string):
+                return self.tracker.Redaction(
+                    redacted=value,
+                    reason="is a {}".format(self.tracker.NAME) if key.pattern == '.*' else "matches '{}'".format(key.pattern),
+                )
+        return self.tracker.Redaction(redacted=False)
+
     def set_component(self, project=None, component=None, version=None):
         return self.tracker.set(self, project=project, component=component, version=version)
+
+    def cc_radar(self, block=False, timeout=None, radar=None):
+        return self.tracker.cc_radar(self, block=block, timeout=timeout, radar=radar)
 
     def __hash__(self):
         return hash(self.link)

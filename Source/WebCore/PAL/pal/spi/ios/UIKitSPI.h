@@ -43,6 +43,7 @@ WTF_EXTERN_C_END
 #import <UIKit/UIInterface_Private.h>
 #import <UIKit/UIPasteboard_Private.h>
 #import <UIKit/UIScreen_Private.h>
+#import <UIKit/UITextEffectsWindow.h>
 #import <UIKit/UIViewController_Private.h>
 #import <UIKit/NSItemProvider+UIKitAdditions.h>
 #import <UIKit/NSItemProvider+UIKitAdditions_Private.h>
@@ -76,6 +77,7 @@ typedef enum {
     UIFontTraitUltraLight  = (1 << 4)
 } UIFontTrait;
 
+#if !HAVE(NSTEXTLIST_MARKER_FORMATS)
 @interface NSParagraphStyle ()
 - (NSArray *)textLists;
 @end
@@ -84,15 +86,17 @@ typedef enum {
 - (void)setTextLists:(NSArray *)textLists;
 @end
 
-@interface NSTextAttachment ()
-- (id)initWithFileWrapper:(NSFileWrapper *)fileWrapper;
-@end
-
 @interface NSTextList : NSObject
 - (instancetype)initWithMarkerFormat:(NSString *)format options:(NSUInteger)mask;
 @property (readonly, copy) NSString *markerFormat;
 @property NSInteger startingItemNumber;
 - (NSString *)markerForItemNumber:(NSInteger)itemNum;
+@end
+#endif
+
+@interface NSTextAttachment ()
+- (id)initWithFileWrapper:(NSFileWrapper *)fileWrapper;
+@property (strong) NSString *accessibilityLabel;
 @end
 
 @interface NSTextAlternatives : NSObject
@@ -153,6 +157,17 @@ typedef enum {
 
 @end
 
+typedef NS_ENUM(NSInteger, _UIDataOwner) {
+    _UIDataOwnerUndefined,
+    _UIDataOwnerUser,
+    _UIDataOwnerEnterprise,
+    _UIDataOwnerShared,
+};
+
+@interface UIPasteboard ()
++ (void)_performAsDataOwner:(_UIDataOwner)dataOwner block:(void(^ NS_NOESCAPE)(void))block;
+@end
+
 @interface UIScreen ()
 
 @property (nonatomic, readonly) CGRect _referenceBounds;
@@ -171,6 +186,16 @@ typedef enum {
 + (CGFloat)borderThickness;
 + (CGFloat)maxAlpha;
 + (CGFloat)alphaThreshold;
+@end
+
+@interface UIApplicationRotationFollowingWindow : UIWindow
+@end
+
+@interface UIAutoRotatingWindow : UIApplicationRotationFollowingWindow
+@end
+
+@interface UITextEffectsWindow : UIAutoRotatingWindow
++ (UITextEffectsWindow *)sharedTextEffectsWindowForWindowScene:(UIWindowScene *)windowScene;
 @end
 
 #endif // USE(APPLE_INTERNAL_SDK)

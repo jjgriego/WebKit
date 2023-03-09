@@ -50,12 +50,14 @@ using namespace WebCore;
 
 AuxiliaryProcess::AuxiliaryProcess()
     : m_terminationCounter(0)
-    , m_processSuppressionDisabled("Process Suppression Disabled by UIProcess")
+    , m_processSuppressionDisabled("Process Suppression Disabled by UIProcess"_s)
 {
 }
 
 AuxiliaryProcess::~AuxiliaryProcess()
 {
+    if (m_connection)
+        m_connection->invalidate();
 }
 
 void AuxiliaryProcess::didClose(IPC::Connection&)
@@ -80,10 +82,6 @@ void AuxiliaryProcess::initialize(const AuxiliaryProcessInitializationParameters
 
     platformInitialize(parameters);
 
-#if PLATFORM(COCOA)
-    m_priorityBoostMessage = parameters.priorityBoostMessage;
-#endif
-
     SandboxInitializationParameters sandboxParameters;
     initializeSandbox(parameters, sandboxParameters);
 
@@ -102,9 +100,9 @@ void AuxiliaryProcess::initialize(const AuxiliaryProcessInitializationParameters
     ContentWorldIdentifier::enableGenerationProtection();
     WebPageProxyIdentifier::enableGenerationProtection();
 
-    m_connection = IPC::Connection::createClientConnection(parameters.connectionIdentifier, *this);
+    m_connection = IPC::Connection::createClientConnection(parameters.connectionIdentifier);
     initializeConnection(m_connection.get());
-    m_connection->open();
+    m_connection->open(*this);
 }
 
 void AuxiliaryProcess::setProcessSuppressionEnabled(bool enabled)

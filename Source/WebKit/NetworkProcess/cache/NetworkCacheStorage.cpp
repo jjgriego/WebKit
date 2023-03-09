@@ -33,18 +33,15 @@
 #include "NetworkCacheIOChannel.h"
 #include <mutex>
 #include <wtf/Condition.h>
+#include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/FileSystem.h>
 #include <wtf/Lock.h>
 #include <wtf/PageBlock.h>
-#include <wtf/RandomNumber.h>
 #include <wtf/RunLoop.h>
+#include <wtf/persistence/PersistentCoders.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/StringConcatenateNumbers.h>
 #include <wtf/text/StringToIntegerConversion.h>
-
-#if USE(GLIB)
-#include <wtf/glib/Sandbox.h>
-#endif
 
 namespace WebKit {
 namespace NetworkCache {
@@ -265,17 +262,6 @@ static void deleteEmptyRecordsDirectories(const String& recordsPath)
     });
 }
 
-static WorkQueue::QOS qosForBackgroundIOQueue()
-{
-#if USE(GLIB)
-    // FIXME: for some reason there's a runtime critical warning coming from GLib under flatpak when trying to
-    // inherit the current thread scheduler settings in newly created ones. See https://bugs.webkit.org/show_bug.cgi?id=232629.
-    if (isInsideFlatpak())
-        return WorkQueue::QOS::Default;
-#endif
-    return WorkQueue::QOS::Background;
-}
-
 Storage::Storage(const String& baseDirectoryPath, Mode mode, Salt salt, size_t capacity)
     : m_basePath(baseDirectoryPath)
     , m_recordsPath(makeRecordsDirectoryPath(baseDirectoryPath))
@@ -285,7 +271,7 @@ Storage::Storage(const String& baseDirectoryPath, Mode mode, Salt salt, size_t c
     , m_readOperationTimeoutTimer(*this, &Storage::cancelAllReadOperations)
     , m_writeOperationDispatchTimer(*this, &Storage::dispatchPendingWriteOperations)
     , m_ioQueue(ConcurrentWorkQueue::create("com.apple.WebKit.Cache.Storage"))
-    , m_backgroundIOQueue(ConcurrentWorkQueue::create("com.apple.WebKit.Cache.Storage.background", qosForBackgroundIOQueue()))
+    , m_backgroundIOQueue(ConcurrentWorkQueue::create("com.apple.WebKit.Cache.Storage.background", WorkQueue::QOS::Background))
     , m_serialBackgroundIOQueue(WorkQueue::create("com.apple.WebKit.Cache.Storage.serialBackground", WorkQueue::QOS::Background))
     , m_blobStorage(makeBlobDirectoryPath(baseDirectoryPath), m_salt)
 {
@@ -983,7 +969,7 @@ void Storage::store(const Record& record, MappedBodyHandler&& mappedBodyHandler,
     m_writeOperationDispatchTimer.startOneShot(m_initialWriteDelay);
 }
 
-void Storage::traverse(const String& type, OptionSet<TraverseFlag> flags, TraverseHandler&& traverseHandler)
+void Storage::traverseWithinRootPath(const String& rootPath, const String& type, OptionSet<TraverseFlag> flags, TraverseHandler&& traverseHandler)
 {
     ASSERT(RunLoop::isMain());
     ASSERT(traverseHandler);
@@ -993,8 +979,8 @@ void Storage::traverse(const String& type, OptionSet<TraverseFlag> flags, Traver
     auto& traverseOperation = *traverseOperationPtr;
     m_activeTraverseOperations.add(WTFMove(traverseOperationPtr));
 
-    ioQueue().dispatch([this, &traverseOperation] {
-        traverseRecordsFiles(recordsPathIsolatedCopy(), traverseOperation.type, [this, &traverseOperation](const String& fileName, const String& hashString, const String& type, bool isBlob, const String& recordDirectoryPath) {
+    ioQueue().dispatch([this, &traverseOperation, rootPath = rootPath.isolatedCopy()] {
+        traverseRecordsFiles(rootPath, traverseOperation.type, [this, &traverseOperation](const String& fileName, const String& hashString, const String& type, bool isBlob, const String& recordDirectoryPath) {
             ASSERT(type == traverseOperation.type || traverseOperation.type.isEmpty());
             if (isBlob)
                 return;
@@ -1059,6 +1045,18 @@ void Storage::traverse(const String& type, OptionSet<TraverseFlag> flags, Traver
             m_activeTraverseOperations.remove(&traverseOperation);
         });
     });
+}
+
+void Storage::traverse(const String& type, OptionSet<TraverseFlag> flags, TraverseHandler&& traverseHandler)
+{
+    traverseWithinRootPath(recordsPathIsolatedCopy(), type, flags, WTFMove(traverseHandler));
+}
+
+void Storage::traverse(const String& type, const String& partition, OptionSet<TraverseFlag> flags, TraverseHandler&& traverseHandler)
+{
+    auto partitionHashAsString = Key::partitionToPartitionHashAsString(partition, salt());
+    auto rootPath = FileSystem::pathByAppendingComponent(recordsPathIsolatedCopy(), partitionHashAsString);
+    traverseWithinRootPath(rootPath, type, flags, WTFMove(traverseHandler));
 }
 
 void Storage::setCapacity(size_t capacity)
@@ -1182,7 +1180,7 @@ void Storage::shrink()
             unsigned bodyShareCount = m_blobStorage.shareCount(blobPath);
             auto probability = deletionProbability(times, bodyShareCount);
 
-            bool shouldDelete = randomNumber() < probability;
+            bool shouldDelete = cryptographicallyRandomUnitInterval() < probability;
 
             LOG(NetworkCacheStorage, "Deletion probability=%f bodyLinkCount=%d shouldDelete=%d", probability, bodyShareCount, shouldDelete);
 

@@ -55,6 +55,11 @@ AccessibilityController::~AccessibilityController()
 {
 }
 
+void AccessibilityController::setRetainedElement(AccessibilityUIElement* uiElement)
+{
+    m_retainedElement = uiElement;
+}
+
 void AccessibilityController::setIsolatedTreeMode(bool flag)
 {
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
@@ -106,7 +111,7 @@ void AccessibilityController::executeOnAXThreadAndWait(Function<void()>&& functi
 {
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     if (m_useMockAXThread) {
-        bool complete = false;
+        std::atomic<bool> complete = false;
         AXThread::dispatch([&function, &complete] {
             function();
             complete = true;

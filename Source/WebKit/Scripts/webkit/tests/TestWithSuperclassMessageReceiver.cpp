@@ -25,112 +25,20 @@
 #include "config.h"
 #include "TestWithSuperclass.h"
 
-#include "ArgumentCoders.h"
-#include "Decoder.h"
-#include "HandleMessage.h"
-#include "TestClassName.h"
+#include "ArgumentCoders.h" // NOLINT
+#include "Decoder.h" // NOLINT
+#include "HandleMessage.h" // NOLINT
+#include "TestClassName.h" // NOLINT
 #if ENABLE(TEST_FEATURE)
-#include "TestTwoStateEnum.h"
+#include "TestTwoStateEnum.h" // NOLINT
 #endif
-#include "TestWithSuperclassMessages.h"
-#include <optional>
-#include <wtf/text/WTFString.h>
+#include "TestWithSuperclassMessages.h" // NOLINT
+#include <optional> // NOLINT
+#include <wtf/text/WTFString.h> // NOLINT
 
 #if ENABLE(IPC_TESTING_API)
 #include "JSIPCBinding.h"
 #endif
-
-namespace Messages {
-
-namespace TestWithSuperclass {
-
-#if ENABLE(TEST_FEATURE)
-
-void TestAsyncMessage::callReply(IPC::Decoder& decoder, CompletionHandler<void(uint64_t&&)>&& completionHandler)
-{
-    std::optional<uint64_t> result;
-    decoder >> result;
-    if (!result) {
-        ASSERT_NOT_REACHED();
-        cancelReply(WTFMove(completionHandler));
-        return;
-    }
-    completionHandler(WTFMove(*result));
-}
-
-void TestAsyncMessage::cancelReply(CompletionHandler<void(uint64_t&&)>&& completionHandler)
-{
-    completionHandler(IPC::AsyncReplyError<uint64_t>::create());
-}
-
-#endif
-
-#if ENABLE(TEST_FEATURE)
-
-void TestAsyncMessageWithNoArguments::callReply(IPC::Decoder& decoder, CompletionHandler<void()>&& completionHandler)
-{
-    completionHandler();
-}
-
-void TestAsyncMessageWithNoArguments::cancelReply(CompletionHandler<void()>&& completionHandler)
-{
-    completionHandler();
-}
-
-#endif
-
-#if ENABLE(TEST_FEATURE)
-
-void TestAsyncMessageWithMultipleArguments::callReply(IPC::Decoder& decoder, CompletionHandler<void(bool&&, uint64_t&&)>&& completionHandler)
-{
-    std::optional<bool> flag;
-    decoder >> flag;
-    if (!flag) {
-        ASSERT_NOT_REACHED();
-        cancelReply(WTFMove(completionHandler));
-        return;
-    }
-    std::optional<uint64_t> value;
-    decoder >> value;
-    if (!value) {
-        ASSERT_NOT_REACHED();
-        cancelReply(WTFMove(completionHandler));
-        return;
-    }
-    completionHandler(WTFMove(*flag), WTFMove(*value));
-}
-
-void TestAsyncMessageWithMultipleArguments::cancelReply(CompletionHandler<void(bool&&, uint64_t&&)>&& completionHandler)
-{
-    completionHandler(IPC::AsyncReplyError<bool>::create(), IPC::AsyncReplyError<uint64_t>::create());
-}
-
-#endif
-
-#if ENABLE(TEST_FEATURE)
-
-void TestAsyncMessageWithConnection::callReply(IPC::Decoder& decoder, CompletionHandler<void(bool&&)>&& completionHandler)
-{
-    std::optional<bool> flag;
-    decoder >> flag;
-    if (!flag) {
-        ASSERT_NOT_REACHED();
-        cancelReply(WTFMove(completionHandler));
-        return;
-    }
-    completionHandler(WTFMove(*flag));
-}
-
-void TestAsyncMessageWithConnection::cancelReply(CompletionHandler<void(bool&&)>&& completionHandler)
-{
-    completionHandler(IPC::AsyncReplyError<bool>::create());
-}
-
-#endif
-
-} // namespace TestWithSuperclass
-
-} // namespace Messages
 
 namespace WebKit {
 
@@ -142,18 +50,12 @@ void TestWithSuperclass::didReceiveMessage(IPC::Connection& connection, IPC::Dec
 #if ENABLE(TEST_FEATURE)
     if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessage::name())
         return IPC::handleMessageAsync<Messages::TestWithSuperclass::TestAsyncMessage>(connection, decoder, this, &TestWithSuperclass::testAsyncMessage);
-#endif
-#if ENABLE(TEST_FEATURE)
     if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessageWithNoArguments::name())
         return IPC::handleMessageAsync<Messages::TestWithSuperclass::TestAsyncMessageWithNoArguments>(connection, decoder, this, &TestWithSuperclass::testAsyncMessageWithNoArguments);
-#endif
-#if ENABLE(TEST_FEATURE)
     if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessageWithMultipleArguments::name())
         return IPC::handleMessageAsync<Messages::TestWithSuperclass::TestAsyncMessageWithMultipleArguments>(connection, decoder, this, &TestWithSuperclass::testAsyncMessageWithMultipleArguments);
-#endif
-#if ENABLE(TEST_FEATURE)
     if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessageWithConnection::name())
-        return IPC::handleMessageAsyncWantsConnection<Messages::TestWithSuperclass::TestAsyncMessageWithConnection>(connection, decoder, this, &TestWithSuperclass::testAsyncMessageWithConnection);
+        return IPC::handleMessageAsync<Messages::TestWithSuperclass::TestAsyncMessageWithConnection>(connection, decoder, this, &TestWithSuperclass::testAsyncMessageWithConnection);
 #endif
     WebPageBase::didReceiveMessage(connection, decoder);
 }

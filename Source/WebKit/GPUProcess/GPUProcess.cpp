@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,6 +35,7 @@
 #include "GPUConnectionToWebProcess.h"
 #include "GPUProcessConnectionParameters.h"
 #include "GPUProcessCreationParameters.h"
+#include "GPUProcessPreferences.h"
 #include "GPUProcessProxyMessages.h"
 #include "GPUProcessSessionParameters.h"
 #include "LogInitialization.h"
@@ -48,7 +49,6 @@
 #include <WebCore/MemoryRelease.h>
 #include <WebCore/NowPlayingManager.h>
 #include <WebCore/RuntimeApplicationChecks.h>
-#include <WebCore/RuntimeEnabledFeatures.h>
 #include <wtf/Algorithms.h>
 #include <wtf/CallbackAggregator.h>
 #include <wtf/LogInitialization.h>
@@ -69,6 +69,7 @@
 #endif
 
 #if PLATFORM(COCOA)
+#include <WebCore/CoreAudioSharedUnit.h>
 #include <WebCore/VP9UtilitiesCocoa.h>
 #endif
 
@@ -116,32 +117,16 @@ void GPUProcess::didReceiveMessage(IPC::Connection& connection, IPC::Decoder& de
     didReceiveGPUProcessMessage(connection, decoder);
 }
 
-static IPC::Connection::Identifier asConnectionIdentifier(IPC::Attachment&& connectionHandle)
-{
-#if USE(UNIX_DOMAIN_SOCKETS)
-    return IPC::Connection::Identifier { connectionHandle.release().release() };
-#elif OS(DARWIN)
-    return IPC::Connection::Identifier { connectionHandle.port() };
-#elif OS(WINDOWS)
-    return IPC::Connection::Identifier { connectionHandle.handle() };
-#else
-    notImplemented();
-    return IPC::Connection::Identifier { };
-#endif
-}
-
-void GPUProcess::createGPUConnectionToWebProcess(WebCore::ProcessIdentifier identifier, PAL::SessionID sessionID, IPC::Attachment&& connectionHandle, GPUProcessConnectionParameters&& parameters, CompletionHandler<void()>&& completionHandler)
+void GPUProcess::createGPUConnectionToWebProcess(WebCore::ProcessIdentifier identifier, PAL::SessionID sessionID, IPC::Connection::Handle&& connectionHandle, GPUProcessConnectionParameters&& parameters, CompletionHandler<void()>&& completionHandler)
 {
     RELEASE_LOG(Process, "%p - GPUProcess::createGPUConnectionToWebProcess: processIdentifier=%" PRIu64, this, identifier.toUInt64());
 
     auto reply = makeScopeExit(WTFMove(completionHandler));
-    auto connectionIdentifier = asConnectionIdentifier(WTFMove(connectionHandle));
-    // If sender exited before we received the identifier, the identifier
-    // may not be valid.
-    if (!IPC::Connection::identifierIsValid(connectionIdentifier))
+    // If sender exited before we received the handle, the handle may not be valid.
+    if (!connectionHandle)
         return;
 
-    auto newConnection = GPUConnectionToWebProcess::create(*this, identifier, sessionID, WTFMove(connectionIdentifier), WTFMove(parameters));
+    auto newConnection = GPUConnectionToWebProcess::create(*this, identifier, sessionID, WTFMove(connectionHandle), WTFMove(parameters));
 
 #if ENABLE(MEDIA_STREAM)
     // FIXME: We should refactor code to go from WebProcess -> GPUProcess -> UIProcess when getUserMedia is called instead of going from WebProcess -> UIProcess directly.
@@ -254,6 +239,12 @@ void GPUProcess::initializeGPUProcess(GPUProcessCreationParameters&& parameters)
 #if PLATFORM(MAC)
     SandboxExtension::consumePermanently(parameters.microphoneSandboxExtensionHandle);
 #endif
+#if PLATFORM(IOS_FAMILY)
+    CoreAudioSharedUnit::unit().setStatusBarWasTappedCallback([this](auto completionHandler) {
+        parentProcessConnection()->sendWithAsyncReply(Messages::GPUProcessProxy::StatusBarWasTapped(), [] { }, 0);
+        completionHandler();
+    });
+#endif
 #endif // ENABLE(MEDIA_STREAM)
 
 #if USE(SANDBOX_EXTENSIONS_FOR_CACHE_AND_TEMP_DIRECTORY_ACCESS)
@@ -282,6 +273,59 @@ void GPUProcess::initializeGPUProcess(GPUProcessCreationParameters&& parameters)
 #if USE(OS_STATE)
     registerWithStateDumper("GPUProcess state"_s);
 #endif
+}
+
+void GPUProcess::updateGPUProcessPreferences(GPUProcessPreferences&& preferences)
+{
+#if ENABLE(MEDIA_SOURCE) && ENABLE(VP9)
+    if (updatePreference(m_preferences.webMParserEnabled, preferences.webMParserEnabled))
+        DeprecatedGlobalSettings::setWebMParserEnabled(*m_preferences.webMParserEnabled);
+#endif
+
+#if ENABLE(WEBM_FORMAT_READER)
+    if (updatePreference(m_preferences.webMFormatReaderEnabled, preferences.webMFormatReaderEnabled))
+        PlatformMediaSessionManager::setWebMFormatReaderEnabled(*m_preferences.webMFormatReaderEnabled);
+#endif
+
+#if ENABLE(OPUS)
+    if (updatePreference(m_preferences.opusDecoderEnabled, preferences.opusDecoderEnabled))
+        PlatformMediaSessionManager::setOpusDecoderEnabled(*m_preferences.opusDecoderEnabled);
+#endif
+
+#if ENABLE(VORBIS)
+    if (updatePreference(m_preferences.vorbisDecoderEnabled, preferences.vorbisDecoderEnabled))
+        PlatformMediaSessionManager::setVorbisDecoderEnabled(*m_preferences.vorbisDecoderEnabled);
+#endif
+    
+#if ENABLE(MEDIA_SOURCE) && HAVE(AVSAMPLEBUFFERVIDEOOUTPUT)
+    if (updatePreference(m_preferences.mediaSourceInlinePaintingEnabled, preferences.mediaSourceInlinePaintingEnabled))
+        DeprecatedGlobalSettings::setMediaSourceInlinePaintingEnabled(*m_preferences.mediaSourceInlinePaintingEnabled);
+#endif
+
+#if HAVE(AVCONTENTKEYSPECIFIER)
+    if (updatePreference(m_preferences.sampleBufferContentKeySessionSupportEnabled, preferences.sampleBufferContentKeySessionSupportEnabled))
+        MediaSessionManagerCocoa::setSampleBufferContentKeySessionSupportEnabled(*m_preferences.sampleBufferContentKeySessionSupportEnabled);
+#endif
+    
+#if ENABLE(ALTERNATE_WEBM_PLAYER)
+    if (updatePreference(m_preferences.alternateWebMPlayerEnabled, preferences.alternateWebMPlayerEnabled))
+        PlatformMediaSessionManager::setAlternateWebMPlayerEnabled(*m_preferences.alternateWebMPlayerEnabled);
+#endif
+}
+
+bool GPUProcess::updatePreference(std::optional<bool>& oldPreference, std::optional<bool>& newPreference)
+{
+    if (newPreference.has_value() && oldPreference != newPreference) {
+        oldPreference = WTFMove(newPreference);
+        return true;
+    }
+    
+    if (!oldPreference.has_value()) {
+        oldPreference = false;
+        return true;
+    }
+    
+    return false;
 }
 
 void GPUProcess::prepareToSuspend(bool isSuspensionImminent, MonotonicTime, CompletionHandler<void()>&& completionHandler)
@@ -322,6 +366,10 @@ void GPUProcess::setOrientationForMediaCapture(uint64_t orientation)
 
 void GPUProcess::updateCaptureAccess(bool allowAudioCapture, bool allowVideoCapture, bool allowDisplayCapture, WebCore::ProcessIdentifier processID, CompletionHandler<void()>&& completionHandler)
 {
+#if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
+    ensureAVCaptureServerConnection();
+#endif
+
     if (auto* connection = webProcessConnection(processID)) {
         connection->updateCaptureAccess(allowAudioCapture, allowVideoCapture, allowDisplayCapture);
         return completionHandler();
@@ -345,10 +393,6 @@ void GPUProcess::updateSandboxAccess(const Vector<SandboxExtension::Handle>& ext
 {
     for (auto& extension : extensions)
         SandboxExtension::consumePermanently(extension);
-
-#if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
-    sandboxWasUpatedForCapture();
-#endif
 }
 
 void GPUProcess::addMockMediaDevice(const WebCore::MockMediaDevice& device)
@@ -366,6 +410,11 @@ void GPUProcess::removeMockMediaDevice(const String& persistentId)
     MockRealtimeMediaSourceCenter::removeDevice(persistentId);
 }
 
+void GPUProcess::setMockMediaDeviceIsEphemeral(const String& persistentId, bool isEphemeral)
+{
+    MockRealtimeMediaSourceCenter::setDeviceIsEphemeral(persistentId, isEphemeral);
+}
+
 void GPUProcess::resetMockMediaDevices()
 {
     MockRealtimeMediaSourceCenter::resetDevices();
@@ -374,6 +423,11 @@ void GPUProcess::resetMockMediaDevices()
 void GPUProcess::setMockCaptureDevicesInterrupted(bool isCameraInterrupted, bool isMicrophoneInterrupted)
 {
     MockRealtimeMediaSourceCenter::setMockCaptureDevicesInterrupted(isCameraInterrupted, isMicrophoneInterrupted);
+}
+
+void GPUProcess::triggerMockMicrophoneConfigurationChange()
+{
+    MockRealtimeMediaSourceCenter::singleton().triggerMockMicrophoneConfigurationChange();
 }
 #endif // ENABLE(MEDIA_STREAM)
 
@@ -491,66 +545,6 @@ void GPUProcess::enableVP9Decoders(bool shouldEnableVP8Decoder, bool shouldEnabl
 }
 #endif
 
-#if ENABLE(MEDIA_SOURCE)
-void GPUProcess::setWebMParserEnabled(bool enabled)
-{
-    if (m_webMParserEnabled == enabled)
-        return;
-    m_webMParserEnabled = enabled;
-    WebCore::RuntimeEnabledFeatures::sharedFeatures().setWebMParserEnabled(m_webMParserEnabled);
-}
-#endif
-
-#if ENABLE(WEBM_FORMAT_READER)
-void GPUProcess::setWebMFormatReaderEnabled(bool enabled)
-{
-    if (m_webMFormatReaderEnabled == enabled)
-        return;
-    m_webMFormatReaderEnabled = enabled;
-    PlatformMediaSessionManager::setWebMFormatReaderEnabled(m_webMFormatReaderEnabled);
-}
-#endif
-
-#if ENABLE(OPUS)
-void GPUProcess::setOpusDecoderEnabled(bool enabled)
-{
-    if (m_opusEnabled == enabled)
-        return;
-    m_opusEnabled = enabled;
-    PlatformMediaSessionManager::setOpusDecoderEnabled(m_opusEnabled);
-}
-#endif
-
-#if ENABLE(VORBIS)
-void GPUProcess::setVorbisDecoderEnabled(bool enabled)
-{
-    if (m_vorbisEnabled == enabled)
-        return;
-    m_vorbisEnabled = enabled;
-    PlatformMediaSessionManager::setVorbisDecoderEnabled(m_vorbisEnabled);
-}
-#endif
-
-#if ENABLE(MEDIA_SOURCE) && HAVE(AVSAMPLEBUFFERVIDEOOUTPUT)
-void GPUProcess::setMediaSourceInlinePaintingEnabled(bool enabled)
-{
-    if (m_mediaSourceInlinePaintingEnabled == enabled)
-        return;
-    m_mediaSourceInlinePaintingEnabled = enabled;
-    WebCore::RuntimeEnabledFeatures::sharedFeatures().setMediaSourceInlinePaintingEnabled(m_mediaSourceInlinePaintingEnabled);
-}
-#endif
-
-#if HAVE(AVCONTENTKEYSPECIFIER)
-void GPUProcess::setSampleBufferContentKeySessionSupportEnabled(bool enabled)
-{
-    if (m_sampleBufferContentKeySessionSupportEnabled == enabled)
-        return;
-    m_sampleBufferContentKeySessionSupportEnabled = enabled;
-    MediaSessionManagerCocoa::setSampleBufferContentKeySessionSupportEnabled(enabled);
-}
-#endif
-
 void GPUProcess::webProcessConnectionCountForTesting(CompletionHandler<void(uint64_t)>&& completionHandler)
 {
     completionHandler(GPUConnectionToWebProcess::objectCountForTesting());
@@ -564,7 +558,8 @@ void GPUProcess::processIsStartingToCaptureAudio(GPUConnectionToWebProcess& proc
 }
 #endif
 
-void GPUProcess::requestBitmapImageForCurrentTime(WebCore::ProcessIdentifier processIdentifier, WebCore::MediaPlayerIdentifier playerIdentifier, CompletionHandler<void(const ShareableBitmap::Handle&)>&& completion)
+#if ENABLE(VIDEO)
+void GPUProcess::requestBitmapImageForCurrentTime(WebCore::ProcessIdentifier processIdentifier, WebCore::MediaPlayerIdentifier playerIdentifier, CompletionHandler<void(const ShareableBitmapHandle&)>&& completion)
 {
     auto iterator = m_webProcessConnections.find(processIdentifier);
     if (iterator == m_webProcessConnections.end()) {
@@ -574,6 +569,7 @@ void GPUProcess::requestBitmapImageForCurrentTime(WebCore::ProcessIdentifier pro
 
     completion(iterator->value->remoteMediaPlayerManagerProxy().bitmapImageForCurrentTime(playerIdentifier));
 }
+#endif
 
 } // namespace WebKit
 

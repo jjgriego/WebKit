@@ -189,6 +189,31 @@ static CGRect rounded(CGRect rect)
 
 @end
 
+@interface CustomTextInputTraitsWebView : TestWKWebView
+- (instancetype)initWithFrame:(CGRect)frame keyboardType:(UIKeyboardType)keyboardType;
+@end
+
+@implementation CustomTextInputTraitsWebView {
+    UIKeyboardType _keyboardType;
+}
+
+- (instancetype)initWithFrame:(CGRect)frame keyboardType:(UIKeyboardType)keyboardType
+{
+    if (self = [super initWithFrame:frame])
+        _keyboardType = keyboardType;
+
+    return self;
+}
+
+- (UITextInputTraits *)_textInputTraits
+{
+    UITextInputTraits *traits = [super _textInputTraits];
+    traits.keyboardType = _keyboardType;
+    return traits;
+}
+
+@end
+
 @interface CustomUndoManagerWebView : TestWKWebView
 @property (nonatomic, strong) NSUndoManager *customUndoManager;
 @end
@@ -453,7 +478,7 @@ TEST(KeyboardInputTests, HandleKeyEventsWhileSwappingWebProcess)
 TEST(KeyboardInputTests, CaretSelectionRectAfterRestoringFirstResponderWithRetainActiveFocusedState)
 {
     // This difference in caret width is due to the fact that we don't zoom in to the input field on iPad, but do on iPhone.
-    auto expectedCaretRect = CGRectMake(16, 13, UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad ? 3 : 2, 15);
+    auto expectedCaretRect = CGRectMake(14, 11, UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad ? 3 : 2, 15);
     auto [webView, inputDelegate] = webViewAndInputDelegateWithAutofocusedInput();
     EXPECT_WK_STREQ("INPUT", [webView stringByEvaluatingJavaScript:@"document.activeElement.tagName"]);
     [webView waitForCaretViewFrameToBecome:expectedCaretRect];
@@ -489,7 +514,7 @@ TEST(KeyboardInputTests, RangedSelectionRectAfterRestoringFirstResponderWithReta
 TEST(KeyboardInputTests, CaretSelectionRectAfterRestoringFirstResponder)
 {
     // This difference in caret width is due to the fact that we don't zoom in to the input field on iPad, but do on iPhone.
-    auto expectedCaretRect = CGRectMake(16, 13, UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad ? 3 : 2, 15);
+    auto expectedCaretRect = CGRectMake(14, 11, UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad ? 3 : 2, 15);
     auto [webView, inputDelegate] = webViewAndInputDelegateWithAutofocusedInput();
     EXPECT_WK_STREQ("INPUT", [webView stringByEvaluatingJavaScript:@"document.activeElement.tagName"]);
     [webView waitForCaretViewFrameToBecome:expectedCaretRect];
@@ -624,6 +649,23 @@ TEST(KeyboardInputTests, OverrideInputViewAndInputAccessoryView)
     EXPECT_EQ(inputView.get(), [contentView inputView]);
 }
 
+TEST(KeyboardInputTests, OverrideTextInputTraits)
+{
+    UIKeyboardType keyboardType = UIKeyboardTypeNumberPad;
+
+    auto webView = adoptNS([[CustomTextInputTraitsWebView alloc] initWithFrame:CGRectMake(0, 0, 320, 500) keyboardType:keyboardType]);
+    auto inputDelegate = adoptNS([[TestInputDelegate alloc] init]);
+    [inputDelegate setFocusStartsInputSessionPolicyHandler:[&] (WKWebView *, id<_WKFocusedElementInfo>) -> _WKFocusStartsInputSessionPolicy {
+        return _WKFocusStartsInputSessionPolicyAllow;
+    }];
+    [webView _setInputDelegate:inputDelegate.get()];
+
+    [webView synchronouslyLoadHTMLString:@"<body><div id='editor' contenteditable='true'></div></body>"];
+
+    [webView evaluateJavaScriptAndWaitForInputSessionToChange:@"document.getElementById('editor').focus()"];
+    EXPECT_EQ(keyboardType, [webView textInputContentView].textInputTraits.keyboardType);
+}
+
 TEST(KeyboardInputTests, DisableSpellChecking)
 {
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 320, 500)]);
@@ -673,8 +715,8 @@ TEST(KeyboardInputTests, SelectionClipRectsWhenPresentingInputView)
     [webView synchronouslyLoadHTMLString:@"<meta name='viewport' content='width=device-width, initial-scale=1'><input>"];
     [webView evaluateJavaScriptAndWaitForInputSessionToChange:@"document.querySelector('input').focus()"];
 
-    EXPECT_EQ(11, selectionClipRect.origin.x);
-    EXPECT_EQ(11, selectionClipRect.origin.y);
+    EXPECT_EQ(9, selectionClipRect.origin.x);
+    EXPECT_EQ(9, selectionClipRect.origin.y);
     EXPECT_EQ(153, selectionClipRect.size.width);
     EXPECT_EQ(20, selectionClipRect.size.height);
 }
@@ -706,6 +748,30 @@ TEST(KeyboardInputTests, TestWebViewAdditionalContextForStrongPasswordAssistance
     NSDictionary *actual = [[webView textInputContentView] _autofillContext];
     EXPECT_TRUE([[actual allValues] containsObject:expected]);
     EXPECT_TRUE([actual[@"_automaticPasswordKeyboard"] boolValue]);
+}
+
+TEST(KeyboardInputTests, TestWebViewAdditionalContextForNonAutofillCredentialType)
+{
+    auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 320, 500)]);
+    auto inputDelegate = adoptNS([[TestInputDelegate alloc] init]);
+
+    [inputDelegate setFocusStartsInputSessionPolicyHandler:[&] (WKWebView *, id<_WKFocusedElementInfo>) -> _WKFocusStartsInputSessionPolicy {
+        return _WKFocusStartsInputSessionPolicyAllow;
+    }];
+
+    [inputDelegate setFocusRequiresStrongPasswordAssistanceHandler:[&] (WKWebView *, id<_WKFocusedElementInfo>) {
+        return YES;
+    }];
+
+    [webView _setInputDelegate:inputDelegate.get()];
+
+    [webView synchronouslyLoadHTMLString:@"<input type='text' id='input' autocomplete='username webauthn'>"];
+    [webView evaluateJavaScriptAndWaitForInputSessionToChange:@"document.getElementById('input').focus()"];
+
+    NSDictionary *actual = [[webView textInputContentView] _autofillContext];
+    EXPECT_TRUE([actual[@"_page_id"] boolValue]);
+    EXPECT_TRUE([actual[@"_frame_id"] boolValue]);
+    EXPECT_WK_STREQ("webauthn", actual[@"_credential_type"]);
 }
 
 TEST(KeyboardInputTests, TestWebViewAccessoryDoneDuringStrongPasswordAssistance)
@@ -892,6 +958,61 @@ TEST(KeyboardInputTests, EditableWebViewRequiresKeyboardWhenFirstResponder)
     [webView stringByEvaluatingJavaScript:@"document.querySelector('input').focus()"];
     [webView waitForNextPresentationUpdate];
     EXPECT_FALSE([contentView _requiresKeyboardWhenFirstResponder]);
+}
+
+TEST(KeyboardInputTests, InputSessionWhenEvaluatingJavaScript)
+{
+    __block bool done = false;
+    auto inputDelegate = adoptNS([[TestInputDelegate alloc] init]);
+    bool willStartInputSession = false;
+    [inputDelegate setWillStartInputSessionHandler:[&] (WKWebView *, id<_WKFormInputSession>) {
+        willStartInputSession = true;
+    }];
+    bool didStartInputSession = false;
+    [inputDelegate setDidStartInputSessionHandler:[&] (WKWebView *, id<_WKFormInputSession>) {
+        didStartInputSession = true;
+    }];
+
+    auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 320, 500)]);
+    [webView _setInputDelegate:inputDelegate.get()];
+    [webView synchronouslyLoadHTMLString:@"<input value='foo'>"];
+
+    NSString *focusInputScript = @"document.querySelector('input').focus()";
+
+    done = false;
+    [webView _evaluateJavaScriptWithoutUserGesture:focusInputScript completionHandler:^(id, NSError *error) {
+        EXPECT_NULL(error);
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+    [webView waitForNextPresentationUpdate];
+    EXPECT_FALSE(willStartInputSession);
+    EXPECT_FALSE(didStartInputSession);
+
+    done = false;
+    [webView callAsyncJavaScript:focusInputScript arguments:nil inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:^(id, NSError *error) {
+        EXPECT_NULL(error);
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+    [webView waitForNextPresentationUpdate];
+    EXPECT_TRUE(willStartInputSession);
+    EXPECT_TRUE(didStartInputSession);
+
+    [webView objectByEvaluatingJavaScript:@"document.activeElement.blur()"];
+    [webView waitForNextPresentationUpdate];
+
+    willStartInputSession = false;
+    didStartInputSession = false;
+    done = false;
+    [webView evaluateJavaScript:focusInputScript completionHandler:^(id, NSError *error) {
+        EXPECT_NULL(error);
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+    [webView waitForNextPresentationUpdate];
+    EXPECT_TRUE(willStartInputSession);
+    EXPECT_TRUE(didStartInputSession);
 }
 
 } // namespace TestWebKitAPI

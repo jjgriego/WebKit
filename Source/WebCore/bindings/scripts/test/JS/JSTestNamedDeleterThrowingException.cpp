@@ -106,7 +106,7 @@ template<> void JSTestNamedDeleterThrowingExceptionDOMConstructor::initializePro
 
 static const HashTableValue JSTestNamedDeleterThrowingExceptionPrototypeTableValues[] =
 {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsTestNamedDeleterThrowingExceptionConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestNamedDeleterThrowingExceptionConstructor, 0 } },
 };
 
 const ClassInfo JSTestNamedDeleterThrowingExceptionPrototype::s_info = { "TestNamedDeleterThrowingException"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestNamedDeleterThrowingExceptionPrototype) };
@@ -209,7 +209,7 @@ bool JSTestNamedDeleterThrowingException::deleteProperty(JSCell* cell, JSGlobalO
     auto& impl = thisObject.wrapped();
     if (isVisibleNamedProperty<LegacyOverrideBuiltIns::No>(*lexicalGlobalObject, thisObject, propertyName)) {
         using ReturnType = decltype(impl.deleteNamedProperty(propertyNameToString(propertyName)));
-        static_assert(std::is_same_v<ReturnType, ExceptionOr<bool>> || std::is_same_v<ReturnType, bool>, "The implementation of named deleters without an identifer must return either bool or ExceptionOr<bool>.");
+        static_assert(std::is_same_v<ReturnType, ExceptionOr<bool>> || std::is_same_v<ReturnType, bool>, "The implementation of named deleters without an identifier must return either bool or ExceptionOr<bool>.");
         return performLegacyPlatformObjectDeleteOperation(*lexicalGlobalObject, [&] { return impl.deleteNamedProperty(propertyNameToString(propertyName)); });
     }
     return JSObject::deleteProperty(cell, lexicalGlobalObject, propertyName, slot);
@@ -223,7 +223,7 @@ bool JSTestNamedDeleterThrowingException::deletePropertyByIndex(JSCell* cell, JS
     auto propertyName = Identifier::from(vm, index);
     if (isVisibleNamedProperty<LegacyOverrideBuiltIns::No>(*lexicalGlobalObject, thisObject, propertyName)) {
         using ReturnType = decltype(impl.deleteNamedProperty(propertyNameToString(propertyName)));
-        static_assert(std::is_same_v<ReturnType, ExceptionOr<bool>> || std::is_same_v<ReturnType, bool>, "The implementation of named deleters without an identifer must return either bool or ExceptionOr<bool>.");
+        static_assert(std::is_same_v<ReturnType, ExceptionOr<bool>> || std::is_same_v<ReturnType, bool>, "The implementation of named deleters without an identifier must return either bool or ExceptionOr<bool>.");
         return performLegacyPlatformObjectDeleteOperation(*lexicalGlobalObject, [&] { return impl.deleteNamedProperty(propertyNameToString(propertyName)); });
     }
     return JSObject::deletePropertyByIndex(cell, lexicalGlobalObject, index);
@@ -243,9 +243,9 @@ JSC::GCClient::IsoSubspace* JSTestNamedDeleterThrowingException::subspaceForImpl
 {
     return WebCore::subspaceForImpl<JSTestNamedDeleterThrowingException, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForTestNamedDeleterThrowingException.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForTestNamedDeleterThrowingException = WTFMove(space); },
+        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForTestNamedDeleterThrowingException = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForTestNamedDeleterThrowingException.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForTestNamedDeleterThrowingException = WTFMove(space); }
+        [] (auto& spaces, auto&& space) { spaces.m_subspaceForTestNamedDeleterThrowingException = std::forward<decltype(space)>(space); }
     );
 }
 
@@ -254,7 +254,7 @@ void JSTestNamedDeleterThrowingException::analyzeHeap(JSCell* cell, HeapAnalyzer
     auto* thisObject = jsCast<JSTestNamedDeleterThrowingException*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, "url "_s + thisObject->scriptExecutionContext()->url().string());
     Base::analyzeHeap(cell, analyzer);
 }
 

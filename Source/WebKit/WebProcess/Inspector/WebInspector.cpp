@@ -75,7 +75,7 @@ void WebInspector::openLocalInspectorFrontend(bool underTest)
     WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::OpenLocalInspectorFrontend(canAttachWindow(), underTest), m_page->identifier());
 }
 
-void WebInspector::setFrontendConnection(IPC::Attachment encodedConnectionIdentifier)
+void WebInspector::setFrontendConnection(IPC::Connection::Handle&& connectionHandle)
 {
     // We might receive multiple updates if this web process got swapped into a WebPageProxy
     // shortly after another process established the connection.
@@ -84,22 +84,11 @@ void WebInspector::setFrontendConnection(IPC::Attachment encodedConnectionIdenti
         m_frontendConnection = nullptr;
     }
 
-#if USE(UNIX_DOMAIN_SOCKETS)
-    IPC::Connection::Identifier connectionIdentifier(encodedConnectionIdentifier.release().release());
-#elif OS(DARWIN)
-    IPC::Connection::Identifier connectionIdentifier(encodedConnectionIdentifier.port());
-#elif OS(WINDOWS)
-    IPC::Connection::Identifier connectionIdentifier(encodedConnectionIdentifier.handle());
-#else
-    notImplemented();
-    return;
-#endif
-
-    if (!IPC::Connection::identifierIsValid(connectionIdentifier))
+    if (!connectionHandle)
         return;
 
-    m_frontendConnection = IPC::Connection::createClientConnection(connectionIdentifier, *this);
-    m_frontendConnection->open();
+    m_frontendConnection = IPC::Connection::createClientConnection(IPC::Connection::Identifier { WTFMove(connectionHandle) });
+    m_frontendConnection->open(*this);
 
     for (auto& callback : m_frontendConnectionActions)
         callback();
@@ -267,6 +256,15 @@ void WebInspector::setDeveloperPreferenceOverride(InspectorClient::DeveloperPref
     WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::SetDeveloperPreferenceOverride(developerPreference, overrideValue), m_page->identifier());
 }
 
+#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
+
+void WebInspector::setEmulatedConditions(std::optional<int64_t>&& bytesPerSecondLimit)
+{
+    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::SetEmulatedConditions(WTFMove(bytesPerSecondLimit)), m_page->identifier());
+}
+
+#endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)
+
 bool WebInspector::canAttachWindow()
 {
     if (!m_page->corePage())
@@ -281,8 +279,11 @@ bool WebInspector::canAttachWindow()
         return true;
 
     // Don't allow the attach if the window would be too small to accommodate the minimum inspector size.
-    unsigned inspectedPageHeight = m_page->corePage()->mainFrame().view()->visibleHeight();
-    unsigned inspectedPageWidth = m_page->corePage()->mainFrame().view()->visibleWidth();
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->corePage()->mainFrame());
+    if (!localMainFrame)
+        return false;
+    unsigned inspectedPageHeight = localMainFrame->view()->visibleHeight();
+    unsigned inspectedPageWidth = localMainFrame->view()->visibleWidth();
     unsigned maximumAttachedHeight = inspectedPageHeight * maximumAttachedHeightRatio;
     return minimumAttachedHeight <= maximumAttachedHeight && minimumAttachedWidth <= inspectedPageWidth;
 }

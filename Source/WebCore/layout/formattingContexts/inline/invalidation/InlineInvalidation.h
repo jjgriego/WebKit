@@ -25,28 +25,33 @@
 
 #pragma once
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include <optional>
+#include <wtf/Forward.h>
 
 namespace WebCore {
 
 class RenderStyle;
+
+namespace InlineDisplay {
+struct Box;
+}
 
 namespace Layout {
 
 class Box;
 class InlineDamage;
 class InlineTextBox;
+class InlineFormattingState;
 
 class InlineInvalidation {
 public:
-    InlineInvalidation(InlineDamage&);
+    // FIXME: InlineFormattingState should be able to provide all the content for invalidation (i.e. omit any display content).
+    InlineInvalidation(InlineDamage&, const InlineFormattingState&, const Vector<InlineDisplay::Box>&);
 
     void styleChanged(const Box&, const RenderStyle& oldStyle);
 
-    void textInserted(const InlineTextBox&, std::optional<size_t> offset, std::optional<size_t> length);
-    void textWillBeRemoved(const InlineTextBox&, std::optional<size_t> offset, std::optional<size_t> length);
+    void textInserted(const InlineTextBox* damagedInlineTextBox = nullptr, std::optional<size_t> offset = { });
+    void textWillBeRemoved(const InlineTextBox&, std::optional<size_t> offset = { });
 
     void inlineLevelBoxInserted(const Box&);
     void inlineLevelBoxWillBeRemoved(const Box&);
@@ -55,8 +60,9 @@ public:
 
 private:
     InlineDamage& m_inlineDamage;
+    const InlineFormattingState& m_inlineFormattingState;
+    const Vector<InlineDisplay::Box>& m_displayBoxes;
 };
 
 }
 }
-#endif

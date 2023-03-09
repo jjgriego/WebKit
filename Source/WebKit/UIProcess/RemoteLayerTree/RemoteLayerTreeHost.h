@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "PlaybackSessionContextIdentifier.h"
 #include "RemoteLayerTreeNode.h"
 #include "RemoteLayerTreeTransaction.h"
 #include <WebCore/PlatformCALayer.h>
@@ -46,13 +47,16 @@ public:
     ~RemoteLayerTreeHost();
 
     RemoteLayerTreeNode* nodeForID(WebCore::GraphicsLayer::PlatformLayerID) const;
-    RemoteLayerTreeNode* rootNode() const { return m_rootNode; }
+    RemoteLayerTreeNode* rootNode() const { return m_rootNode.get(); }
 
     CALayer *layerForID(WebCore::GraphicsLayer::PlatformLayerID) const;
     CALayer *rootLayer() const;
 
+    RemoteLayerTreeDrawingAreaProxy& drawingArea() const { return *m_drawingArea; }
+
     // Returns true if the root layer changed.
     bool updateLayerTree(const RemoteLayerTreeTransaction&, float indicatorScaleFactor  = 1);
+    void asyncSetLayerContents(WebCore::GraphicsLayer::PlatformLayerID, ImageBufferBackendHandle&&);
 
     void setIsDebugLayerTreeHost(bool flag) { m_isDebugLayerTreeHost = flag; }
     bool isDebugLayerTreeHost() const { return m_isDebugLayerTreeHost; }
@@ -73,9 +77,14 @@ public:
     // This avoids keeping an outstanding InUse reference when suspended.
     void mapAllIOSurfaceBackingStore();
 
-    CALayer *layerWithIDForTesting(uint64_t) const;
+    CALayer *layerWithIDForTesting(WebCore::GraphicsLayer::PlatformLayerID) const;
 
     bool replayCGDisplayListsIntoBackingStore() const;
+    bool css3DTransformInteroperabilityEnabled() const;
+#if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)
+    const HashSet<WebCore::GraphicsLayer::PlatformLayerID>& overlayRegionIDs() const { return m_overlayRegionIDs; }
+    void updateOverlayRegionIDs(const HashSet<WebCore::GraphicsLayer::PlatformLayerID> &overlayRegionNodes) { m_overlayRegionIDs = overlayRegionNodes; }
+#endif
 
 private:
     void createLayer(const RemoteLayerTreeTransaction::LayerCreationProperties&);
@@ -86,9 +95,17 @@ private:
     RemoteLayerBackingStore::LayerContentsType layerContentsType() const;
 
     RemoteLayerTreeDrawingAreaProxy* m_drawingArea { nullptr };
-    RemoteLayerTreeNode* m_rootNode { nullptr };
+    WeakPtr<RemoteLayerTreeNode> m_rootNode;
     HashMap<WebCore::GraphicsLayer::PlatformLayerID, std::unique_ptr<RemoteLayerTreeNode>> m_nodes;
+    HashMap<WebCore::LayerHostingContextIdentifier, WebCore::GraphicsLayer::PlatformLayerID> m_hostingLayers;
+    HashMap<WebCore::LayerHostingContextIdentifier, WebCore::GraphicsLayer::PlatformLayerID> m_hostedLayers;
     HashMap<WebCore::GraphicsLayer::PlatformLayerID, RetainPtr<WKAnimationDelegate>> m_animationDelegates;
+#if HAVE(AVKIT)
+    HashMap<WebCore::GraphicsLayer::PlatformLayerID, PlaybackSessionContextIdentifier> m_videoLayers;
+#endif
+#if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)
+    HashSet<WebCore::GraphicsLayer::PlatformLayerID> m_overlayRegionIDs;
+#endif
     bool m_isDebugLayerTreeHost { false };
 };
 

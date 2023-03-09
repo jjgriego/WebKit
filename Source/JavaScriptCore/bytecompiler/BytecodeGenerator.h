@@ -663,28 +663,14 @@ namespace JSC {
         RegisterID* emitUnaryOp(OpcodeID, RegisterID* dst, RegisterID* src, ResultType);
 
         template<typename BinaryOp>
-        std::enable_if_t<
-            BinaryOp::opcodeID != op_add
-            && BinaryOp::opcodeID != op_mul
-            && BinaryOp::opcodeID != op_sub
-            && BinaryOp::opcodeID != op_div,
-            RegisterID*>
-        emitBinaryOp(RegisterID* dst, RegisterID* src1, RegisterID* src2, OperandTypes = OperandTypes())
+        RegisterID* emitBinaryOp(RegisterID* dst, RegisterID* src1, RegisterID* src2, OperandTypes types = { })
         {
-            BinaryOp::emit(this, dst, src1, src2);
-            return dst;
-        }
-
-        template<typename BinaryOp>
-        std::enable_if_t<
-            BinaryOp::opcodeID == op_add
-            || BinaryOp::opcodeID == op_mul
-            || BinaryOp::opcodeID == op_sub
-            || BinaryOp::opcodeID == op_div,
-            RegisterID*>
-        emitBinaryOp(RegisterID* dst, RegisterID* src1, RegisterID* src2, OperandTypes types)
-        {
-            BinaryOp::emit(this, dst, src1, src2, m_codeBlock->addBinaryArithProfile(), types);
+            if constexpr (BinaryOp::opcodeID == op_add || BinaryOp::opcodeID == op_mul || BinaryOp::opcodeID == op_sub || BinaryOp::opcodeID == op_div)
+                BinaryOp::emit(this, dst, src1, src2, m_codeBlock->addBinaryArithProfile(), types);
+            else {
+                UNUSED_PARAM(types);
+                BinaryOp::emit(this, dst, src1, src2);
+            }
             return dst;
         }
 
@@ -705,7 +691,7 @@ namespace JSC {
         RegisterID* emitCreatePromise(RegisterID* dst, RegisterID* newTarget, bool isInternalPromise);
         RegisterID* emitCreateGenerator(RegisterID* dst, RegisterID* newTarget);
         RegisterID* emitCreateAsyncGenerator(RegisterID* dst, RegisterID* newTarget);
-        RegisterID* emitCreateArgumentsButterfly(RegisterID* dst);
+        RegisterID* emitCreateArgumentsButterflyExcludingThis(RegisterID* dst, RegisterID* targetFunction);
         RegisterID* emitInstanceFieldInitializationIfNeeded(RegisterID* dst, RegisterID* constructor, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
         void emitTDZCheck(RegisterID* target);
         bool needsTDZCheck(const Variable&);
@@ -719,6 +705,7 @@ namespace JSC {
         // FIXME: new_array_with_spread should use an array allocation profile and take a recommendedIndexingType
         RegisterID* emitNewArrayWithSpread(RegisterID* dst, ElementNode*);
         RegisterID* emitNewArrayWithSize(RegisterID* dst, RegisterID* length);
+        RegisterID* emitNewArrayWithSpecies(RegisterID* dst, RegisterID* length, RegisterID* array);
 
         RegisterID* emitNewFunction(RegisterID* dst, FunctionMetadataNode*);
         RegisterID* emitNewFunctionExpression(RegisterID* dst, FuncExprNode*);
@@ -776,6 +763,7 @@ namespace JSC {
 
         RegisterID* emitPutByVal(RegisterID* base, RegisterID* property, RegisterID* value);
         RegisterID* emitPutByVal(RegisterID* base, RegisterID* thisValue, RegisterID* property, RegisterID* value);
+        RegisterID* emitPutByValWithECMAMode(RegisterID* base, RegisterID* thisValue, RegisterID* property, RegisterID* value, ECMAMode);
         RegisterID* emitDirectPutByVal(RegisterID* base, RegisterID* property, RegisterID* value);
         RegisterID* emitDeleteByVal(RegisterID* dst, RegisterID* base, RegisterID* property);
 
@@ -816,7 +804,7 @@ namespace JSC {
         ExpectedFunction expectedFunctionForIdentifier(const Identifier&);
         RegisterID* emitCall(RegisterID* dst, RegisterID* func, ExpectedFunction, CallArguments&, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall);
         RegisterID* emitCallInTailPosition(RegisterID* dst, RegisterID* func, ExpectedFunction, CallArguments&, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall);
-        RegisterID* emitCallEval(RegisterID* dst, RegisterID* func, CallArguments&, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall);
+        RegisterID* emitCallDirectEval(RegisterID* dst, RegisterID* func, CallArguments&, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall);
         RegisterID* emitCallVarargs(RegisterID* dst, RegisterID* func, RegisterID* thisRegister, RegisterID* arguments, RegisterID* firstFreeRegister, int32_t firstVarArgOffset, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall);
         RegisterID* emitCallVarargsInTailPosition(RegisterID* dst, RegisterID* func, RegisterID* thisRegister, RegisterID* arguments, RegisterID* firstFreeRegister, int32_t firstVarArgOffset, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall);
         RegisterID* emitCallForwardArgumentsInTailPosition(RegisterID* dst, RegisterID* func, RegisterID* thisRegister, RegisterID* firstFreeRegister, int32_t firstVarArgOffset, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall);
@@ -1088,7 +1076,7 @@ namespace JSC {
         void retrieveLastUnaryOp(int& dstIndex, int& srcIndex);
         ALWAYS_INLINE void rewind();
 
-        void allocateAndEmitScope();
+        void allocateScope();
 
         template<typename JumpOp>
         void setTargetForJumpInstruction(JSInstructionStream::MutableRef&, int target);
@@ -1249,7 +1237,6 @@ namespace JSC {
         RegisterID m_thisRegister;
         RegisterID m_calleeRegister;
         RegisterID* m_scopeRegister { nullptr };
-        RegisterID* m_topMostScope { nullptr };
         RegisterID* m_argumentsRegister { nullptr };
         RegisterID* m_lexicalEnvironmentRegister { nullptr };
         RegisterID* m_generatorRegister { nullptr };
@@ -1289,7 +1276,16 @@ namespace JSC {
         Vector<std::pair<FunctionMetadataNode*, FunctionVariableType>> m_functionsToInitialize;
         bool m_needToInitializeArguments { false };
         RestParameterNode* m_restParameter { nullptr };
-        
+
+        struct AsyncFuncParametersTryCatchInfo {
+            RefPtr<Label> catchStartLabel { nullptr };
+            RefPtr<RegisterID> thrownValue { nullptr };
+        }; 
+        std::optional<AsyncFuncParametersTryCatchInfo> m_asyncFuncParametersTryCatchInfo;
+
+        template<typename EmitBytecodeFunctor>
+        void asyncFuncParametersTryCatchWrap(const EmitBytecodeFunctor&);
+
         Vector<TryRange> m_tryRanges;
         SegmentedVector<TryData, 8> m_tryData;
 

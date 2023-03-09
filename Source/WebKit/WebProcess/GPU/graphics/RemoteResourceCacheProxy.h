@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2020-2023 Apple Inc.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,6 +40,7 @@ class ImageBuffer;
 
 namespace WebKit {
 
+class RemoteImageBufferProxy;
 class RemoteRenderingBackendProxy;
 
 class RemoteResourceCacheProxy : public WebCore::NativeImage::Observer, public WebCore::DecomposedGlyphs::Observer {
@@ -47,28 +48,30 @@ public:
     RemoteResourceCacheProxy(RemoteRenderingBackendProxy&);
     ~RemoteResourceCacheProxy();
 
-    void cacheImageBuffer(WebCore::ImageBuffer&);
-    WebCore::ImageBuffer* cachedImageBuffer(WebCore::RenderingResourceIdentifier) const;
-    void releaseImageBuffer(WebCore::RenderingResourceIdentifier);
+    void cacheImageBuffer(RemoteImageBufferProxy&);
+    RemoteImageBufferProxy* cachedImageBuffer(WebCore::RenderingResourceIdentifier) const;
+    void releaseImageBuffer(RemoteImageBufferProxy&);
+    void forgetImageBuffer(WebCore::RenderingResourceIdentifier);
 
     void recordNativeImageUse(WebCore::NativeImage&);
     void recordFontUse(WebCore::Font&);
     void recordImageBufferUse(WebCore::ImageBuffer&);
     void recordDecomposedGlyphsUse(WebCore::DecomposedGlyphs&);
 
-    void finalizeRenderingUpdate();
+    void didPaintLayers();
 
     void remoteResourceCacheWasDestroyed();
-    void releaseAllRemoteFonts();
     void releaseMemory();
     
     unsigned imagesCount() const { return m_nativeImages.size(); }
 
+    void clear();
+
 private:
-    using ImageBufferHashMap = HashMap<WebCore::RenderingResourceIdentifier, WeakPtr<WebCore::ImageBuffer>>;
-    using NativeImageHashMap = HashMap<WebCore::RenderingResourceIdentifier, WeakPtr<WebCore::NativeImage>>;
-    using FontHashMap = HashMap<WebCore::RenderingResourceIdentifier, RenderingUpdateID>;
-    using DecomposedGlyphsHashMap = HashMap<WebCore::RenderingResourceIdentifier, WeakPtr<WebCore::DecomposedGlyphs>>;
+    using ImageBufferHashMap = HashMap<WebCore::RenderingResourceIdentifier, WeakPtr<RemoteImageBufferProxy>>;
+    using NativeImageHashMap = HashMap<WebCore::RenderingResourceIdentifier, ThreadSafeWeakPtr<WebCore::NativeImage>>;
+    using FontHashMap = HashMap<WebCore::RenderingResourceIdentifier, uint64_t>;
+    using DecomposedGlyphsHashMap = HashMap<WebCore::RenderingResourceIdentifier, ThreadSafeWeakPtr<WebCore::DecomposedGlyphs>>;
     
     void releaseNativeImage(WebCore::RenderingResourceIdentifier) override;
     void releaseDecomposedGlyphs(WebCore::RenderingResourceIdentifier) override;
@@ -88,6 +91,7 @@ private:
     unsigned m_numberOfFontsUsedInCurrentRenderingUpdate { 0 };
 
     RemoteRenderingBackendProxy& m_remoteRenderingBackendProxy;
+    uint64_t m_renderingUpdateID;
 };
 
 } // namespace WebKit

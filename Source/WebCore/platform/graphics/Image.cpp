@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2006 Samuel Weinig (sam.weinig@gmail.com)
- * Copyright (C) 2004-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2004-2023 Apple Inc.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,11 +29,11 @@
 
 #include "AffineTransform.h"
 #include "BitmapImage.h"
+#include "DeprecatedGlobalSettings.h"
 #include "GraphicsContext.h"
 #include "ImageObserver.h"
 #include "Length.h"
 #include "MIMETypeRegistry.h"
-#include "RuntimeEnabledFeatures.h"
 #include "SVGImage.h"
 #include "SharedBuffer.h"
 #include <math.h>
@@ -76,7 +76,7 @@ RefPtr<Image> Image::create(ImageObserver& observer)
     auto url = observer.sourceUrl();
     if (isPDFResource(mimeType, url) || isPostScriptResource(mimeType, url)) {
 #if USE(CG) && !USE(WEBKIT_IMAGE_DECODERS)
-        if (!RuntimeEnabledFeatures::sharedFeatures().arePDFImagesEnabled())
+        if (!DeprecatedGlobalSettings::arePDFImagesEnabled())
             return nullptr;
         return PDFDocumentImage::create(&observer);
 #else
@@ -146,7 +146,7 @@ void Image::fillWithSolidColor(GraphicsContext& ctxt, const FloatRect& dstRect, 
 
 void Image::drawPattern(GraphicsContext& ctxt, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform,  const FloatPoint& phase, const FloatSize& spacing, const ImagePaintingOptions& options)
 {
-    auto tileImage = preTransformedNativeImageForCurrentFrame(options.orientation() == ImageOrientation::FromImage);
+    auto tileImage = preTransformedNativeImageForCurrentFrame(options.orientation() == ImageOrientation::Orientation::FromImage);
     if (!tileImage)
         return;
 

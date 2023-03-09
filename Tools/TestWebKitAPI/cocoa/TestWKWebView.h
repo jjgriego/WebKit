@@ -34,7 +34,7 @@
 @protocol UITextInputInternal;
 @protocol UITextInputMultiDocument;
 @protocol UITextInputPrivate;
-@protocol UIWKInteractionViewProtocol_Staging_91919121;
+@protocol UIWKInteractionViewProtocol_Staging_95652872;
 #endif
 
 @interface WKWebView (AdditionalDeclarations)
@@ -50,7 +50,7 @@
 
 @interface WKWebView (TestWebKitAPI)
 #if PLATFORM(IOS_FAMILY)
-@property (nonatomic, readonly) UIView <UITextInputPrivate, UITextInputInternal, UITextInputMultiDocument, UIWKInteractionViewProtocol_Staging_91919121, UITextInputTokenizer> *textInputContentView;
+@property (nonatomic, readonly) UIView <UITextInputPrivate, UITextInputInternal, UITextInputMultiDocument, UIWKInteractionViewProtocol_Staging_95652872, UITextInputTokenizer> *textInputContentView;
 - (NSArray<_WKTextInputContext *> *)synchronouslyRequestTextInputContextsInRect:(CGRect)rect;
 #endif
 @property (nonatomic, readonly) NSUInteger gpuToWebProcessConnectionCount;
@@ -64,6 +64,8 @@
 - (void)synchronouslyLoadHTMLString:(NSString *)html baseURL:(NSURL *)url;
 - (void)synchronouslyLoadHTMLString:(NSString *)html preferences:(WKWebpagePreferences *)preferences;
 - (void)synchronouslyLoadRequest:(NSURLRequest *)request;
+- (void)synchronouslyLoadRequest:(NSURLRequest *)request preferences:(WKWebpagePreferences *)preferences;
+- (void)synchronouslyLoadRequestIgnoringSSLErrors:(NSURLRequest *)request;
 - (void)synchronouslyLoadTestPageNamed:(NSString *)pageName;
 - (BOOL)_synchronouslyExecuteEditCommand:(NSString *)command argument:(NSString *)argument;
 - (void)expectElementTagsInOrder:(NSArray<NSString *> *)tagNames;
@@ -143,11 +145,13 @@
 - (void)sendClicksAtPoint:(NSPoint)pointInWindow numberOfClicks:(NSUInteger)numberOfClicks;
 - (void)sendClickAtPoint:(NSPoint)pointInWindow;
 - (void)wheelEventAtPoint:(CGPoint)pointInWindow wheelDelta:(CGSize)delta;
+- (BOOL)acceptsFirstMouseAtPoint:(NSPoint)pointInWindow;
 - (NSWindow *)hostWindow;
 - (void)typeCharacter:(char)character modifiers:(NSEventModifierFlags)modifiers;
 - (void)typeCharacter:(char)character;
 - (void)setEventTimestampOffset:(NSTimeInterval)offset;
 @property (nonatomic, readonly) NSTimeInterval eventTimestamp;
+@property (nonatomic) BOOL forceWindowToBecomeKey;
 @end
 #endif
 

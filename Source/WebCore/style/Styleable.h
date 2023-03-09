@@ -77,6 +77,8 @@ struct Styleable {
     // we were unable to cheaply compute its effect on the extent.
     bool computeAnimationExtent(LayoutRect&) const;
 
+    bool mayHaveNonZeroOpacity() const;
+
     bool isRunningAcceleratedTransformAnimation() const;
 
     bool runningAnimationsAreAllAccelerated() const;
@@ -96,9 +98,9 @@ struct Styleable {
         return element.hasKeyframeEffects(pseudoId);
     }
 
-    OptionSet<AnimationImpact> applyKeyframeEffects(RenderStyle& targetStyle, const RenderStyle* previousLastStyleChangeEventStyle, const Style::ResolutionContext& resolutionContext) const
+    OptionSet<AnimationImpact> applyKeyframeEffects(RenderStyle& targetStyle, HashSet<AnimatableProperty>& affectedProperties, const RenderStyle* previousLastStyleChangeEventStyle, const Style::ResolutionContext& resolutionContext) const
     {
-        return element.ensureKeyframeEffectStack(pseudoId).applyKeyframeEffects(targetStyle, previousLastStyleChangeEventStyle, resolutionContext);
+        return element.ensureKeyframeEffectStack(pseudoId).applyKeyframeEffects(targetStyle, affectedProperties, previousLastStyleChangeEventStyle, resolutionContext);
     }
 
     const AnimationCollection* animations() const
@@ -106,12 +108,12 @@ struct Styleable {
         return element.animations(pseudoId);
     }
 
-    bool hasCompletedTransitionForProperty(CSSPropertyID property) const
+    bool hasCompletedTransitionForProperty(AnimatableProperty property) const
     {
         return element.hasCompletedTransitionForProperty(pseudoId, property);
     }
 
-    bool hasRunningTransitionForProperty(CSSPropertyID property) const
+    bool hasRunningTransitionForProperty(AnimatableProperty property) const
     {
         return element.hasRunningTransitionForProperty(pseudoId, property);
     }
@@ -126,12 +128,12 @@ struct Styleable {
         return element.ensureAnimations(pseudoId);
     }
 
-    PropertyToTransitionMap& ensureCompletedTransitionsByProperty() const
+    AnimatablePropertyToTransitionMap& ensureCompletedTransitionsByProperty() const
     {
         return element.ensureCompletedTransitionsByProperty(pseudoId);
     }
 
-    PropertyToTransitionMap& ensureRunningTransitionsByProperty() const
+    AnimatablePropertyToTransitionMap& ensureRunningTransitionsByProperty() const
     {
         return element.ensureRunningTransitionsByProperty(pseudoId);
     }
@@ -160,6 +162,8 @@ struct Styleable {
     {
         element.keyframesRuleDidChange(pseudoId);
     }
+
+    void queryContainerDidChange() const;
 
     bool animationListContainsNewlyValidAnimation(const AnimationList&) const;
 

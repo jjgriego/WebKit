@@ -1,4 +1,4 @@
-# Copyright (C) 2020 Apple Inc. All rights reserved.
+# Copyright (C) 2020-2022 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -221,7 +221,7 @@ class Package(object):
                     if not version_candidate:
                         continue
                     version = Version(*version_candidate.group().split('.'))
-                    if self.version and version not in self.version:
+                    if self.version and version != self.version:
                         continue
 
                     link = package['href'].split('#')[0]
@@ -292,7 +292,7 @@ class Package(object):
             AutoInstall.log('Downloading {}...'.format(archive))
             archive.download()
 
-            temp_location = os.path.join(tempfile.gettempdir(), self.name)
+            temp_location = os.path.join(tempfile.gettempdir(), '{}-{}'.format(self.name, os.getpid()))
             archive.unpack(temp_location)
 
             for candidate in os.listdir(temp_location):

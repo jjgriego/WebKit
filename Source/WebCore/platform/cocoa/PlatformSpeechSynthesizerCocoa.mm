@@ -107,10 +107,8 @@ static float getAVSpeechUtteranceMaximumSpeechRate()
 
 - (void)speakUtterance:(RefPtr<WebCore::PlatformSpeechSynthesisUtterance>&&)utterance
 {
-    // When speak is called we should not have an existing speech utterance outstanding.
-    ASSERT(!m_utterance);
     ASSERT(utterance);
-    if (!utterance)
+    if (!utterance || !PAL::isAVFoundationFrameworkAvailable())
         return;
     
     BEGIN_BLOCK_OBJC_EXCEPTIONS
@@ -123,7 +121,7 @@ static float getAVSpeechUtteranceMaximumSpeechRate()
     // then choose the default language.
     WebCore::PlatformSpeechSynthesisVoice* utteranceVoice = utterance->voice();
     NSString *voiceLanguage = nil;
-    if (!utteranceVoice) {
+    if (!utteranceVoice || utteranceVoice->voiceURI().isEmpty()) {
         if (utterance->lang().isEmpty())
             voiceLanguage = [PAL::getAVSpeechSynthesisVoiceClass() currentLanguageCode];
         else
@@ -132,7 +130,10 @@ static float getAVSpeechUtteranceMaximumSpeechRate()
         voiceLanguage = utterance->voice()->lang();
 
     AVSpeechSynthesisVoice *avVoice = nil;
-    if (voiceLanguage)
+    if (utteranceVoice)
+        avVoice = [PAL::getAVSpeechSynthesisVoiceClass() voiceWithIdentifier:utteranceVoice->voiceURI()];
+
+    if (!avVoice)
         avVoice = [PAL::getAVSpeechSynthesisVoiceClass() voiceWithLanguage:voiceLanguage];
 
     AVSpeechUtterance *avUtterance = [PAL::getAVSpeechUtteranceClass() speechUtteranceWithString:utterance->text()];
@@ -147,7 +148,7 @@ static float getAVSpeechUtteranceMaximumSpeechRate()
     // macOS won't send a did start speaking callback for empty strings.
 #if !HAVE(UNIFIED_SPEECHSYNTHESIS_FIX_FOR_81465164)
     if (!m_utterance->text().length())
-        m_synthesizerObject->client()->didStartSpeaking(*m_utterance);
+        m_synthesizerObject->client().didStartSpeaking(*m_utterance);
 #endif
 
     [m_synthesizer speakUtterance:avUtterance];
@@ -197,7 +198,7 @@ static float getAVSpeechUtteranceMaximumSpeechRate()
     if (!m_utterance || m_utterance->wrapper() != utterance)
         return;
 
-    m_synthesizerObject->client()->didStartSpeaking(*m_utterance);
+    m_synthesizerObject->client().didStartSpeaking(*m_utterance);
 }
 
 - (void)speechSynthesizer:(AVSpeechSynthesizer *)synthesizer didFinishSpeechUtterance:(AVSpeechUtterance *)utterance
@@ -210,7 +211,7 @@ static float getAVSpeechUtteranceMaximumSpeechRate()
     RefPtr<WebCore::PlatformSpeechSynthesisUtterance> protectedUtterance = m_utterance;
     m_utterance = nullptr;
 
-    m_synthesizerObject->client()->didFinishSpeaking(*protectedUtterance);
+    m_synthesizerObject->client().didFinishSpeaking(*protectedUtterance);
 }
 
 - (void)speechSynthesizer:(AVSpeechSynthesizer *)synthesizer didPauseSpeechUtterance:(AVSpeechUtterance *)utterance
@@ -219,7 +220,7 @@ static float getAVSpeechUtteranceMaximumSpeechRate()
     if (!m_utterance || m_utterance->wrapper() != utterance)
         return;
 
-    m_synthesizerObject->client()->didPauseSpeaking(*m_utterance);
+    m_synthesizerObject->client().didPauseSpeaking(*m_utterance);
 }
 
 - (void)speechSynthesizer:(AVSpeechSynthesizer *)synthesizer didContinueSpeechUtterance:(AVSpeechUtterance *)utterance
@@ -228,7 +229,7 @@ static float getAVSpeechUtteranceMaximumSpeechRate()
     if (!m_utterance || m_utterance->wrapper() != utterance)
         return;
 
-    m_synthesizerObject->client()->didResumeSpeaking(*m_utterance);
+    m_synthesizerObject->client().didResumeSpeaking(*m_utterance);
 }
 
 - (void)speechSynthesizer:(AVSpeechSynthesizer *)synthesizer didCancelSpeechUtterance:(AVSpeechUtterance *)utterance
@@ -241,7 +242,7 @@ static float getAVSpeechUtteranceMaximumSpeechRate()
     RefPtr<WebCore::PlatformSpeechSynthesisUtterance> protectedUtterance = m_utterance;
     m_utterance = nullptr;
 
-    m_synthesizerObject->client()->didFinishSpeaking(*protectedUtterance);
+    m_synthesizerObject->client().didFinishSpeaking(*protectedUtterance);
 }
 
 - (void)speechSynthesizer:(AVSpeechSynthesizer *)synthesizer willSpeakRangeOfSpeechString:(NSRange)characterRange utterance:(AVSpeechUtterance *)utterance
@@ -251,14 +252,19 @@ static float getAVSpeechUtteranceMaximumSpeechRate()
         return;
 
     // AVSpeechSynthesizer only supports word boundaries.
-    m_synthesizerObject->client()->boundaryEventOccurred(*m_utterance, WebCore::SpeechBoundary::SpeechWordBoundary, characterRange.location, characterRange.length);
+    m_synthesizerObject->client().boundaryEventOccurred(*m_utterance, WebCore::SpeechBoundary::SpeechWordBoundary, characterRange.location, characterRange.length);
 }
 
 @end
 
 namespace WebCore {
 
-PlatformSpeechSynthesizer::PlatformSpeechSynthesizer(PlatformSpeechSynthesizerClient* client)
+Ref<PlatformSpeechSynthesizer> PlatformSpeechSynthesizer::create(PlatformSpeechSynthesizerClient& client)
+{
+    return adoptRef(*new PlatformSpeechSynthesizer(client));
+}
+
+PlatformSpeechSynthesizer::PlatformSpeechSynthesizer(PlatformSpeechSynthesizerClient& client)
     : m_speechSynthesizerClient(client)
 {
 }
@@ -269,6 +275,9 @@ PlatformSpeechSynthesizer::~PlatformSpeechSynthesizer()
 
 void PlatformSpeechSynthesizer::initializeVoiceList()
 {
+    if (!PAL::isAVFoundationFrameworkAvailable())
+        return;
+
     BEGIN_BLOCK_OBJC_EXCEPTIONS
     for (AVSpeechSynthesisVoice *voice in [PAL::getAVSpeechSynthesisVoiceClass() speechVoices]) {
         NSString *language = [voice language];

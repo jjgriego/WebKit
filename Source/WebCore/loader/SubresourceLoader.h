@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include "CachedResourceLoader.h"
 #include "FrameLoaderTypes.h"
 #include "ResourceLoader.h"
 #include <wtf/CompletionHandler.h>
@@ -65,6 +66,9 @@ public:
 
     void markInAsyncResponsePolicyCheck() { m_inAsyncResponsePolicyCheck = true; }
     void didReceiveResponsePolicy();
+
+    void clearRequestCountTracker() { m_requestCountTracker = std::nullopt; }
+    void resetRequestCountTracker(CachedResourceLoader& loader, const CachedResource& resource) { m_requestCountTracker = RequestCountTracker { loader, resource }; }
 
 private:
     SubresourceLoader(Frame&, CachedResource&, const ResourceLoaderOptions&);
@@ -118,10 +122,12 @@ private:
 #endif
     public:
         RequestCountTracker(CachedResourceLoader&, const CachedResource&);
+        RequestCountTracker(RequestCountTracker&&);
+        RequestCountTracker& operator=(RequestCountTracker&&);
         ~RequestCountTracker();
     private:
-        CachedResourceLoader& m_cachedResourceLoader;
-        const CachedResource& m_resource;
+        CachedResourceLoader* m_cachedResourceLoader { nullptr };
+        const CachedResource* m_resource { nullptr };
     };
 
 #if PLATFORM(IOS_FAMILY)
@@ -135,6 +141,7 @@ private:
     unsigned m_redirectCount { 0 };
     bool m_loadingMultipartContent { false };
     bool m_inAsyncResponsePolicyCheck { false };
+    FetchMetadataSite m_site { FetchMetadataSite::SameOrigin };
 };
 
 }

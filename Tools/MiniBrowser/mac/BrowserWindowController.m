@@ -28,7 +28,9 @@
 #import "AppDelegate.h"
 #import "SettingsController.h"
 
-@interface BrowserWindowController () <NSSharingServicePickerDelegate, NSSharingServiceDelegate>
+@interface BrowserWindowController () <NSSharingServicePickerDelegate, NSSharingServiceDelegate> {
+    NSTimer *_mainThreadStallTimer;
+}
 @end
 
 @implementation BrowserWindowController
@@ -43,18 +45,10 @@
 
 - (void)windowDidLoad
 {
-#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 110000
     // FIXME: We should probably adopt the default unified style, but we'd need
     // somewhere to put the window/page title.
     self.window.toolbarStyle = NSWindowToolbarStyleExpanded;
 
-    reloadButton.image = [NSImage imageWithSystemSymbolName:@"arrow.clockwise" accessibilityDescription:@"Reload"];
-    // FIXME: Should these be localized?
-    backButton.image = [NSImage imageWithSystemSymbolName:@"chevron.left" accessibilityDescription:@"Go back"];
-    forwardButton.image = [NSImage imageWithSystemSymbolName:@"chevron.right" accessibilityDescription:@"Go forward"];
-    share.image = [NSImage imageWithSystemSymbolName:@"square.and.arrow.up" accessibilityDescription:@"Share"];
-    toggleUseShrinkToFitButton.image = [NSImage imageWithSystemSymbolName:@"arrow.up.left.and.arrow.down.right" accessibilityDescription:@"Use Shrink to fit"];
-#endif
     [share sendActionOn:NSEventMaskLeftMouseDown];
     [super windowDidLoad];
 }
@@ -272,6 +266,26 @@
     self.editable = !self.isEditable;
 }
 
+- (IBAction)toggleMainThreadStalls:(id)sender
+{
+    if (_mainThreadStallTimer) {
+        [_mainThreadStallTimer invalidate];
+        _mainThreadStallTimer = nil;
+        return;
+    }
+
+    const NSTimeInterval stallTimerRepeatInterval = 0.2;
+    _mainThreadStallTimer = [NSTimer scheduledTimerWithTimeInterval:stallTimerRepeatInterval repeats:YES block:^(NSTimer * _Nonnull timer) {
+        const NSTimeInterval stallDuration = 0.2;
+        usleep(stallDuration * USEC_PER_SEC);
+    }];
+}
+
+- (BOOL)mainThreadStallsEnabled
+{
+    return !!_mainThreadStallTimer;
+}
+
 #pragma mark -
 #pragma mark NSSharingServicePickerDelegate
 
@@ -280,12 +294,12 @@
     return proposedServices;
 }
 
-- (nullable id <NSSharingServiceDelegate>)sharingServicePicker:(NSSharingServicePicker *)sharingServicePicker delegateForSharingService:(NSSharingService *)sharingService
+- (id <NSSharingServiceDelegate>)sharingServicePicker:(NSSharingServicePicker *)sharingServicePicker delegateForSharingService:(NSSharingService *)sharingService
 {
     return self;
 }
 
-- (void)sharingServicePicker:(NSSharingServicePicker *)sharingServicePicker didChooseSharingService:(nullable NSSharingService *)service
+- (void)sharingServicePicker:(NSSharingServicePicker *)sharingServicePicker didChooseSharingService:(NSSharingService *)service
 {
 }
 
@@ -318,10 +332,10 @@ static CGRect coreGraphicsScreenRectForAppKitScreenRect(NSRect rect)
     NSImage *image = [[NSImage alloc] initWithCGImage:imageRef size:NSZeroSize];
     CGImageRelease(imageRef);
 
-    return [image autorelease];
+    return image;
 }
 
-- (nullable NSWindow *)sharingService:(NSSharingService *)sharingService sourceWindowForShareItems:(NSArray *)items sharingContentScope:(NSSharingContentScope *)sharingContentScope
+- (NSWindow *)sharingService:(NSSharingService *)sharingService sourceWindowForShareItems:(NSArray *)items sharingContentScope:(NSSharingContentScope *)sharingContentScope
 {
     *sharingContentScope = NSSharingContentScopeFull;
     return self.window;

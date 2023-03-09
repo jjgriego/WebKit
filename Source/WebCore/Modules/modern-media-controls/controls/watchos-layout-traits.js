@@ -62,7 +62,7 @@ class WatchOSLayoutTraits extends LayoutTraits
 
     supportsAirPlay()
     {
-        return true;
+        return false;
     }
 
     supportsPiP()
@@ -81,6 +81,11 @@ class WatchOSLayoutTraits extends LayoutTraits
     }
 
     promoteSubMenusWhenShowingMediaControlsContextMenu()
+    {
+        return false;
+    }
+
+    inheritsBorderRadius()
     {
         return false;
     }

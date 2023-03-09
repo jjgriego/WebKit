@@ -1,5 +1,6 @@
 /*
     Copyright (C) 2009 Nokia Corporation and/or its subsidiary(-ies)
+    Copyright (C) 2022 Sony Interactive Entertainment Inc.
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Library General Public
@@ -289,6 +290,15 @@ void GraphicsLayerTextureMapper::setContentsClippingRect(const FloatRoundedRect&
     notifyChange(ContentsRectChange);
 }
 
+void GraphicsLayerTextureMapper::setContentsRectClipsDescendants(bool contentsRectClipsDescendants)
+{
+    if (contentsRectClipsDescendants == m_contentsRectClipsDescendants)
+        return;
+
+    GraphicsLayer::setContentsRectClipsDescendants(contentsRectClipsDescendants);
+    notifyChange(ContentsRectChange);
+}
+
 void GraphicsLayerTextureMapper::setContentsToSolidColor(const Color& color)
 {
     if (color == m_solidColor)
@@ -473,6 +483,7 @@ void GraphicsLayerTextureMapper::commitLayerChanges()
     if (m_changeMask & ContentsRectChange) {
         m_layer.setContentsRect(contentsRect());
         m_layer.setContentsClippingRect(contentsClippingRect());
+        m_layer.setContentsRectClipsDescendants(contentsRectClipsDescendants());
     }
 
     if (m_changeMask & MasksToBoundsChange)
@@ -587,7 +598,7 @@ bool GraphicsLayerTextureMapper::filtersCanBeComposited(const FilterOperations& 
         return false;
 
     for (const auto& filterOperation : filters.operations()) {
-        if (filterOperation->type() == FilterOperation::REFERENCE)
+        if (filterOperation->type() == FilterOperation::Type::Reference)
             return false;
     }
 
@@ -598,10 +609,10 @@ bool GraphicsLayerTextureMapper::addAnimation(const KeyframeValueList& valueList
 {
     ASSERT(!keyframesName.isEmpty());
 
-    if (!anim || anim->isEmptyOrZeroDuration() || valueList.size() < 2 || (valueList.property() != AnimatedPropertyTransform && valueList.property() != AnimatedPropertyOpacity))
+    if (!anim || anim->isEmptyOrZeroDuration() || valueList.size() < 2 || (valueList.property() != AnimatedProperty::Transform && valueList.property() != AnimatedProperty::Opacity))
         return false;
 
-    if (valueList.property() == AnimatedPropertyFilter) {
+    if (valueList.property() == AnimatedProperty::Filter) {
         int listIndex = validateFilterOperations(valueList);
         if (listIndex < 0)
             return false;

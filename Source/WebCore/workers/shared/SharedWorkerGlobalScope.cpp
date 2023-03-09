@@ -41,8 +41,8 @@ WTF_MAKE_ISO_ALLOCATED_IMPL(SharedWorkerGlobalScope);
 
 #define SCOPE_RELEASE_LOG(fmt, ...) RELEASE_LOG(SharedWorker, "%p - [sharedWorkerIdentifier=%" PRIu64 "] SharedWorkerGlobalScope::" fmt, this, this->thread().identifier().toUInt64(), ##__VA_ARGS__)
 
-SharedWorkerGlobalScope::SharedWorkerGlobalScope(const String& name, const WorkerParameters& params, Ref<SecurityOrigin>&& origin, SharedWorkerThread& thread, Ref<SecurityOrigin>&& topOrigin, IDBClient::IDBConnectionProxy* connectionProxy, SocketProvider* socketProvider)
-    : WorkerGlobalScope(WorkerThreadType::SharedWorker, params, WTFMove(origin), thread, WTFMove(topOrigin), connectionProxy, socketProvider)
+SharedWorkerGlobalScope::SharedWorkerGlobalScope(const String& name, const WorkerParameters& params, Ref<SecurityOrigin>&& origin, SharedWorkerThread& thread, Ref<SecurityOrigin>&& topOrigin, IDBClient::IDBConnectionProxy* connectionProxy, SocketProvider* socketProvider, std::unique_ptr<WorkerClient>&& workerClient)
+    : WorkerGlobalScope(WorkerThreadType::SharedWorker, params, WTFMove(origin), thread, WTFMove(topOrigin), connectionProxy, socketProvider, WTFMove(workerClient))
     , m_name(name)
 {
     SCOPE_RELEASE_LOG("SharedWorkerGlobalScope:");
@@ -50,15 +50,15 @@ SharedWorkerGlobalScope::SharedWorkerGlobalScope(const String& name, const Worke
     applyContentSecurityPolicyResponseHeaders(params.contentSecurityPolicyResponseHeaders);
 }
 
+SharedWorkerGlobalScope::~SharedWorkerGlobalScope()
+{
+    // We need to remove from the contexts map very early in the destructor so that calling postTask() on this WorkerGlobalScope from another thread is safe.
+    removeFromContextsMap();
+}
+
 SharedWorkerThread& SharedWorkerGlobalScope::thread()
 {
     return static_cast<SharedWorkerThread&>(WorkerGlobalScope::thread());
-}
-
-void SharedWorkerGlobalScope::close()
-{
-    SCOPE_RELEASE_LOG("close:");
-    thread().stop(nullptr);
 }
 
 // https://html.spec.whatwg.org/multipage/workers.html#dom-sharedworker step 11.5

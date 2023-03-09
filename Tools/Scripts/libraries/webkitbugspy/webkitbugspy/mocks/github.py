@@ -1,4 +1,4 @@
-# Copyright (C) 2021-2022 Apple Inc. All rights reserved.
+# Copyright (C) 2021-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -121,8 +121,6 @@ class GitHub(Base, mocks.Requests):
             )
         issue = self.issues[id]
         if data:
-            if data.get('assignees') and self.users.get(data.get('assignees', [None])[0]):
-                issue['assignee'] = self.users[data['assignees'][0]]
             if data.get('state') == 'opened':
                 issue['opened'] = True
             if data.get('state') == 'closed':
@@ -143,6 +141,7 @@ class GitHub(Base, mocks.Requests):
             created_at=self.time_string(issue['timestamp']),
             state='opened' if issue['opened'] else 'closed',
             labels=self._labels_for_issue(issue),
+            milestone=dict(title=issue['milestone']) if issue.get('milestone') else None,
             assignee=dict(login=self.users[issue['assignee'].name].username) if issue['assignee'] else None,
             assignees=[dict(login=self.users[user.name].username) for user in issue.get('watchers', [])],
         ))
@@ -270,10 +269,39 @@ class GitHub(Base, mocks.Requests):
             user=dict(login=self.users[issue['creator'].name].username),
             created_at=self.time_string(issue['timestamp']),
             state='opened' if issue['opened'] else 'closed',
+            milestone=None,
             labels=self._labels_for_issue(issue),
             assignee=dict(login=self.users[issue['assignee'].name].username) if issue['assignee'] else None,
             assignees=[dict(login=self.users[user.name].username) for user in issue.get('watchers', [])],
         ), url=url)
+
+    def _add_assignees(self, url, id, credentials, data):
+        if id not in self.issues:
+            return mocks.Response(
+                url=url,
+                headers={'Content-Type': 'text/json'},
+                status_code=404,
+                text=json.dumps(dict(message="Not Found")),
+            )
+        issue = self.issues[id]
+
+        if len(data.get('assignees', [])) == 0 or not all(assignee in self.users for assignee in data['assignees']):
+            return mocks.Response(status_code=400, url=url)
+
+        issue['assignee'] = self.users[data['assignees'][0]]
+        issue['assignees'] = data['assignees']
+        self.issues[id] = issue
+
+        return mocks.Response.fromJson(dict(
+            title=issue['title'],
+            body=issue['description'],
+            user=dict(login=self.users[issue['creator'].name].username),
+            created_at=self.time_string(issue['timestamp']),
+            state='opened' if issue['opened'] else 'closed',
+            labels=self._labels_for_issue(issue),
+            assignee=dict(login=issue['assignee'].username),
+            assignees=[dict(login=assignee) for assignee in issue['assignees']],
+        ))
 
     def request(self, method, url, data=None, params=None, auth=None, json=None, **kwargs):
         if not url.startswith('http://') and not url.startswith('https://'):
@@ -284,6 +312,13 @@ class GitHub(Base, mocks.Requests):
         match = re.match(r'{}/users/(?P<username>\S+)$'.format(self.hosts[1]), stripped_url)
         if match and method == 'GET':
             return self._user(url, match.group('username'))
+
+        match = re.match(r'{}/user$'.format(self.hosts[1]), stripped_url)
+        if match and method == 'GET':
+            user = self.users.get(auth.username) if auth else None
+            if not user:
+                return mocks.Response.create404(url=url)
+            return self._user(url, user.username)
 
         match = re.match(r'{}/issues/(?P<id>\d+)$'.format(self.api_remote), stripped_url)
         if match and method in ('GET', 'PATCH'):
@@ -310,5 +345,9 @@ class GitHub(Base, mocks.Requests):
         match = re.match(r'{}/issues$'.format(self.api_remote), stripped_url)
         if match and method == 'POST':
             return self._create(url, auth, json)
+
+        match = re.match(r'{}/issues/(?P<id>\d+)/assignees$'.format(self.api_remote), stripped_url)
+        if match and method == 'POST':
+            return self._add_assignees(url, int(match.group('id')), auth, json)
 
         return mocks.Response.create404(url)

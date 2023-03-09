@@ -53,7 +53,7 @@ public:
 
 #if ENABLE(SERVICE_CONTROLS)
     void clearServicesMenu();
-    void applyMarkupToControlledImage();
+    void removeBackgroundFromControlledImage();
 #endif
 
     NSWindow *window() const;
@@ -69,6 +69,8 @@ private:
     void showContextMenuWithItems(Vector<Ref<WebContextMenuItem>>&&) override;
     void useContextMenuItems(Vector<Ref<WebContextMenuItem>>&&) override;
 
+    bool showAfterPostProcessingContextData();
+
     void getContextMenuItem(const WebContextMenuItemData&, CompletionHandler<void(NSMenuItem *)>&&);
     void getContextMenuFromItems(const Vector<WebContextMenuItemData>&, CompletionHandler<void(NSMenu *)>&&);
 
@@ -76,7 +78,7 @@ private:
     void getShareMenuItem(CompletionHandler<void(NSMenuItem *)>&&);
     void showServicesMenu();
     void setupServicesMenu();
-    void appendMarkupItemToControlledImageMenuIfNeeded();
+    void appendRemoveBackgroundItemToControlledImageMenuIfNeeded();
 #endif
 
     NSMenu *platformMenu() const override;

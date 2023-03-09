@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,10 +38,6 @@
 
 #include <CoreText/CoreText.h>
 #include <wtf/Vector.h>
-
-#if PLATFORM(WIN)
-#include <pal/spi/win/CoreTextSPIWin.h>
-#endif
 
 namespace WebCore {
 
@@ -237,16 +233,56 @@ void DrawGlyphsRecorder::recordEndLayer(CGRenderingStateRef, CGGStateRef gstate)
     m_owner.endTransparencyLayer();
 }
 
-static Vector<CGSize> computeAdvancesFromPositions(const CGPoint positions[], size_t count, const CGAffineTransform& textMatrix)
+struct AdvancesAndInitialPosition {
+    Vector<CGSize> advances;
+    CGPoint initialPosition;
+};
+
+static AdvancesAndInitialPosition computeHorizontalAdvancesFromPositions(const CGPoint positions[], size_t count, const CGAffineTransform& textMatrix)
 {
-    Vector<CGSize> result;
+    // This function needs to be the inverse of fillVectorWithHorizontalGlyphPositions().
+
+    ASSERT(count); // Because we say "positions[0]" below.
+
+    AdvancesAndInitialPosition result;
+    result.advances.reserveInitialCapacity(count);
+    result.initialPosition = CGPointApplyAffineTransform(positions[0], textMatrix);
     for (size_t i = 0; i < count - 1; ++i) {
         auto nextPosition = positions[i + 1];
         auto currentPosition = positions[i];
         auto advance = CGSizeMake(nextPosition.x - currentPosition.x, nextPosition.y - currentPosition.y);
-        result.append(CGSizeApplyAffineTransform(advance, textMatrix));
+        result.advances.uncheckedAppend(CGSizeApplyAffineTransform(advance, textMatrix));
     }
-    result.constructAndAppend(CGSizeMake(0, 0));
+    result.advances.uncheckedConstructAndAppend(CGSizeZero);
+    return result;
+}
+
+static AdvancesAndInitialPosition computeVerticalAdvancesFromPositions(const CGSize translations[], const CGPoint positions[], unsigned count, float ascentDelta, AffineTransform textMatrix)
+{
+    // This function needs to be the inverse of fillVectorWithVerticalGlyphPositions().
+
+    ASSERT(count); // Because we say "positions[0]" below.
+
+    auto constantSyntheticTextMatrixOmittingOblique = computeBaseVerticalTextMatrix(computeBaseOverallTextMatrix(std::nullopt)); // See fillVectorWithVerticalGlyphPositions(), which describes what this is.
+
+    auto transformPoint = [&](CGPoint position, CGSize translation) -> CGPoint {
+        auto positionInUserCoordinates = CGPointApplyAffineTransform(position, textMatrix);
+        auto translationInUserCoordinates = CGSizeApplyAffineTransform(translation, constantSyntheticTextMatrixOmittingOblique);
+        return CGPointMake(positionInUserCoordinates.x - translationInUserCoordinates.width, positionInUserCoordinates.y - translationInUserCoordinates.height);
+    };
+
+    AdvancesAndInitialPosition result;
+    result.advances.reserveInitialCapacity(count);
+    result.initialPosition = transformPoint(positions[0], translations[0]);
+    CGPoint previousPosition = result.initialPosition;
+    result.initialPosition.y -= ascentDelta;
+
+    for (size_t i = 1; i < count; ++i) {
+        auto currentPosition = transformPoint(positions[i], translations[i]);
+        result.advances.uncheckedConstructAndAppend(CGSizeMake(currentPosition.x - previousPosition.x, currentPosition.y - previousPosition.y));
+        previousPosition = currentPosition;
+    }
+    result.advances.uncheckedAppend(CGSizeZero);
     return result;
 }
 
@@ -298,21 +334,17 @@ void DrawGlyphsRecorder::recordDrawGlyphs(CGRenderingStateRef, CGGStateRef gstat
     // `FontCascade::drawGlyphs` we need to recalculate the original advances from the resulting
     // positions by inverting the operations applied to the original advances.
     auto textMatrix = m_originalTextMatrix;
-    auto initialPenPosition = textMatrix.mapPoint(positions[0]);
 
+    AdvancesAndInitialPosition advances;
     if (font->platformData().orientation() == FontOrientation::Vertical) {
-        // Keep this in sync as the inverse of `fillVectorWithVerticalGlyphPositions`.
-        // FIXME: Use rotateLeftTransform(), as fillVectorWithVerticalGlyphPositions() does, instead of using transposedSize().
-        CGSize translation;
-        CTFontGetVerticalTranslationsForGlyphs(font->platformData().ctFont(), glyphs, &translation, 1);
-
-        initialPenPosition += FloatSize(translation).transposedSize();
-
+        Vector<CGSize, 256> translations(count);
+        CTFontGetVerticalTranslationsForGlyphs(font->platformData().ctFont(), glyphs, translations.data(), count);
         auto ascentDelta = font->fontMetrics().floatAscent(IdeographicBaseline) - font->fontMetrics().floatAscent();
-        initialPenPosition.move(0, -ascentDelta);
-    }
+        advances = computeVerticalAdvancesFromPositions(translations.data(), positions, count, ascentDelta, textMatrix);
+    } else
+        advances = computeHorizontalAdvancesFromPositions(positions, count, textMatrix);
 
-    m_owner.drawGlyphsAndCacheResources(font, glyphs, computeAdvancesFromPositions(positions, count, textMatrix).data(), count, initialPenPosition, m_smoothingMode);
+    m_owner.drawGlyphsAndCacheResources(font, glyphs, advances.advances.data(), count, advances.initialPosition, m_smoothingMode);
 
     m_owner.concatCTM(inverseCTMFixup);
 }
@@ -331,7 +363,7 @@ void DrawGlyphsRecorder::recordDrawImage(CGRenderingStateRef, CGGStateRef gstate
     m_owner.scale(FloatSize(1, -1));
 
     auto image = NativeImage::create(cgImage);
-    m_owner.drawNativeImage(*image, image->size(), FloatRect(rect), FloatRect {{ }, image->size()}, ImagePaintingOptions { ImageOrientation::OriginTopLeft });
+    m_owner.drawNativeImage(*image, image->size(), FloatRect(rect), FloatRect { { }, image->size() }, ImagePaintingOptions { ImageOrientation::Orientation::OriginTopLeft });
 
     // Undo the above y-flip to restore the context.
     m_owner.scale(FloatSize(1, -1));
@@ -411,7 +443,8 @@ void DrawGlyphsRecorder::drawGlyphs(const Font& font, const GlyphBufferGlyph* gl
 
 void DrawGlyphsRecorder::drawNativeText(CTFontRef font, CGFloat fontSize, CTLineRef line, CGRect lineRect)
 {
-    GraphicsContextStateSaver saver(m_owner);
+    GraphicsContextStateSaver ownerSaver(m_owner);
+    GraphicsContextStateSaver internalContextSaver(m_internalContext.get());
 
     m_owner.translate(lineRect.origin.x, lineRect.origin.y + lineRect.size.height);
     m_owner.scale(FloatSize(1, -1));

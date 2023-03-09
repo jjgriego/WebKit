@@ -66,14 +66,14 @@ AccessibilityOrientation AccessibilitySlider::orientation() const
     
     const RenderStyle& style = m_renderer->style();
 
-    ControlPart styleAppearance = style.effectiveAppearance();
+    auto styleAppearance = style.effectiveAppearance();
     switch (styleAppearance) {
-    case SliderThumbHorizontalPart:
-    case SliderHorizontalPart:
+    case StyleAppearance::SliderThumbHorizontal:
+    case StyleAppearance::SliderHorizontal:
         return AccessibilityOrientation::Horizontal;
     
-    case SliderThumbVerticalPart: 
-    case SliderVerticalPart:
+    case StyleAppearance::SliderThumbVertical:
+    case StyleAppearance::SliderVertical:
         return AccessibilityOrientation::Vertical;
         
     default:
@@ -84,10 +84,11 @@ AccessibilityOrientation AccessibilitySlider::orientation() const
 void AccessibilitySlider::addChildren()
 {
     ASSERT(!m_childrenInitialized); 
-    
     m_childrenInitialized = true;
 
-    AXObjectCache* cache = m_renderer->document().axObjectCache();
+    auto* cache = axObjectCache();
+    if (!cache)
+        return;
 
     auto& thumb = downcast<AccessibilitySliderThumb>(*cache->create(AccessibilityRole::SliderThumb));
     thumb.setParent(this);

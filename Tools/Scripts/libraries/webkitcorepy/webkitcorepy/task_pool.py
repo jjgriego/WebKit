@@ -64,6 +64,7 @@ class _Result(_Message):
 
     def __call__(self, caller):
         if caller:
+            caller.pending_count -= 1
             caller.callbacks.pop(self.id, lambda value: value)(self.value)
         return self.value
 
@@ -150,9 +151,12 @@ class _BiDirectionalQueue(object):
                 return self.incoming.get(block=False)
 
             difference = Timeout.difference()
-            if difference is not None:
-                return self.incoming.get(timeout=difference)
-            return self.incoming.get()
+            try:
+                if difference is not None:
+                    return self.incoming.get(timeout=difference)
+                return self.incoming.get()
+            except Queue.Empty:
+                pass
 
     def close(self):
         with OutputCapture():
@@ -357,6 +361,7 @@ class TaskPool(object):
 
         self.callbacks = {}
         self._id_count = 0
+        self.pending_count = 0
         self.grace_period = grace_period
         self.block_size = block_size
         self.force_fork = force_fork
@@ -386,7 +391,7 @@ class TaskPool(object):
             ),
         ) for count in range(self._num_workers)]
 
-        with Timeout(seconds=10, patch=False, handler=self.Exception('Failed to start all workers')):
+        with Timeout(seconds=60, patch=False, handler=self.Exception('Failed to start all workers')):
             for worker in self.workers:
                 worker.start()
             while self._started < len(self.workers):
@@ -404,12 +409,13 @@ class TaskPool(object):
 
         if callback:
             self.callbacks[self._id_count] = callback
+        self.pending_count += 1
         self.queue.send(self.Task(function, self._id_count, *args, **kwargs))
         self._id_count += 1
 
         # For every block of tasks passed to our workers, we need consume messages so we don't get deadlocked
         if not self._id_count % self.block_size:
-            while True:
+            while self.pending_count > 2 * self._num_workers:
                 try:
                     self.queue.receive(blocking=False)(self)
                 except Queue.Empty:
@@ -439,6 +445,10 @@ class TaskPool(object):
         from six import reraise
         try:
             inflight = sys.exc_info()
+
+            if inflight[1]:
+                # We're about to terminate all the workers. Ignore any unprocessed jobs.
+                self.queue.outgoing.cancel_join_thread()
 
             for worker in self.workers:
                 if worker.is_alive():

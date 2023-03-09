@@ -32,6 +32,7 @@
 #include "IntPoint.h"
 #include "IntRect.h"
 #include "LengthBox.h"
+#include "PolicyContainer.h"
 #include "SerializedScriptValue.h"
 #include <memory>
 #include <wtf/RefCounted.h>
@@ -209,9 +210,15 @@ public:
     void setWasRestoredFromSession(bool wasRestoredFromSession) { m_wasRestoredFromSession = wasRestoredFromSession; }
     bool wasRestoredFromSession() const { return m_wasRestoredFromSession; }
 
+    void setWasCreatedByJSWithoutUserInteraction(bool wasCreatedByJSWithoutUserInteraction) { m_wasCreatedByJSWithoutUserInteraction = wasCreatedByJSWithoutUserInteraction; }
+    bool wasCreatedByJSWithoutUserInteraction() const { return m_wasCreatedByJSWithoutUserInteraction; }
+
 #if !LOG_DISABLED
     const char* logString() const;
 #endif
+
+    const std::optional<PolicyContainer>& policyContainer() const { return m_policyContainer; }
+    void setPolicyContainer(const PolicyContainer& policyContainer) { m_policyContainer = policyContainer; }
 
 private:
     WEBCORE_EXPORT HistoryItem();
@@ -246,6 +253,7 @@ private:
     bool m_lastVisitWasFailure { false };
     bool m_isTargetItem { false };
     bool m_wasRestoredFromSession { false };
+    bool m_wasCreatedByJSWithoutUserInteraction { false };
     bool m_shouldRestoreScrollPosition { true };
 
     // If two HistoryItems have the same item sequence number, then they are
@@ -286,6 +294,7 @@ private:
 #endif
 
     BackForwardItemIdentifier m_identifier;
+    std::optional<PolicyContainer> m_policyContainer;
 };
 
 } // namespace WebCore

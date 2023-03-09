@@ -55,7 +55,8 @@
 
 namespace TestWebKitAPI {
 
-TEST(PictureInPicture, ExitPiPOnSuspendVideoElement)
+// FIXME: Re-enable after webkit.org/b/242014 is resolved
+TEST(PictureInPicture, DISABLED_ExitPiPOnSuspendVideoElement)
 {
     if (!WebCore::supportsPictureInPicture())
         return;
@@ -81,13 +82,13 @@ TEST(PictureInPicture, ExitPiPOnSuspendVideoElement)
 
     didEnterPiP = false;
     [webView evaluateJavaScript:@"document.getElementById('enter-pip').click()" completionHandler: nil];
-    ASSERT_TRUE(TestWebKitAPI::Util::runFor(&didEnterPiP, 10));
+    ASSERT_TRUE(TestWebKitAPI::Util::runFor(&didEnterPiP, 10_s));
 
     sleep(1_s);
 
     didExitPiP = false;
     [webView synchronouslyLoadHTMLString:@"<body>Hello world</body>"];
-    ASSERT_TRUE(TestWebKitAPI::Util::runFor(&didExitPiP, 10));
+    ASSERT_TRUE(TestWebKitAPI::Util::runFor(&didExitPiP, 10_s));
 }
 
 } // namespace TestWebKitAPI

@@ -41,7 +41,7 @@ from webkitpy.common.system.filesystem import FileSystem
 from webkitpy.common.host import Host
 from webkitpy.test.finder import Finder
 from webkitpy.test.printer import Printer
-from webkitpy.test.runner import Runner, unit_test_name
+from webkitpy.test.runner import Runner
 from webkitpy.results.upload import Upload
 from webkitpy.results.options import upload_options
 
@@ -77,6 +77,7 @@ def main():
     tester.skip(('webkitpy.common.checkout.scm.scm_unittest',), 'are really, really, slow', 31818)
     if sys.platform.startswith('win'):
         tester.skip(('webkitpy.common.checkout', 'webkitpy.tool'), 'fail horribly on win32', 54526)
+        tester.skip(('reporelaypy',), 'fail to install lupa and don\'t have to test on win32', 243316)
 
     # Tests that are platform specific
     mac_only_tests = (
@@ -193,7 +194,7 @@ class Tester(object):
         from webkitcorepy import AutoInstall
 
         # Force registration of all autoinstalled packages.
-        if sys.version_info > (3, 0):
+        if any([n.startswith('reporelaypy') for n in names]):
             import reporelaypy
         import webkitflaskpy
 
@@ -333,7 +334,7 @@ class Tester(object):
             for t in suite._tests:
                 names.extend(self._all_test_names(t))
         else:
-            names.append(unit_test_name(suite))
+            names.append(suite.id())
         return names
 
     def _log_exception(self):

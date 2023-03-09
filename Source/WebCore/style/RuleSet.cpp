@@ -37,6 +37,8 @@
 #include "HTMLNames.h"
 #include "MediaQueryEvaluator.h"
 #include "RuleSetBuilder.h"
+#include "SVGElement.h"
+#include "ScriptExecutionContext.h"
 #include "SecurityOrigin.h"
 #include "SelectorChecker.h"
 #include "SelectorFilter.h"
@@ -86,6 +88,16 @@ static bool isHostSelectorMatchingInShadowTree(const CSSSelector& startSelector)
     return !hasOnlyOneCompound && hasHostInLastCompound;
 }
 
+static bool shouldHaveBucketForAttributeName(const CSSSelector& attributeSelector)
+{
+    // Don't make buckets for lazy attributes since we don't want to synchronize.
+    if (attributeSelector.attributeCanonicalLocalName() == HTMLNames::styleAttr->localName())
+        return false;
+    if (SVGElement::animatableAttributeForName(attributeSelector.attribute().localName()) != nullQName())
+        return false;
+    return true;
+}
+
 void RuleSet::addRule(const StyleRule& rule, unsigned selectorIndex, unsigned selectorListIndex)
 {
     RuleData ruleData(rule, selectorIndex, selectorListIndex, m_ruleCount);
@@ -118,6 +130,7 @@ void RuleSet::addRule(RuleData&& ruleData, CascadeLayerIdentifier cascadeLayerId
     const CSSSelector* idSelector = nullptr;
     const CSSSelector* tagSelector = nullptr;
     const CSSSelector* classSelector = nullptr;
+    const CSSSelector* attributeSelector = nullptr;
     const CSSSelector* linkSelector = nullptr;
     const CSSSelector* focusSelector = nullptr;
     const CSSSelector* hostPseudoClassSelector = nullptr;
@@ -147,6 +160,16 @@ void RuleSet::addRule(RuleData&& ruleData, CascadeLayerIdentifier cascadeLayerId
             }
             break;
         }
+        case CSSSelector::Exact:
+        case CSSSelector::Set:
+        case CSSSelector::List:
+        case CSSSelector::Hyphen:
+        case CSSSelector::Contain:
+        case CSSSelector::Begin:
+        case CSSSelector::End:
+            if (shouldHaveBucketForAttributeName(*selector))
+                attributeSelector = selector;
+            break;
         case CSSSelector::Tag:
             if (selector->tagQName().localName() != starAtom())
                 tagSelector = selector;
@@ -192,13 +215,6 @@ void RuleSet::addRule(RuleData&& ruleData, CascadeLayerIdentifier cascadeLayerId
             }
             break;
         case CSSSelector::Unknown:
-        case CSSSelector::Exact:
-        case CSSSelector::Set:
-        case CSSSelector::List:
-        case CSSSelector::Hyphen:
-        case CSSSelector::Contain:
-        case CSSSelector::Begin:
-        case CSSSelector::End:
         case CSSSelector::PagePseudoClass:
             break;
         }
@@ -261,6 +277,12 @@ void RuleSet::addRule(RuleData&& ruleData, CascadeLayerIdentifier cascadeLayerId
         return;
     }
 
+    if (attributeSelector) {
+        addToRuleSet(attributeSelector->attribute().localName(), m_attributeLocalNameRules, ruleData);
+        addToRuleSet(attributeSelector->attributeCanonicalLocalName(), m_attributeCanonicalLocalNameRules, ruleData);
+        return;
+    }
+
     if (linkSelector) {
         m_linkPseudoClassRules.append(ruleData);
         return;
@@ -301,6 +323,8 @@ void RuleSet::traverseRuleDatas(Function&& function)
 
     traverseMap(m_idRules);
     traverseMap(m_classRules);
+    traverseMap(m_attributeLocalNameRules);
+    traverseMap(m_attributeCanonicalLocalNameRules);
     traverseMap(m_tagLocalNameRules);
     traverseMap(m_tagLowercaseLocalNameRules);
     traverseMap(m_shadowPseudoElementRules);
@@ -315,7 +339,7 @@ void RuleSet::traverseRuleDatas(Function&& function)
     traverseVector(m_universalRules);
 }
 
-std::optional<DynamicMediaQueryEvaluationChanges> RuleSet::evaluateDynamicMediaQueryRules(const MediaQueryEvaluator& evaluator)
+std::optional<DynamicMediaQueryEvaluationChanges> RuleSet::evaluateDynamicMediaQueryRules(const MQ::MediaQueryEvaluator& evaluator)
 {
     auto collectedChanges = evaluateDynamicMediaQueryRules(evaluator, 0);
 
@@ -327,7 +351,7 @@ std::optional<DynamicMediaQueryEvaluationChanges> RuleSet::evaluateDynamicMediaQ
 
     auto& ruleSet = m_mediaQueryInvalidationRuleSetCache.ensure(collectedChanges.changedQueryIndexes, [&] {
         auto ruleSet = RuleSet::create();
-        RuleSetBuilder builder(ruleSet, MediaQueryEvaluator(true));
+        RuleSetBuilder builder(ruleSet, MQ::MediaQueryEvaluator { screenAtom(), MQ::EvaluationResult::True });
         for (auto* rules : collectedChanges.affectedRules) {
             for (auto& rule : *rules)
                 builder.addStyleRule(rule);
@@ -338,7 +362,7 @@ std::optional<DynamicMediaQueryEvaluationChanges> RuleSet::evaluateDynamicMediaQ
     return { { DynamicMediaQueryEvaluationChanges::Type::InvalidateStyle, { ruleSet.copyRef() } } };
 }
 
-RuleSet::CollectedMediaQueryChanges RuleSet::evaluateDynamicMediaQueryRules(const MediaQueryEvaluator& evaluator, size_t startIndex)
+RuleSet::CollectedMediaQueryChanges RuleSet::evaluateDynamicMediaQueryRules(const MQ::MediaQueryEvaluator& evaluator, size_t startIndex)
 {
     CollectedMediaQueryChanges collectedChanges;
 
@@ -347,8 +371,8 @@ RuleSet::CollectedMediaQueryChanges RuleSet::evaluateDynamicMediaQueryRules(cons
     for (size_t i = startIndex; i < m_dynamicMediaQueryRules.size(); ++i) {
         auto& dynamicRules = m_dynamicMediaQueryRules[i];
         bool result = true;
-        for (auto& set : dynamicRules.mediaQuerySets) {
-            if (!evaluator.evaluate(set.get())) {
+        for (auto& queryList : dynamicRules.mediaQueries) {
+            if (!evaluator.evaluate(queryList)) {
                 result = false;
                 break;
             }
@@ -393,6 +417,8 @@ void RuleSet::shrinkToFit()
 {
     shrinkMapVectorsToFit(m_idRules);
     shrinkMapVectorsToFit(m_classRules);
+    shrinkMapVectorsToFit(m_attributeLocalNameRules);
+    shrinkMapVectorsToFit(m_attributeCanonicalLocalNameRules);
     shrinkMapVectorsToFit(m_tagLocalNameRules);
     shrinkMapVectorsToFit(m_tagLowercaseLocalNameRules);
     shrinkMapVectorsToFit(m_shadowPseudoElementRules);

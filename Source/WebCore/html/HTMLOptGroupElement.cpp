@@ -26,7 +26,7 @@
 #include "HTMLOptGroupElement.h"
 
 #include "Document.h"
-#include "ElementAncestorIterator.h"
+#include "ElementAncestorIteratorInlines.h"
 #include "ElementIterator.h"
 #include "HTMLNames.h"
 #include "HTMLOptionElement.h"
@@ -35,6 +35,7 @@
 #include "RenderMenuList.h"
 #include "NodeRenderStyle.h"
 #include "StyleResolver.h"
+#include "TypedElementDescendantIteratorInlines.h"
 #include <wtf/IsoMallocInlines.h>
 #include <wtf/StdLibExtras.h>
 
@@ -77,7 +78,7 @@ const AtomString& HTMLOptGroupElement::formControlType() const
 
 void HTMLOptGroupElement::childrenChanged(const ChildChange& change)
 {
-    bool isRelevant = change.affectsElements();
+    bool isRelevant = change.affectsElements == ChildChange::AffectsElements::Yes;
     RefPtr select = isRelevant ? ownerSelectElement() : nullptr;
     if (!isRelevant || !select) {
         HTMLElement::childrenChanged(change);

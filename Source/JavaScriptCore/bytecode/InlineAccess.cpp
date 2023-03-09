@@ -152,9 +152,9 @@ void InlineAccess::dumpCacheSizesAndCrash()
 template <typename Function>
 ALWAYS_INLINE static bool linkCodeInline(const char* name, CCallHelpers& jit, StructureStubInfo& stubInfo, const Function& function)
 {
-    if (jit.m_assembler.buffer().codeSize() <= stubInfo.inlineSize()) {
+    if (jit.m_assembler.buffer().codeSize() <= stubInfo.inlineCodeSize()) {
         bool needsBranchCompaction = true;
-        LinkBuffer linkBuffer(jit, stubInfo.start, stubInfo.inlineSize(), LinkBuffer::Profile::InlineCache, JITCompilationMustSucceed, needsBranchCompaction);
+        LinkBuffer linkBuffer(jit, stubInfo.startLocation, stubInfo.inlineCodeSize(), LinkBuffer::Profile::InlineCache, JITCompilationMustSucceed, needsBranchCompaction);
         ASSERT(linkBuffer.isValid());
         function(linkBuffer);
         FINALIZE_CODE(linkBuffer, NoPtrTag, "InlineAccessType: '%s'", name);
@@ -169,7 +169,7 @@ ALWAYS_INLINE static bool linkCodeInline(const char* name, CCallHelpers& jit, St
     constexpr bool failIfCantInline = false;
     if (failIfCantInline) {
         dataLog("Failure for: ", name, "\n");
-        dataLog("real size: ", jit.m_assembler.buffer().codeSize(), " inline size:", stubInfo.inlineSize(), "\n");
+        dataLog("real size: ", jit.m_assembler.buffer().codeSize(), " inline size:", stubInfo.inlineCodeSize(), "\n");
         CRASH();
     }
 
@@ -214,19 +214,19 @@ bool InlineAccess::generateSelfPropertyAccess(CodeBlock* codeBlock, StructureStu
 
 ALWAYS_INLINE static GPRReg getScratchRegister(StructureStubInfo& stubInfo)
 {
-    ScratchRegisterAllocator allocator(stubInfo.usedRegisters);
+    ScratchRegisterAllocator allocator(stubInfo.usedRegisters.toRegisterSet());
     allocator.lock(stubInfo.m_baseGPR);
     allocator.lock(stubInfo.m_valueGPR);
+    allocator.lock(stubInfo.m_extraGPR);
+    allocator.lock(stubInfo.m_extra2GPR);
 #if USE(JSVALUE32_64)
     allocator.lock(stubInfo.m_baseTagGPR);
     allocator.lock(stubInfo.m_valueTagGPR);
+    allocator.lock(stubInfo.m_extraTagGPR);
+    allocator.lock(stubInfo.m_extra2TagGPR);
 #endif
-    if (stubInfo.propertyRegs())
-        allocator.lock(stubInfo.propertyRegs());
-    if (stubInfo.m_stubInfoGPR != InvalidGPRReg)
-        allocator.lock(stubInfo.m_stubInfoGPR);
-    if (stubInfo.m_arrayProfileGPR != InvalidGPRReg)
-        allocator.lock(stubInfo.m_arrayProfileGPR);
+    allocator.lock(stubInfo.m_stubInfoGPR);
+    allocator.lock(stubInfo.m_arrayProfileGPR);
     GPRReg scratch = allocator.allocateScratchGPR();
     if (allocator.didReuseRegisters())
         return InvalidGPRReg;
@@ -310,6 +310,7 @@ bool InlineAccess::isCacheableArrayLength(CodeBlock* codeBlock, StructureStubInf
 
 bool InlineAccess::generateArrayLength(CodeBlock* codeBlock, StructureStubInfo& stubInfo, JSArray* array)
 {
+    ASSERT_UNUSED(codeBlock, !codeBlock->useDataIC());
     ASSERT_UNUSED(codeBlock, isCacheableArrayLength(codeBlock, stubInfo, array));
 
     if (!stubInfo.hasConstantIdentifier)
@@ -348,6 +349,7 @@ bool InlineAccess::isCacheableStringLength(CodeBlock* codeBlock, StructureStubIn
 
 bool InlineAccess::generateStringLength(CodeBlock* codeBlock, StructureStubInfo& stubInfo)
 {
+    ASSERT_UNUSED(codeBlock, !codeBlock->useDataIC());
     ASSERT_UNUSED(codeBlock, isCacheableStringLength(codeBlock, stubInfo));
 
     if (!stubInfo.hasConstantIdentifier)
@@ -416,7 +418,7 @@ void InlineAccess::rewireStubAsJumpInAccessNotUsingInlineAccess(CodeBlock* codeB
         return;
     }
 
-    CCallHelpers::emitJITCodeOver(stubInfo.start.retagged<JSInternalPtrTag>(), scopedLambda<void(CCallHelpers&)>([&](CCallHelpers& jit) {
+    CCallHelpers::emitJITCodeOver(stubInfo.startLocation.retagged<JSInternalPtrTag>(), scopedLambda<void(CCallHelpers&)>([&](CCallHelpers& jit) {
         // We don't need a nop sled here because nobody should be jumping into the middle of an IC.
         auto jump = jit.jump();
         jit.addLinkTask([=] (LinkBuffer& linkBuffer) {
@@ -433,7 +435,7 @@ void InlineAccess::rewireStubAsJumpInAccess(CodeBlock* codeBlock, StructureStubI
         return;
     }
 
-    CCallHelpers::emitJITCodeOver(stubInfo.start.retagged<JSInternalPtrTag>(), scopedLambda<void(CCallHelpers&)>([&](CCallHelpers& jit) {
+    CCallHelpers::emitJITCodeOver(stubInfo.startLocation.retagged<JSInternalPtrTag>(), scopedLambda<void(CCallHelpers&)>([&](CCallHelpers& jit) {
         // We don't need a nop sled here because nobody should be jumping into the middle of an IC.
         auto jump = jit.jump();
         jit.addLinkTask([=] (LinkBuffer& linkBuffer) {
@@ -450,7 +452,7 @@ void InlineAccess::resetStubAsJumpInAccess(CodeBlock* codeBlock, StructureStubIn
         return;
     }
 
-    CCallHelpers::emitJITCodeOver(stubInfo.start.retagged<JSInternalPtrTag>(), scopedLambda<void(CCallHelpers&)>([&](CCallHelpers& jit) {
+    CCallHelpers::emitJITCodeOver(stubInfo.startLocation.retagged<JSInternalPtrTag>(), scopedLambda<void(CCallHelpers&)>([&](CCallHelpers& jit) {
         // We don't need a nop sled here because nobody should be jumping into the middle of an IC.
         auto jump = jit.jump();
         auto slowPathStartLocation = stubInfo.slowPathStartLocation;

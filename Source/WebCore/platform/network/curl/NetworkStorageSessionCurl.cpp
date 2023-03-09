@@ -53,12 +53,12 @@ static String defaultCookieJarPath()
 #endif
 }
 
-static String cookiesForSession(const NetworkStorageSession& session, const URL& firstParty, const URL& url, bool forHTTPHeader)
+static std::pair<String, bool> cookiesForSession(const NetworkStorageSession& session, const URL& firstParty, const URL& url, bool forHTTPHeader, IncludeSecureCookies includeSecureCookies)
 {
     StringBuilder cookies;
-
+    bool didAccessSecureCookies = false;
     auto searchHTTPOnly = forHTTPHeader ? std::nullopt : std::optional<bool> { false };
-    auto secure = url.protocolIs("https"_s) ? std::nullopt : std::optional<bool> { false };
+    auto secure = includeSecureCookies == IncludeSecureCookies::Yes ? std::nullopt : std::optional<bool> { false };
 
     if (auto result = session.cookieDatabase().searchCookies(firstParty, url, searchHTTPOnly, secure, std::nullopt)) {
         for (const auto& cookie : *result) {
@@ -68,11 +68,13 @@ static String cookiesForSession(const NetworkStorageSession& session, const URL&
                 cookies.append(cookie.name);
                 cookies.append("=");
             }
+            if (cookie.secure)
+                didAccessSecureCookies = true;
             cookies.append(cookie.value);
         }
     }
 
-    return cookies.toString();
+    return { cookies.toString(), didAccessSecureCookies };
 }
 
 NetworkStorageSession::NetworkStorageSession(PAL::SessionID sessionID)
@@ -97,9 +99,9 @@ CookieJarDB& NetworkStorageSession::cookieDatabase() const
     return m_cookieDatabase;
 }
 
-void NetworkStorageSession::setCookiesFromDOM(const URL& firstParty, const SameSiteInfo&, const URL& url, std::optional<FrameIdentifier>, std::optional<PageIdentifier> pageID, ShouldAskITP, const String& value, ShouldRelaxThirdPartyCookieBlocking) const
+void NetworkStorageSession::setCookiesFromDOM(const URL& firstParty, const SameSiteInfo&, const URL& url, std::optional<FrameIdentifier>, std::optional<PageIdentifier> pageID, ApplyTrackingPrevention, const String& value, ShouldRelaxThirdPartyCookieBlocking) const
 {
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     std::optional<Seconds> cappedLifetime = clientSideCookieCap(RegistrableDomain { firstParty }, pageID);
 #else
     UNUSED_PARAM(pageID);
@@ -135,10 +137,9 @@ HTTPCookieAcceptPolicy NetworkStorageSession::cookieAcceptPolicy() const
     return HTTPCookieAcceptPolicy::OnlyFromMainDocumentDomain;
 }
 
-std::pair<String, bool> NetworkStorageSession::cookiesForDOM(const URL& firstParty, const SameSiteInfo&, const URL& url, std::optional<FrameIdentifier>, std::optional<PageIdentifier>, IncludeSecureCookies, ShouldAskITP, ShouldRelaxThirdPartyCookieBlocking) const
+std::pair<String, bool> NetworkStorageSession::cookiesForDOM(const URL& firstParty, const SameSiteInfo&, const URL& url, std::optional<FrameIdentifier>, std::optional<PageIdentifier>, IncludeSecureCookies includeSecureCookies, ApplyTrackingPrevention, ShouldRelaxThirdPartyCookieBlocking) const
 {
-    // FIXME: This should filter secure cookies out if the caller requests it.
-    return { cookiesForSession(*this, firstParty, url, false), false };
+    return cookiesForSession(*this, firstParty, url, false, includeSecureCookies);
 }
 
 void NetworkStorageSession::setCookies(const Vector<Cookie>& cookies, const URL&, const URL& /* mainDocumentURL */)
@@ -206,7 +207,7 @@ void NetworkStorageSession::hasCookies(const RegistrableDomain&, CompletionHandl
     completionHandler(false);
 }
 
-bool NetworkStorageSession::getRawCookies(const URL& firstParty, const SameSiteInfo&, const URL& url, std::optional<FrameIdentifier>, std::optional<PageIdentifier>, ShouldAskITP, ShouldRelaxThirdPartyCookieBlocking, Vector<Cookie>& rawCookies) const
+bool NetworkStorageSession::getRawCookies(const URL& firstParty, const SameSiteInfo&, const URL& url, std::optional<FrameIdentifier>, std::optional<PageIdentifier>, ApplyTrackingPrevention, ShouldRelaxThirdPartyCookieBlocking, Vector<Cookie>& rawCookies) const
 {
     auto cookies = cookieDatabase().searchCookies(firstParty, url, std::nullopt, std::nullopt, std::nullopt);
     if (!cookies)
@@ -216,15 +217,14 @@ bool NetworkStorageSession::getRawCookies(const URL& firstParty, const SameSiteI
     return true;
 }
 
-std::pair<String, bool> NetworkStorageSession::cookieRequestHeaderFieldValue(const URL& firstParty, const SameSiteInfo&, const URL& url, std::optional<FrameIdentifier>, std::optional<PageIdentifier>, IncludeSecureCookies, ShouldAskITP, ShouldRelaxThirdPartyCookieBlocking) const
+std::pair<String, bool> NetworkStorageSession::cookieRequestHeaderFieldValue(const URL& firstParty, const SameSiteInfo&, const URL& url, std::optional<FrameIdentifier>, std::optional<PageIdentifier>, IncludeSecureCookies includeSecureCookies, ApplyTrackingPrevention, ShouldRelaxThirdPartyCookieBlocking) const
 {
-    // FIXME: This should filter secure cookies out if the caller requests it.
-    return { cookiesForSession(*this, firstParty, url, true), false };
+    return cookiesForSession(*this, firstParty, url, true, includeSecureCookies);
 }
 
 std::pair<String, bool> NetworkStorageSession::cookieRequestHeaderFieldValue(const CookieRequestHeaderFieldProxy& headerFieldProxy) const
 {
-    return cookieRequestHeaderFieldValue(headerFieldProxy.firstParty, headerFieldProxy.sameSiteInfo, headerFieldProxy.url, headerFieldProxy.frameID, headerFieldProxy.pageID, headerFieldProxy.includeSecureCookies, ShouldAskITP::Yes, ShouldRelaxThirdPartyCookieBlocking::No);
+    return cookieRequestHeaderFieldValue(headerFieldProxy.firstParty, headerFieldProxy.sameSiteInfo, headerFieldProxy.url, headerFieldProxy.frameID, headerFieldProxy.pageID, headerFieldProxy.includeSecureCookies, ApplyTrackingPrevention::Yes, ShouldRelaxThirdPartyCookieBlocking::No);
 }
 
 void NetworkStorageSession::setProxySettings(const CurlProxySettings& proxySettings)

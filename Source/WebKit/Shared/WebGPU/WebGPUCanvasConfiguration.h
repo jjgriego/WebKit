@@ -27,9 +27,7 @@
 
 #if ENABLE(GPU_PROCESS)
 
-#include "WebGPUExtent3D.h"
 #include "WebGPUIdentifier.h"
-#include <cstdint>
 #include <optional>
 #include <pal/graphics/WebGPU/WebGPUCanvasCompositingAlphaMode.h>
 #include <pal/graphics/WebGPU/WebGPUPredefinedColorSpace.h>
@@ -48,58 +46,6 @@ struct CanvasConfiguration {
     Vector<PAL::WebGPU::TextureFormat> viewFormats;
     PAL::WebGPU::PredefinedColorSpace colorSpace { PAL::WebGPU::PredefinedColorSpace::SRGB };
     PAL::WebGPU::CanvasCompositingAlphaMode compositingAlphaMode { PAL::WebGPU::CanvasCompositingAlphaMode::Opaque };
-    std::optional<Extent3D> size;
-
-    template<class Encoder> void encode(Encoder& encoder) const
-    {
-        encoder << device;
-        encoder << format;
-        encoder << usage;
-        encoder << viewFormats;
-        encoder << colorSpace;
-        encoder << compositingAlphaMode;
-        encoder << size;
-    }
-
-    template<class Decoder> static std::optional<CanvasConfiguration> decode(Decoder& decoder)
-    {
-        std::optional<WebGPUIdentifier> device;
-        decoder >> device;
-        if (!device)
-            return std::nullopt;
-
-        std::optional<PAL::WebGPU::TextureFormat> format;
-        decoder >> format;
-        if (!format)
-            return std::nullopt;
-
-        std::optional<PAL::WebGPU::TextureUsageFlags> usage;
-        decoder >> usage;
-        if (!usage)
-            return std::nullopt;
-
-        std::optional<Vector<PAL::WebGPU::TextureFormat>> viewFormats;
-        decoder >> viewFormats;
-        if (!viewFormats)
-            return std::nullopt;
-
-        std::optional<PAL::WebGPU::PredefinedColorSpace> colorSpace;
-        decoder >> colorSpace;
-        if (!colorSpace)
-            return std::nullopt;
-
-        std::optional<PAL::WebGPU::CanvasCompositingAlphaMode> compositingAlphaMode;
-        decoder >> compositingAlphaMode;
-        if (!compositingAlphaMode)
-            return std::nullopt;
-
-        std::optional<std::optional<Extent3D>> size;
-        decoder >> size;
-        if (!size)
-            return std::nullopt;
-
-        return { { WTFMove(*device), WTFMove(*format), WTFMove(*usage), WTFMove(*viewFormats), WTFMove(*colorSpace), WTFMove(*compositingAlphaMode), WTFMove(*size) } };
-    }
 };
 
 } // namespace WebKit::WebGPU

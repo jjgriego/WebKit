@@ -33,6 +33,7 @@ import re
 import socket
 import sys
 import urllib
+from pathlib import Path
 
 if sys.version_info < (3, 5):
     print('ERROR: Please use Python 3. This code is not compatible with Python 2.')
@@ -205,6 +206,16 @@ class KillOldProcesses(shell.Compile):
     command = ["python3", "Tools/CISupport/kill-old-processes", "buildbot"]
 
 
+class PruneCoreSymbolicationdCacheIfTooLarge(shell.ShellCommand):
+    name = "prune-coresymbolicationd-cache-if-too-large"
+    description = ["pruning coresymbolicationd cache to < 10GB"]
+    descriptionDone = ["pruned coresymbolicationd cache"]
+    flunkOnFailure = False
+    haltOnFailure = False
+    command = ["python3", "Tools/Scripts/delete-if-too-large",
+               "/System/Library/Caches/com.apple.coresymbolicationd"]
+
+
 class TriggerCrashLogSubmission(shell.Compile):
     name = "trigger-crash-log-submission"
     description = ["triggering crash log submission"]
@@ -292,18 +303,12 @@ def appendCustomTestingFlags(step, platform, device_model):
 
 
 class CompileWebKit(shell.Compile):
-    command = ["perl", "Tools/Scripts/build-webkit", WithProperties("--%(configuration)s")]
+    command = ["perl", "Tools/Scripts/build-webkit", "--no-fatal-warnings", WithProperties("--%(configuration)s")]
     env = {'MFLAGS': ''}
     name = "compile-webkit"
     description = ["compiling"]
     descriptionDone = ["compiled"]
     warningPattern = ".*arning: .*"
-
-    def __init__(self, **kwargs):
-        # https://bugs.webkit.org/show_bug.cgi?id=239455: The timeout needs to be >20 min to
-        # work around log output delays on slower machines.
-        kwargs.setdefault('timeout', 60 * 30)
-        super().__init__(**kwargs)
 
     def start(self):
         platform = self.getProperty('platform')
@@ -316,15 +321,23 @@ class CompileWebKit(shell.Compile):
 
         if additionalArguments:
             self.setCommand(self.command + additionalArguments)
-        if platform in ('mac', 'ios', 'tvos', 'watchos') and architecture:
-            self.setCommand(self.command + ['ARCHS=' + architecture])
-            self.setCommand(self.command + ['ONLY_ACTIVE_ARCH=NO'])
-        if platform in ('mac', 'ios', 'tvos', 'watchos') and buildOnly:
-            # For build-only bots, the expectation is that tests will be run on separate machines,
-            # so we need to package debug info as dSYMs. Only generating line tables makes
-            # this much faster than full debug info, and crash logs still have line numbers.
-            self.setCommand(self.command + ['DEBUG_INFORMATION_FORMAT=dwarf-with-dsym'])
-            self.setCommand(self.command + ['CLANG_DEBUG_INFORMATION_LEVEL=line-tables-only'])
+        if platform in ('mac', 'ios', 'tvos', 'watchos'):
+            # FIXME: Once WK_VALIDATE_DEPENDENCIES is set via xcconfigs, it can
+            # be removed here. We can't have build-webkit pass this by default
+            # without invalidating local builds made by Xcode, and we set it
+            # via xcconfigs until all building of Xcode-based webkit is done in
+            # workspaces (rdar://88135402).
+            self.setCommand(self.command + ['WK_VALIDATE_DEPENDENCIES=YES'])
+            if architecture:
+                self.setCommand(self.command + ['ARCHS=' + architecture])
+                self.setCommand(self.command + ['ONLY_ACTIVE_ARCH=NO'])
+            if buildOnly:
+                # For build-only bots, the expectation is that tests will be run on separate machines,
+                # so we need to package debug info as dSYMs. Only generating line tables makes
+                # this much faster than full debug info, and crash logs still have line numbers.
+                # Some projects (namely lldbWebKitTester) require full debug info, and may override this.
+                self.setCommand(self.command + ['DEBUG_INFORMATION_FORMAT=dwarf-with-dsym'])
+                self.setCommand(self.command + ['CLANG_DEBUG_INFORMATION_LEVEL=$(WK_OVERRIDE_DEBUG_INFORMATION_LEVEL:default=line-tables-only)'])
         if platform == 'gtk':
             prefix = os.path.join("/app", "webkit", "WebKitBuild", self.getProperty("configuration").title(), "install")
             self.setCommand(self.command + [f'--prefix={prefix}'])
@@ -332,6 +345,17 @@ class CompileWebKit(shell.Compile):
         appendCustomBuildFlags(self, platform, self.getProperty('fullPlatform'))
 
         return shell.Compile.start(self)
+
+    def buildCommandKwargs(self, warnings):
+        kwargs = super(CompileWebKit, self).buildCommandKwargs(warnings)
+        # https://bugs.webkit.org/show_bug.cgi?id=239455: The timeout needs to be >20 min to
+        # work around log output delays on slower machines.
+        # https://bugs.webkit.org/show_bug.cgi?id=247506: Only applies to Xcode 12.x.
+        if self.getProperty('fullPlatform') == 'mac-bigsur':
+            kwargs['timeout'] = 60 * 60
+        else:
+            kwargs['timeout'] = 60 * 30
+        return kwargs
 
     def parseOutputLine(self, line):
         if "arning:" in line:
@@ -528,7 +552,7 @@ class RunJavaScriptCoreTests(TestWithFailureCount):
         # high enough.
         self.command += self.commandExtra
         # Currently run-javascriptcore-test doesn't support run javascript core test binaries list below remotely
-        if architecture in ['mips', 'armv7', 'aarch64']:
+        if architecture in ['mips', 'aarch64'] or platform in ['win']:
             self.command += ['--no-testmasm', '--no-testair', '--no-testb3', '--no-testdfg', '--no-testapi']
         # Linux bots have currently problems with JSC tests that try to use large amounts of memory.
         # Check: https://bugs.webkit.org/show_bug.cgi?id=175140
@@ -705,6 +729,7 @@ class RunDashboardTests(RunWebKitTests):
 
 class RunAPITests(TestWithFailureCount):
     name = "run-api-tests"
+    VALID_ADDITIONAL_ARGUMENTS_LIST = ["--remote-layer-tree", "--use-gpu-process"]
     description = ["api tests running"]
     descriptionDone = ["api-tests"]
     jsonFileName = "api_test_results.json"
@@ -735,6 +760,10 @@ class RunAPITests(TestWithFailureCount):
         self.addLogObserver('stdio', self.log_observer)
         self.failedTestCount = 0
         appendCustomTestingFlags(self, self.getProperty('platform'), self.getProperty('device_model'))
+        additionalArguments = self.getProperty("additionalArguments")
+        for additionalArgument in additionalArguments or []:
+            if additionalArgument in self.VALID_ADDITIONAL_ARGUMENTS_LIST:
+                self.command += [additionalArgument]
         return shell.Test.start(self)
 
     def countFailures(self, cmd):
@@ -1128,7 +1157,7 @@ class RunBenchmarkTests(shell.Test):
     name = "benchmark-test"
     description = ["benchmark tests running"]
     descriptionDone = ["benchmark tests"]
-    command = ["python", "Tools/Scripts/browserperfdash-benchmark", "--allplans",
+    command = ["python3", "Tools/Scripts/browserperfdash-benchmark", "--allplans",
                "--config-file", "../../browserperfdash-benchmark-config.txt",
                "--browser-version", WithProperties("%(archive_revision)s")]
 
@@ -1233,7 +1262,7 @@ class PrintConfiguration(steps.ShellSequence):
     warnOnFailure = False
     logEnviron = False
     command_list_generic = [['hostname']]
-    command_list_apple = [['df', '-hl'], ['date'], ['sw_vers'], ['system_profiler', 'SPSoftwareDataType', 'SPHardwareDataType'], ['xcodebuild', '-sdk', '-version']]
+    command_list_apple = [['df', '-hl'], ['date'], ['sw_vers'], ['system_profiler', 'SPSoftwareDataType', 'SPHardwareDataType'], ['/bin/sh', '-c', 'echo TimezoneVers: $(cat /usr/share/zoneinfo/+VERSION)'], ['xcodebuild', '-sdk', '-version']]
     command_list_linux = [['df', '-hl'], ['date'], ['uname', '-a'], ['uptime']]
     command_list_win = [['df', '-hl']]
 

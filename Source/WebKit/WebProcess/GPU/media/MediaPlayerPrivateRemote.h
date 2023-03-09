@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(GPU_PROCESS)
+#if ENABLE(GPU_PROCESS) && ENABLE(VIDEO)
 
 #include "AudioTrackPrivateRemote.h"
 #include "LayerHostingContext.h"
@@ -41,7 +41,6 @@
 #include "VideoTrackPrivateRemote.h"
 #include <WebCore/MediaPlayerPrivate.h>
 #include <WebCore/SecurityOriginData.h>
-#include <WebCore/VideoFrame.h>
 #include <WebCore/VideoFrameMetadata.h>
 #include <wtf/LoggerHelper.h>
 #include <wtf/MediaTime.h>
@@ -60,6 +59,7 @@ struct GenericCueData;
 class ISOWebVTTCue;
 class SerializedPlatformDataCueValue;
 class VideoLayerManager;
+class VideoFrame;
 
 #if PLATFORM(COCOA)
 class PixelBufferConformerCV;
@@ -93,7 +93,7 @@ public:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
     WebCore::MediaPlayerEnums::MediaEngineIdentifier remoteEngineIdentifier() const { return m_remoteEngineIdentifier; }
-    WebCore::MediaPlayerIdentifier itentifier() const { return m_id; }
+    WebCore::MediaPlayerIdentifier identifier() const final { return m_id; }
     IPC::Connection& connection() const { return m_manager.gpuProcessConnection().connection(); }
     WebCore::MediaPlayer* player() const { return m_player.get(); }
 
@@ -108,14 +108,16 @@ public:
     void durationChanged(RemoteMediaPlayerState&&);
     void rateChanged(double);
     void playbackStateChanged(bool, MediaTime&&, MonotonicTime&&);
-    void engineFailedToLoad(long);
+    void engineFailedToLoad(int64_t);
     void updateCachedState(RemoteMediaPlayerState&&);
     void characteristicChanged(RemoteMediaPlayerState&&);
     void sizeChanged(WebCore::FloatSize);
     void firstVideoFrameAvailable();
     void renderingModeChanged();
 #if PLATFORM(COCOA)
-    void setVideoInlineSizeFenced(const WebCore::FloatSize&, const WTF::MachSendRight&);
+    void layerHostingContextIdChanged(std::optional<WebKit::LayerHostingContextID>&&, const WebCore::IntSize&);
+    WebCore::FloatSize videoInlineSize() const final { return m_videoInlineSize; }
+    void setVideoInlineSizeFenced(const WebCore::FloatSize&, const WTF::MachSendRight&) final;
 #endif
 
     void currentTimeChanged(const MediaTime&, const MonotonicTime&, bool);
@@ -177,11 +179,14 @@ public:
     void getRawCookies(const URL&, WebCore::MediaPlayerClient::GetRawCookiesCallback&&) const;
 #endif
 
+    WebCore::FloatSize naturalSize() const final;
+
 #if !RELEASE_LOG_DISABLED
     const void* mediaPlayerLogIdentifier() { return logIdentifier(); }
     const Logger& mediaPlayerLogger() { return logger(); }
 #endif
-
+    LayerHostingContextID hostingContextID()const override;
+    void setLayerHostingContextID(LayerHostingContextID  inID);
 private:
 
 #if !RELEASE_LOG_DISABLED
@@ -246,8 +251,6 @@ private:
 
     bool canSaveMediaData() const final;
 
-    WebCore::FloatSize naturalSize() const final;
-
     bool hasVideo() const final;
     bool hasAudio() const final;
 
@@ -290,10 +293,15 @@ private:
     bool didLoadingProgress() const final;
     void didLoadingProgressAsync(WebCore::MediaPlayer::DidLoadingProgressCompletionHandler&&) const final;
 
+    void setPresentationSize(const WebCore::IntSize&) final;
+
     void paint(WebCore::GraphicsContext&, const WebCore::FloatRect&) final;
     void paintCurrentFrameInContext(WebCore::GraphicsContext&, const WebCore::FloatRect&) final;
 #if !USE(AVFOUNDATION)
     bool copyVideoTextureToPlatformTexture(WebCore::GraphicsContextGL*, PlatformGLObject, GCGLenum, GCGLint, GCGLenum, GCGLenum, GCGLenum, bool, bool) final;
+#endif
+#if PLATFORM(COCOA) && !HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)
+    void willBeAskedToPaintGL() final;
 #endif
     RefPtr<WebCore::VideoFrame> videoFrameForCurrentTime() final;
     RefPtr<WebCore::NativeImage> nativeImageForCurrentTime() final;
@@ -301,8 +309,6 @@ private:
 #if PLATFORM(COCOA)
     bool shouldGetNativeImageForCanvasDrawing() const final { return false; }
 #endif
-
-    WebCore::MediaPlayerIdentifier identifier() const final;
 
     void setPreload(WebCore::MediaPlayer::Preload) final;
 
@@ -328,9 +334,8 @@ private:
 
     void setShouldMaintainAspectRatio(bool) final;
 
-    bool hasSingleSecurityOrigin() const final;
     bool didPassCORSAccessCheck() const final;
-    std::optional<bool> wouldTaintOrigin(const WebCore::SecurityOrigin&) const final;
+    std::optional<bool> isCrossOrigin(const WebCore::SecurityOrigin&) const final;
 
     WebCore::MediaPlayer::MovieLoadType movieLoadType() const final;
 
@@ -416,6 +421,8 @@ private:
 
     void playerContentBoxRectChanged(const WebCore::LayoutRect&) final;
 
+    void setShouldDisableHDR(bool) final;
+
 #if PLATFORM(COCOA)
     void pushVideoFrameMetadata(WebCore::VideoFrameMetadata&&, RemoteVideoFrameProxy::Properties&&);
 #endif
@@ -424,9 +431,9 @@ private:
     WeakPtr<WebCore::MediaPlayer> m_player;
     Ref<WebCore::PlatformMediaResourceLoader> m_mediaResourceLoader;
 #if PLATFORM(COCOA)
-    UniqueRef<WebCore::VideoLayerManager> m_videoLayerManager;
+    mutable UniqueRef<WebCore::VideoLayerManager> m_videoLayerManager;
 #endif
-    PlatformLayerContainer m_videoLayer;
+    mutable PlatformLayerContainer m_videoLayer;
 
     RemoteMediaPlayerManager& m_manager;
     WebCore::MediaPlayerEnums::MediaEngineIdentifier m_remoteEngineIdentifier;
@@ -450,7 +457,7 @@ private:
     HashMap<TrackPrivateRemoteIdentifier, Ref<TextTrackPrivateRemote>> m_textTracks;
 
     WebCore::SecurityOriginData m_documentSecurityOrigin;
-    mutable HashMap<WebCore::SecurityOriginData, std::optional<bool>> m_wouldTaintOriginCache;
+    mutable HashMap<WebCore::SecurityOriginData, std::optional<bool>> m_isCrossOriginCache;
 
     MediaTime m_cachedMediaTime;
     MonotonicTime m_cachedMediaTimeQueryTime;
@@ -473,10 +480,15 @@ private:
 #if PLATFORM(COCOA)
     RefPtr<RemoteVideoFrameProxy> m_videoFrameGatheredWithVideoFrameMetadata;
 #endif
+    LayerHostingContextID m_layerHostingContextID { 0 };
+    WebCore::FloatSize m_videoInlineSize;
     std::optional<WebCore::VideoFrameMetadata> m_videoFrameMetadata;
     bool m_isGatheringVideoFrameMetadata { false };
+#if PLATFORM(COCOA) && !HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)
+    bool m_hasBeenAskedToPaintGL { false };
+#endif
 };
 
 } // namespace WebKit
 
-#endif
+#endif // ENABLE(GPU_PROCESS) && ENABLE(VIDEO)

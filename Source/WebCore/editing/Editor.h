@@ -111,7 +111,7 @@ enum class MailBlockquoteHandling {
 class HTMLAttachmentElement;
 #endif
 
-enum class TemporarySelectionOption : uint8_t {
+enum class TemporarySelectionOption : uint16_t {
     RevealSelection = 1 << 0,
     DoNotSetFocus = 1 << 1,
 
@@ -128,6 +128,8 @@ enum class TemporarySelectionOption : uint8_t {
     RevealSelectionBounds = 1 << 6,
 
     UserTriggered = 1 << 7,
+    
+    ForceCenterScroll = 1 << 8,
 };
 
 class TemporarySelectionChange {
@@ -193,8 +195,8 @@ public:
     WEBCORE_EXPORT bool canEdit() const;
     WEBCORE_EXPORT bool canEditRichly() const;
 
-    bool canDHTMLCut();
-    bool canDHTMLCopy();
+    WEBCORE_EXPORT bool canDHTMLCut();
+    WEBCORE_EXPORT bool canDHTMLCopy();
     WEBCORE_EXPORT bool canDHTMLPaste();
     bool tryDHTMLCopy();
     bool tryDHTMLCut();
@@ -205,6 +207,7 @@ public:
     WEBCORE_EXPORT bool canDelete() const;
     WEBCORE_EXPORT bool canSmartCopyOrDelete();
     bool shouldSmartDelete();
+    bool canCopyFont() const;
 
     enum class FromMenuOrKeyBinding : bool { No, Yes };
     WEBCORE_EXPORT void cut(FromMenuOrKeyBinding = FromMenuOrKeyBinding::No);
@@ -367,7 +370,7 @@ public:
     bool shouldBeginEditing(const SimpleRange&);
     bool shouldEndEditing(const SimpleRange&);
 
-    void clearUndoRedoOperations();
+    WEBCORE_EXPORT void clearUndoRedoOperations();
     bool canUndo() const;
     void undo();
     bool canRedo() const;
@@ -380,9 +383,6 @@ public:
     void willWriteSelectionToPasteboard(const std::optional<SimpleRange>&);
     void didWriteSelectionToPasteboard();
 
-    void showFontPanel();
-    void showStylesPanel();
-    void showColorPanel();
     void toggleBold();
     void toggleUnderline();
     WEBCORE_EXPORT void setBaseWritingDirection(WritingDirection);
@@ -401,7 +401,7 @@ public:
     WEBCORE_EXPORT void confirmComposition(const String&); // if no existing composition, replaces selection
     void confirmOrCancelCompositionAndNotifyClient();
     WEBCORE_EXPORT void cancelComposition();
-    bool cancelCompositionIfSelectionIsInvalid();
+    WEBCORE_EXPORT bool cancelCompositionIfSelectionIsInvalid();
     WEBCORE_EXPORT std::optional<SimpleRange> compositionRange() const;
     WEBCORE_EXPORT bool getCompositionSelection(unsigned& selectionStart, unsigned& selectionEnd) const;
 
@@ -433,7 +433,7 @@ public:
 
     EditingBehavior behavior() const;
 
-    std::optional<SimpleRange> selectedRange();
+    WEBCORE_EXPORT std::optional<SimpleRange> selectedRange();
 
 #if PLATFORM(IOS_FAMILY)
     WEBCORE_EXPORT void confirmMarkedText();
@@ -634,8 +634,6 @@ private:
 
     std::optional<SimpleRange> adjustedSelectionRange();
 
-    bool isInSubframeWithoutUserInteraction() const;
-
 #if PLATFORM(COCOA)
     RefPtr<SharedBuffer> selectionInWebArchiveFormat();
     String selectionInHTMLFormat();
@@ -650,9 +648,6 @@ private:
 #if ENABLE(ATTACHMENT_ELEMENT)
     void notifyClientOfAttachmentUpdates();
 #endif
-
-    bool stopTextFieldDidBeginEditingTimer();
-    void textFieldDidBeginEditingTimerFired();
 
     String platformContentTypeForBlobType(const String& type) const;
 
@@ -696,8 +691,6 @@ private:
     DeferrableOneShotTimer m_telephoneNumberDetectionUpdateTimer;
     Vector<SimpleRange> m_detectedTelephoneNumberRanges;
 #endif
-
-    Timer m_textFieldDidBeginEditingTimer;
 
     mutable std::unique_ptr<ScrollView::ProhibitScrollingWhenChangingContentSizeForScope> m_prohibitScrollingDueToContentSizeChangesWhileTyping;
 

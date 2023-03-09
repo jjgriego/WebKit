@@ -51,6 +51,13 @@ IOSurfacePool::IOSurfacePool()
 {
 }
 
+IOSurfacePool::~IOSurfacePool()
+{
+    callOnMainRunLoopAndWait([&] {
+        discardAllSurfaces();
+    });
+}
+
 IOSurfacePool& IOSurfacePool::sharedPool()
 {
     static LazyNeverDestroyed<IOSurfacePool> pool;
@@ -68,7 +75,7 @@ Ref<IOSurfacePool> IOSurfacePool::create()
 
 static bool surfaceMatchesParameters(IOSurface& surface, IntSize requestedSize, const DestinationColorSpace& colorSpace, IOSurface::Format format)
 {
-    if (format != surface.format())
+    if (!surface.hasFormat(format))
         return false;
     if (colorSpace != surface.colorSpace())
         return false;
@@ -82,7 +89,7 @@ void IOSurfacePool::willAddSurface(IOSurface& surface, bool inUse)
     CachedSurfaceDetails& details = m_surfaceDetails.add(&surface, CachedSurfaceDetails()).iterator->value;
     details.resetLastUseTime();
 
-    surface.releaseGraphicsContext();
+    surface.releasePlatformContext();
 
     size_t surfaceBytes = surface.totalBytes();
 

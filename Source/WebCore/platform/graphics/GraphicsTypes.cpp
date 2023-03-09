@@ -72,8 +72,8 @@ static constexpr ASCIILiteral blendOperatorNames[] = {
     "plus-darker"_s,
     "plus-lighter"_s
 };
-const uint8_t numCompositeOperatorNames = WTF_ARRAY_LENGTH(compositeOperatorNames);
-const uint8_t numBlendOperatorNames = WTF_ARRAY_LENGTH(blendOperatorNames);
+const uint8_t numCompositeOperatorNames = std::size(compositeOperatorNames);
+const uint8_t numBlendOperatorNames = std::size(blendOperatorNames);
 
 bool parseBlendMode(const String& s, BlendMode& blendMode)
 {
@@ -149,6 +149,22 @@ TextStream& operator<<(TextStream& ts, const DropShadow& dropShadow)
     ts.dumpProperty("shadow-blur", dropShadow.blurRadius);
     ts.dumpProperty("shadow-color", dropShadow.color);
     ts.dumpProperty("shadows-use-legacy-radius", dropShadow.radiusMode == ShadowRadiusMode::Legacy);
+    return ts;
+}
+
+TextStream& operator<<(TextStream& ts, GradientSpreadMethod spreadMethod)
+{
+    switch (spreadMethod) {
+    case GradientSpreadMethod::Pad:
+        ts << "pad";
+        break;
+    case GradientSpreadMethod::Reflect:
+        ts << "reflect";
+        break;
+    case GradientSpreadMethod::Repeat:
+        ts << "repeat";
+        break;
+    }
     return ts;
 }
 

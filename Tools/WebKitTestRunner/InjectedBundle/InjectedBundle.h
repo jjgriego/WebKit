@@ -105,6 +105,9 @@ public:
     void setMockGeolocationPositionUnavailableError(WKStringRef errorMessage);
     bool isGeolocationProviderActive() const;
 
+    // Screen Wake Lock.
+    void setScreenWakeLockPermission(bool);
+
     // MediaStream.
     void setUserMediaPermission(bool);
     void resetUserMediaPermission();
@@ -151,6 +154,7 @@ public:
     size_t userScriptInjectedCount() const { return m_userScriptInjectedCount; }
 
     void clearResourceLoadStatistics();
+    void reloadFromOrigin();
 
 private:
     InjectedBundle() = default;
@@ -167,6 +171,8 @@ private:
     void didReceiveMessageToPage(WKBundlePageRef, WKStringRef messageName, WKTypeRef messageBody);
 
     void setUpInjectedBundleClients(WKBundlePageRef);
+
+    void setAllowedHosts(WKDictionaryRef settings);
 
     void platformInitialize(WKTypeRef initializationUserData);
 

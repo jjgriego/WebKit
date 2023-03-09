@@ -2,22 +2,24 @@ kind: junction
 sources:
 - kind: git_tag
   url: gitlab_com:freedesktop-sdk/freedesktop-sdk.git
-  track: 'release/21.08'
-  ref: freedesktop-sdk-21.08.13-31-g21fed0ebe165b748f4bbf1edd0f275dbabc26086
+  track: 'release/22.08'
+  ref: freedesktop-sdk-22.08.7-86-g200f2128224a8811b5e73341f8f3382c2d7fd464
 - kind: patch
-  path: patches/fdo-0001-Bump-libnice-to-current-git-master-HEAD.patch
+  path: patches/fdo-0001-pipewire-base-Disable-AEC-module.patch
 - kind: patch
-  path: patches/fdo-0001-pango-Bump-to-1.50.4.patch
+  path: patches/fdo-0001-libnice-Bump-to-0.1.21.patch
 - kind: patch
-  path: patches/fdo-0001-gdk-pixbuf-Remove-invalid-meson-options.patch
+  path: patches/fdo-0001-gst-plugins-bad-Add-support-Kate.patch
 - kind: patch
-  path: patches/fdo-0001-gst-plugins-bad-Remove-invalid-meson-option.patch
+  path: patches/fdo-0002-ffmpeg-Support-more-codecs.patch
 - kind: patch
-  path: patches/fdo-0001-gobject-introspection-Bump-to-1.72.patch
+  path: patches/fdo-0003-gst-plugins-bad-Support-for-updated-webrtc-audio-pro.patch
 - kind: patch
-  path: patches/fdo-0002-meson-Bump-to-1.62.patch
+  path: patches/fdo-0004-gst-plugins-ugly-Enable-x264-encoder.patch
 - kind: patch
-  path: patches/fdo-0001-pipewire-base-Track-master-branch.patch
+  path: patches/fdo-0005-GStreamer-Bump-to-1.22.0.patch
+- kind: patch
+  path: patches/fdo-0006-gst-plugins-bad-Enable-soundtouch.patch
 config:
   options:
     target_arch: '%{arch}'

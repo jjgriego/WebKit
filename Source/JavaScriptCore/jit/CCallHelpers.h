@@ -95,9 +95,9 @@ private:
     ALWAYS_INLINE void setupStubArgs(std::array<RegType, NumberOfRegisters> destinations, std::array<RegType, NumberOfRegisters> sources)
     {
         if (ASSERT_ENABLED) {
-            RegisterSet set;
+            RegisterSetBuilder set;
             for (RegType dest : destinations)
-                set.set(dest);
+                set.add(dest, IgnoreVectors);
             ASSERT_WITH_MESSAGE(set.numberOfSetRegisters() == NumberOfRegisters, "Destinations should not be aliased.");
         }
 
@@ -118,19 +118,19 @@ private:
 
 #if ASSERT_ENABLED
         auto numUniqueSources = [&] () -> unsigned {
-            RegisterSet set;
+            RegisterSetBuilder set;
             for (auto& pair : pairs) {
                 RegType source = pair.first;
-                set.set(source);
+                set.add(source, IgnoreVectors);
             }
             return set.numberOfSetRegisters();
         };
 
         auto numUniqueDests = [&] () -> unsigned {
-            RegisterSet set;
+            RegisterSetBuilder set;
             for (auto& pair : pairs) {
                 RegType dest = pair.second;
-                set.set(dest);
+                set.add(dest, IgnoreVectors);
             }
             return set.numberOfSetRegisters();
         };
@@ -140,11 +140,11 @@ private:
             RegisterSet freeDestinations;
             for (auto& pair : pairs) {
                 RegType dest = pair.second;
-                freeDestinations.set(dest);
+                freeDestinations.add(dest, IgnoreVectors);
             }
             for (auto& pair : pairs) {
                 RegType source = pair.first;
-                freeDestinations.clear(source);
+                freeDestinations.remove(source);
             }
 
             if (freeDestinations.numberOfSetRegisters()) {
@@ -153,7 +153,7 @@ private:
                     auto& pair = pairs[i];
                     RegType source = pair.first;
                     RegType dest = pair.second;
-                    if (freeDestinations.get(dest)) {
+                    if (freeDestinations.contains(dest, IgnoreVectors)) {
                         move(source, dest);
                         pairs.remove(i);
                         madeMove = true;
@@ -195,15 +195,19 @@ private:
         }
     }
 
-#if CPU(MIPS) || (CPU(ARM_THUMB2) && !CPU(ARM_HARDFP))
+#if CPU(MIPS)
     template<unsigned NumCrossSources, unsigned NumberOfRegisters>
     ALWAYS_INLINE void setupStubCrossArgs(std::array<GPRReg, NumberOfRegisters> destinations, std::array<FPRReg, NumberOfRegisters> sources) {
-        for (unsigned i = 0; i < NumCrossSources; i++) {
-            GPRReg dest = destinations[i];
-            FPRReg source = sources[i];
+        if constexpr (NumCrossSources) {
+            for (unsigned i = 0; i < NumCrossSources; i++) {
+                GPRReg dest = destinations[i];
+                FPRReg source = sources[i];
 
-            moveDouble(source, dest);
+                moveDouble(source, dest);
+            }
         }
+        UNUSED_PARAM(destinations);
+        UNUSED_PARAM(sources);
     }
 #endif
 
@@ -448,7 +452,7 @@ private:
     {
         static_assert(std::is_same<CURRENT_ARGUMENT_TYPE, double>::value, "We should only be passing FPRRegs to a double");
 
-        // MIPS and ARM-hardfp pass FP arguments in FP registers.
+        // MIPS and ARM (hardfp, which we require) pass FP arguments in FP registers.
 #if CPU(MIPS)
         unsigned numberOfFPArgumentRegisters = FPRInfo::numberOfArgumentRegisters;
         unsigned currentFPArgCount = argSourceRegs.argCount(arg);
@@ -459,7 +463,7 @@ private:
             setupArgumentsImpl<OperationType>(updatedArgSourceRegs.addGPRExtraArg().addGPRExtraArg(), args...);
             return;
         }
-#elif CPU(ARM_THUMB2) && CPU(ARM_HARDFP)
+#elif CPU(ARM_THUMB2)
         unsigned numberOfFPArgumentRegisters = FPRInfo::numberOfArgumentRegisters;
         unsigned currentFPArgCount = argSourceRegs.argCount(arg);
 
@@ -470,8 +474,8 @@ private:
         }
 #endif
 
-#if CPU(MIPS) || (CPU(ARM_THUMB2) && !CPU(ARM_HARDFP))
-        // On MIPS and ARM-softfp FP arguments can be passed in GP registers.
+#if CPU(MIPS)
+        // On MIPS arguments can be passed in GP registers.
         unsigned numberOfGPArgumentRegisters = GPRInfo::numberOfArgumentRegisters;
         unsigned currentGPArgCount = argSourceRegs.argCount(GPRInfo::regT0);
         unsigned alignedGPArgCount = roundUpToMultipleOf<2>(currentGPArgCount);
@@ -737,7 +741,7 @@ private:
         static_assert(fprArgsCount<TraitsType>(std::make_index_sequence<TraitsType::arity>()) == numFPRArgs);
 
         setupStubArgs<numGPRSources, GPRReg>(clampArrayToSize<numGPRSources, GPRReg>(argSourceRegs.gprDestinations), clampArrayToSize<numGPRSources, GPRReg>(argSourceRegs.gprSources));
-#if CPU(MIPS) || (CPU(ARM_THUMB2) && !CPU(ARM_HARDFP))
+#if CPU(MIPS)
         setupStubCrossArgs<numCrossSources>(argSourceRegs.crossDestinations, argSourceRegs.crossSources);
 #else
         static_assert(!numCrossSources, "shouldn't be used on this architecture.");
@@ -828,15 +832,17 @@ public:
     {
         RegisterSet preserved;
         if (preservedGPR1 != InvalidGPRReg)
-            preserved.add(preservedGPR1);
+            preserved.add(preservedGPR1, IgnoreVectors);
         if (preservedGPR2 != InvalidGPRReg)
-            preserved.add(preservedGPR2);
+            preserved.add(preservedGPR2, IgnoreVectors);
 
         GPRReg temp1 = selectScratchGPR(preserved);
-        preserved.add(temp1);
+        preserved.add(temp1, IgnoreVectors);
         GPRReg temp2 = selectScratchGPR(preserved);
-        preserved.add(temp2);
+        preserved.add(temp2, IgnoreVectors);
         GPRReg temp3 = selectScratchGPR(preserved);
+
+        ASSERT(!preserved.numberOfSetFPRs());
 
         GPRReg newFramePointer = temp1;
         GPRReg newFrameSizeGPR = temp2;
@@ -938,7 +944,7 @@ public:
     // Leaves behind a pointer to the Packet we should write to in shadowPacket.
     void ensureShadowChickenPacket(VM&, GPRReg shadowPacket, GPRReg scratch1NonArgGPR, GPRReg scratch2);
 
-    static void emitJITCodeOver(MacroAssemblerCodePtr<JSInternalPtrTag> where, ScopedLambda<void(CCallHelpers&)>, const char*);
+    static void emitJITCodeOver(CodePtr<JSInternalPtrTag> where, ScopedLambda<void(CCallHelpers&)>, const char*);
 
     void emitCTIThunkPrologue(bool returnAddressAlreadyTagged = false);
     void emitCTIThunkEpilogue();

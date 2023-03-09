@@ -354,6 +354,21 @@ x++; y++;
 if (condition) doIt();
 ```
 
+[](#linebreaking-chained-assignments) Chained `=` assignments should be broken up into multiple statements.
+
+###### Right:
+
+```cpp
+rightSpacing = totalSpacing / 2;
+leftSpacing = rightSpacing;
+```
+
+###### Wrong:
+
+```cpp
+leftSpacing = rightSpacing = totalSpacing / 2;
+```
+
 [](#linebreaking-else-braces) An `else` statement should go on the same line as a preceding close brace if one is present, else it should line up with the `if` statement.
 
 ###### Right:
@@ -954,6 +969,44 @@ for (Vector<RefPtr<FrameView> >::iterator it = frameViews.begin(); it != end; ++
 []() { return static_cast<unsigned>(-1); }
 ```
 
+[](#function-return-arrow) Only use the arrow for function return types if it allows you to omit redundant information.
+
+###### Right:
+
+```cpp
+int foo()
+{
+    ...
+}
+```
+
+###### Wrong:
+
+```cpp
+auto foo() -> int
+{
+    ...
+}
+```
+
+###### Right:
+
+```cpp
+auto Foo::bar() -> Baz
+{
+    ...
+}
+```
+
+###### Wrong:
+
+```cpp
+Foo::Baz Foo::bar()
+{
+    ...
+}
+```
+
 ### Pointers and References
 
 [](#pointers-non-cpp) **Pointer types in non-C++ code**
@@ -1370,6 +1423,40 @@ drawJpg(); // FIXME(joe): Make this code handle jpg in addition to the png suppo
 
 ```cpp
 drawJpg(); // TODO: Make this code handle jpg in addition to the png support.
+```
+
+[](#comments-override-disambiguation) If needed for clarity, add a comment containing the source class name for a block of virtual function override declarations.
+
+###### Right:
+```cpp
+class GPUProcessConnection : public RefCounted<GPUProcessConnection>, public IPC::Connection::Client {
+public:
+    /// ...
+
+    // IPC::Connection::Client
+    void didClose(IPC::Connection&) override;
+    void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
+    bool didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final;
+    void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName) override;
+
+    // ...
+};
+```
+
+[](#comments-messages-disambiguation) If needed for clarity, add `// Messages` before a block of IPC message function declarations.
+
+###### Right:
+```cpp
+class GPUProcessConnection : public RefCounted<GPUProcessConnection>, public IPC::Connection::Client {
+public:
+    /// ...
+
+    // Messages
+    void didReceiveRemoteCommand(WebCore::PlatformMediaSession::RemoteControlCommandType, const WebCore::PlatformMediaSession::RemoteCommandArgument&);
+    void didInitialize(std::optional<GPUProcessConnectionInfo>&&);
+
+    // ...
+};
 ```
 
 ### Overriding Virtual Methods

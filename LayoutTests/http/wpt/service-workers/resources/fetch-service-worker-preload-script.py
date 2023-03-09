@@ -12,6 +12,7 @@ def main(request, response):
         request.server.stash.take(testId)
         request.server.stash.put(testId, request.GET[b'value'])
         response.headers.set(b"Content-Type", b"text/ascii")
+        request.server.stash.put(countId, 0)
         return b"updated to " + request.GET[b'value']
 
     if request.GET.first(b"count", False):
@@ -39,6 +40,9 @@ def main(request, response):
     if b"download" in request.GET:
         response.headers.set(b"Content-Type", b"text/vcard")
         return value.decode()
+
+    if b"customHeader" in request.GET:
+        value = request.headers.get(b"x-custom-header", b"no custom header")
 
     response.headers.set(b"Content-Type", b"text/html")
     return "<html><body><script>window.value = '%s';</script></body></html>" % value.decode()

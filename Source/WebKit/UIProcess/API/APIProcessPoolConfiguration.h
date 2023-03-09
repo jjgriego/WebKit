@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -98,9 +98,6 @@ public:
     
     bool shouldThrowExceptionForGlobalConstantRedeclaration() const { return m_shouldThrowExceptionForGlobalConstantRedeclaration; }
     void setShouldThrowExceptionForGlobalConstantRedeclaration(bool shouldThrow) { m_shouldThrowExceptionForGlobalConstantRedeclaration = shouldThrow; }
-
-    const Vector<WTF::String>& overrideLanguages() const { return m_overrideLanguages; }
-    void setOverrideLanguages(Vector<WTF::String>&& languages) { m_overrideLanguages = WTFMove(languages); }
     
     bool alwaysRunsAtBackgroundPriority() const { return m_alwaysRunsAtBackgroundPriority; }
     void setAlwaysRunsAtBackgroundPriority(bool alwaysRunsAtBackgroundPriority) { m_alwaysRunsAtBackgroundPriority = alwaysRunsAtBackgroundPriority; }
@@ -162,6 +159,9 @@ public:
 #if PLATFORM(GTK) || PLATFORM(WPE)
     void setMemoryPressureHandlerConfiguration(const MemoryPressureHandler::Configuration& configuration) { m_memoryPressureHandlerConfiguration = configuration; }
     const std::optional<MemoryPressureHandler::Configuration>& memoryPressureHandlerConfiguration() const { return m_memoryPressureHandlerConfiguration; }
+
+    bool disableFontHintingForTesting() const { return m_disableFontHintingForTesting; }
+    void setDisableFontHintingForTesting(bool override) { m_disableFontHintingForTesting = override; }
 #endif
 
     void setTimeZoneOverride(const WTF::String& timeZoneOverride) { m_timeZoneOverride = timeZoneOverride; }
@@ -177,7 +177,6 @@ private:
     bool m_ignoreSynchronousMessagingTimeoutsForTesting { false };
     bool m_attrStyleEnabled { false };
     bool m_shouldThrowExceptionForGlobalConstantRedeclaration { true };
-    Vector<WTF::String> m_overrideLanguages;
     bool m_alwaysRunsAtBackgroundPriority { false };
     bool m_shouldTakeUIBackgroundAssertion { true };
     bool m_shouldCaptureDisplayInUIProcess { DEFAULT_CAPTURE_DISPLAY_IN_UI_PROCESS };
@@ -205,6 +204,7 @@ private:
 #endif
 #if PLATFORM(GTK) || PLATFORM(WPE)
     std::optional<MemoryPressureHandler::Configuration> m_memoryPressureHandlerConfiguration;
+    bool m_disableFontHintingForTesting { false };
 #endif
 #if HAVE(AUDIT_TOKEN)
     std::optional<audit_token_t> m_presentingApplicationProcessToken;

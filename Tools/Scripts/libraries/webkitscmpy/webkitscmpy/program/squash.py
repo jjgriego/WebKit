@@ -61,7 +61,7 @@ class Squash(Command):
         parser.add_argument(
             '--base-commit',
             dest='base_commit',
-            help='git hash, svn revision or identifer for the base commit that you want to squash to (merged commit will not include this commit)',
+            help='git hash, svn revision or identifier for the base commit that you want to squash to (merged commit will not include this commit)',
             default=None,
         )
 
@@ -85,7 +85,7 @@ class Squash(Command):
             if args.base_commit:
                 base_commit = repository.find(args.base_commit, include_log=True)
                 if hasattr(base_commit, 'identifier') and base_commit <= branch_point:
-                    sys.stderr.write('It seems you are trying to sqaush beyond branch point.')
+                    sys.stderr.write('It seems you are trying to squash beyond branch point.')
                     return 1
             else:
                 base_commit = branch_point

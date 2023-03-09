@@ -530,7 +530,11 @@ void Graph::dumpBlockHeader(PrintStream& out, const char* prefixStr, BasicBlock*
             ASSERT(phiNode->op() == Phi);
             if (!phiNode->shouldGenerate() && phiNodeDumpMode == DumpLivePhisOnly)
                 continue;
-            out.print(" D@", phiNode->index(), "<", phiNode->operand(), ",", phiNode->refCount(), ">->(");
+
+            out.print(" D@", phiNode->index(), "<", phiNode->operand(), ",", phiNode->refCount());
+            if (toCString(NodeFlagsDump(phiNode->flags())) != "<empty>")
+                out.print(", ", NodeFlagsDump(phiNode->flags()));
+            out.print(">->(");
             if (phiNode->child1()) {
                 out.print("D@", phiNode->child1()->index());
                 if (phiNode->child2()) {
@@ -721,7 +725,7 @@ void Graph::determineReachability()
     }
 }
 
-void Graph::resetReachability()
+void Graph::clearReachability()
 {
     for (BlockIndex blockIndex = m_blocks.size(); blockIndex--;) {
         BasicBlock* block = m_blocks[blockIndex].get();
@@ -730,7 +734,11 @@ void Graph::resetReachability()
         block->isReachable = false;
         block->predecessors.clear();
     }
-    
+}
+
+void Graph::resetReachability()
+{
+    clearReachability();
     determineReachability();
 }
 
@@ -1294,7 +1302,7 @@ JSValue Graph::tryGetConstantProperty(
         ASSERT(structure->isValidOffset(offset));
         ASSERT(!structure->isUncacheableDictionary());
         
-        watchpoints().addLazily(set);
+        watchpoints().addLazily(*set);
     }
     
     // What follows may require some extra thought. We need this load to load a valid JSValue. If
@@ -1398,7 +1406,7 @@ JSValue Graph::tryGetConstantClosureVar(JSValue base, ScopeOffset offset)
             return JSValue();
     }
     
-    watchpoints().addLazily(set);
+    watchpoints().addLazily(*set);
     
     return value;
 }
@@ -1437,6 +1445,22 @@ JSArrayBufferView* Graph::tryGetFoldableView(JSValue value, ArrayMode arrayMode)
     if (arrayMode.type() != Array::AnyTypedArray && arrayMode.typedArrayType() == NotTypedArray)
         return nullptr;
     return tryGetFoldableView(value);
+}
+
+JSValue Graph::tryGetConstantGetter(Node* getterSetter)
+{
+    auto* cell = getterSetter->dynamicCastConstant<GetterSetter*>();
+    if (!cell)
+        return JSValue();
+    return cell->getterConcurrently();
+}
+
+JSValue Graph::tryGetConstantSetter(Node* getterSetter)
+{
+    auto* cell = getterSetter->dynamicCastConstant<GetterSetter*>();
+    if (!cell)
+        return JSValue();
+    return cell->setterConcurrently();
 }
 
 void Graph::registerFrozenValues()

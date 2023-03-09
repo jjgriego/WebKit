@@ -63,6 +63,16 @@ void NetworkNotificationManager::requestSystemNotificationPermission(const Strin
     sendMessageWithReply<WebPushD::MessageType::RequestSystemNotificationPermission>(WTFMove(completionHandler), originString);
 }
 
+void NetworkNotificationManager::setPushAndNotificationsEnabledForOrigin(const SecurityOriginData& origin, bool enabled, CompletionHandler<void()>&& completionHandler)
+{
+    if (!m_connection) {
+        completionHandler();
+        return;
+    }
+
+    sendMessageWithReply<WebPushD::MessageType::SetPushAndNotificationsEnabledForOrigin>(WTFMove(completionHandler), origin.toString(), enabled);
+}
+
 void NetworkNotificationManager::deletePushAndNotificationRegistration(const SecurityOriginData& origin, CompletionHandler<void(const String&)>&& completionHandler)
 {
     if (!m_connection) {
@@ -88,14 +98,14 @@ void NetworkNotificationManager::getOriginsWithPushAndNotificationPermissions(Co
 void NetworkNotificationManager::getPendingPushMessages(CompletionHandler<void(const Vector<WebPushMessage>&)>&& completionHandler)
 {
     CompletionHandler<void(Vector<WebPushMessage>&&)> replyHandler = [completionHandler = WTFMove(completionHandler)] (Vector<WebPushMessage>&& messages) mutable {
-        LOG(Push, "Done getting push messages");
+        LOG(Push, "Done getting %u push messages", (unsigned)messages.size());
         completionHandler(WTFMove(messages));
     };
 
     sendMessageWithReply<WebPushD::MessageType::GetPendingPushMessages>(WTFMove(replyHandler));
 }
 
-void NetworkNotificationManager::showNotification(IPC::Connection&, const WebCore::NotificationData&, CompletionHandler<void()>&& callback)
+void NetworkNotificationManager::showNotification(IPC::Connection&, const WebCore::NotificationData&, RefPtr<NotificationResources>&&, CompletionHandler<void()>&& callback)
 {
     callback();
 
@@ -150,6 +160,11 @@ void NetworkNotificationManager::unsubscribeFromPushService(URL&& scopeURL, std:
 
 void NetworkNotificationManager::getPushSubscription(URL&& scopeURL, CompletionHandler<void(Expected<std::optional<WebCore::PushSubscriptionData>, WebCore::ExceptionData>&&)>&& completionHandler)
 {
+    if (m_networkSession.sessionID().isEphemeral()) {
+        completionHandler(std::optional<WebCore::PushSubscriptionData> { });
+        return;
+    }
+
     if (!m_connection) {
         completionHandler(makeUnexpected(ExceptionData { AbortError, "No connection to push daemon"_s }));
         return;
@@ -160,6 +175,11 @@ void NetworkNotificationManager::getPushSubscription(URL&& scopeURL, CompletionH
 
 void NetworkNotificationManager::getPushPermissionState(URL&& scopeURL, CompletionHandler<void(Expected<uint8_t, WebCore::ExceptionData>&&)>&& completionHandler)
 {
+    if (m_networkSession.sessionID().isEphemeral()) {
+        completionHandler(static_cast<uint8_t>(PushPermissionState::Denied));
+        return;
+    }
+
     if (!m_connection) {
         completionHandler(makeUnexpected(ExceptionData { AbortError, "No connection to push daemon"_s }));
         return;

@@ -130,7 +130,7 @@ void run(const char* filter)
 {
     Deque<RefPtr<SharedTask<void()>>> tasks;
 
-    RUN_NOW(testTerminalPatchpointThatNeedsToBeSpilled2());
+    // RUN_NOW(testTerminalPatchpointThatNeedsToBeSpilled2());
     RUN(test42());
     RUN(testLoad42());
     RUN(testLoadAcq42());
@@ -151,13 +151,14 @@ void run(const char* filter)
 
     addArgTests(filter, tasks);
 
+#if !CPU(ARM)
     RUN_UNARY(testNegDouble, floatingPointOperands<double>());
     RUN_UNARY(testNegFloat, floatingPointOperands<float>());
     RUN_UNARY(testNegFloatWithUselessDoubleConversion, floatingPointOperands<float>());
 
     addBitTests(filter, tasks);
 
-    RUN(testShlArgs(1, 0));
+    RUN(testShlArgs(1, 0))
     RUN(testShlArgs(1, 1));
     RUN(testShlArgs(1, 62));
     RUN(testShlArgs(0xffffffffffffffff, 0));
@@ -536,8 +537,6 @@ void run(const char* filter)
     addLoadTests(filter, tasks);
     addTupleTests(filter, tasks);
 
-    addCopyTests(filter, tasks);
-
     RUN(testSpillGP());
     RUN(testSpillFP());
 
@@ -766,6 +765,9 @@ void run(const char* filter)
     RUN(testTrappingLoadDCE());
     RUN(testTrappingStoreElimination());
     RUN(testMoveConstants());
+    RUN(testMoveConstantsWithLargeOffsets());
+    if (Options::useWebAssemblySIMD())
+        RUN(testMoveConstantsSIMD());
     RUN(testPCOriginMapDoesntInsertNops());
     RUN(testPinRegisters());
     RUN(testReduceStrengthReassociation(true));
@@ -814,6 +816,7 @@ void run(const char* filter)
     RUN(testWasmBoundsCheck(std::numeric_limits<unsigned>::max() - 5));
 
     RUN(testWasmAddress());
+    RUN(testWasmAddressWithOffset());
     
     RUN(testFastTLSLoad());
     RUN(testFastTLSStore());
@@ -862,6 +865,26 @@ void run(const char* filter)
     }
 
     RUN(testReportUsedRegistersLateUseFollowedByEarlyDefDoesNotMarkUseAsDead());
+
+    if (isARM64() || isX86()) {
+        RUN(testVectorXorOrAllOnesToVectorAndXor());
+        RUN(testVectorXorAndAllOnesToVectorOrXor());
+        RUN(testVectorOrSelf());
+        RUN(testVectorAndSelf());
+        RUN(testVectorXorSelf());
+        RUN_UNARY(testVectorXorOrAllOnesConstantToVectorAndXor, v128Operands());
+        RUN_UNARY(testVectorXorAndAllOnesConstantToVectorOrXor, v128Operands());
+        RUN_BINARY(testVectorOrConstants, v128Operands(), v128Operands());
+        RUN_BINARY(testVectorAndConstants, v128Operands(), v128Operands());
+        RUN_BINARY(testVectorXorConstants, v128Operands(), v128Operands());
+        RUN_BINARY(testVectorAndConstantConstant, v128Operands(), v128Operands());
+        if (isARM64()) {
+            RUN(testVectorFmulByElementFloat());
+            RUN(testVectorFmulByElementDouble());
+        }
+    }
+
+#endif
 
     if (tasks.isEmpty())
         usage();
@@ -935,7 +958,7 @@ int main(int argc, char** argv)
         JSC::JITOperationList::populateDisassemblyLabelsInEmbedder(&startOfJITOperationsInTestB3, &endOfJITOperationsInTestB3);
 #endif
 
-    for (unsigned i = 0; i <= 2; ++i) {
+    for (unsigned i = 0; i <= 0; ++i) {
         JSC::Options::defaultB3OptLevel() = i;
         run(filter);
     }

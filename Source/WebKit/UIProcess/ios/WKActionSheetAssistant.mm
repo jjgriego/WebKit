@@ -62,6 +62,11 @@ SOFT_LINK_FRAMEWORK(SafariServices)
 SOFT_LINK_CLASS(SafariServices, SSReadingList)
 #endif
 
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+SOFT_LINK_LIBRARY_OPTIONAL(libAccessibility)
+SOFT_LINK_OPTIONAL(libAccessibility, _AXSReduceMotionAutoplayAnimatedImagesEnabled, Boolean, (), ());
+#endif
+
 #import "TCCSoftLink.h"
 
 OBJC_CLASS DDAction;
@@ -551,10 +556,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     if (elementInfo.type == _WKActivatedElementTypeImage || elementInfo._isImage) {
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
-        if ([_delegate respondsToSelector:@selector(actionSheetAssistantShouldIncludeCopySubjectAction:)] && [_delegate actionSheetAssistantShouldIncludeCopySubjectAction:self]) {
-            // FIXME (rdar://88834304): This should be additionally gated on the relevant VisionKit SPI.
+        if ([_delegate respondsToSelector:@selector(actionSheetAssistantShouldIncludeCopySubjectAction:)] && [_delegate actionSheetAssistantShouldIncludeCopySubjectAction:self])
             [defaultActions addObject:[_WKElementAction _elementActionWithType:_WKElementActionTypeCopyCroppedImage info:elementInfo assistant:self]];
-        }
 #endif
 #if ENABLE(IMAGE_ANALYSIS)
         if ([_delegate respondsToSelector:@selector(actionSheetAssistant:shouldIncludeShowTextActionForElement:)] && [_delegate actionSheetAssistant:self shouldIncludeShowTextActionForElement:elementInfo])
@@ -587,10 +590,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     [defaultActions addObject:[_WKElementAction _elementActionWithType:_WKElementActionTypeCopy info:elementInfo assistant:self]];
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
-    if ([_delegate respondsToSelector:@selector(actionSheetAssistantShouldIncludeCopySubjectAction:)] && [_delegate actionSheetAssistantShouldIncludeCopySubjectAction:self]) {
-        // FIXME (rdar://88834304): This should be additionally gated on the relevant VisionKit SPI.
+    if ([_delegate respondsToSelector:@selector(actionSheetAssistantShouldIncludeCopySubjectAction:)] && [_delegate actionSheetAssistantShouldIncludeCopySubjectAction:self])
         [defaultActions addObject:[_WKElementAction _elementActionWithType:_WKElementActionTypeCopyCroppedImage info:elementInfo assistant:self]];
-    }
 #endif
 
 #if ENABLE(IMAGE_ANALYSIS)
@@ -599,6 +600,20 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if ([_delegate respondsToSelector:@selector(actionSheetAssistant:shouldIncludeLookUpImageActionForElement:)] && [_delegate actionSheetAssistant:self shouldIncludeLookUpImageActionForElement:elementInfo])
         [defaultActions addObject:[_WKElementAction _elementActionWithType:_WKElementActionTypeRevealImage info:elementInfo assistant:self]];
 #endif
+
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+    if (elementInfo.isAnimatedImage) {
+        auto* autoplayAnimatedImagesFunction = _AXSReduceMotionAutoplayAnimatedImagesEnabledPtr();
+        // Only show these controls if autoplay of animated images has been disabled.
+        if (autoplayAnimatedImagesFunction && !autoplayAnimatedImagesFunction() && elementInfo.canShowAnimationControls) {
+            if (elementInfo.isAnimating)
+                [defaultActions addObject:[_WKElementAction _elementActionWithType:_WKElementActionPauseAnimation info:elementInfo assistant:self]];
+            else
+                [defaultActions addObject:[_WKElementAction _elementActionWithType:_WKElementActionPlayAnimation info:elementInfo assistant:self]];
+
+        }
+    }
+#endif // ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 
     return defaultActions;
 }
@@ -811,6 +826,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 - (NSArray<UIMenuElement *> *)_uiMenuElementsForMediaControlContextMenuItems:(Vector<WebCore::MediaControlsContextMenuItem>&&)items
 {
     return createNSArray(items, [&] (WebCore::MediaControlsContextMenuItem& item) -> UIMenuElement * {
+        if (item.id == WebCore::MediaControlsContextMenuItem::invalidID && item.title.isEmpty() && item.icon.isEmpty() && item.children.isEmpty())
+            return [UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:@[]];
+
         UIImage *image = !item.icon.isEmpty() ? [UIImage systemImageNamed:WTFMove(item.icon)] : nil;
 
         if (!item.children.isEmpty())
@@ -858,7 +876,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 #endif // ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS)
 
-static NSArray<UIMenuElement *> *menuElementsFromDefaultActions(RetainPtr<NSArray> defaultElementActions, RetainPtr<_WKActivatedElementInfo> elementInfo)
+static NSMutableArray<UIMenuElement *> *menuElementsFromDefaultActions(RetainPtr<NSArray> defaultElementActions, RetainPtr<_WKActivatedElementInfo> elementInfo)
 {
     if (![defaultElementActions count])
         return nil;
@@ -870,9 +888,9 @@ static NSArray<UIMenuElement *> *menuElementsFromDefaultActions(RetainPtr<NSArra
     return actions;
 }
 
-- (NSArray<UIMenuElement *> *)suggestedActionsForContextMenuWithPositionInformation:(const WebKit::InteractionInformationAtPosition&)positionInformation
+- (NSMutableArray<UIMenuElement *> *)suggestedActionsForContextMenuWithPositionInformation:(const WebKit::InteractionInformationAtPosition&)positionInformation
 {
-    auto elementInfo = adoptNS([[_WKActivatedElementInfo alloc] _initWithInteractionInformationAtPosition:positionInformation userInfo:nil]);
+    auto elementInfo = adoptNS([[_WKActivatedElementInfo alloc] _initWithInteractionInformationAtPosition:positionInformation isUsingAlternateURLForImage:NO userInfo:nil]);
     RetainPtr<NSArray<_WKElementAction *>> defaultActionsFromAssistant = positionInformation.isLink ? [self defaultActionsForLinkSheet:elementInfo.get()] : [self defaultActionsForImageSheet:elementInfo.get()];
     return menuElementsFromDefaultActions(defaultActionsFromAssistant, elementInfo);
 }
@@ -1026,7 +1044,10 @@ static NSArray<UIMenuElement *> *menuElementsFromDefaultActions(RetainPtr<NSArra
         [delegate actionSheetAssistant:self performAction:WebKit::SheetAction::Copy];
         break;
     case _WKElementActionTypeOpen:
-        [delegate actionSheetAssistant:self openElementAtLocation:element._interactionLocation];
+        if (element._isUsingAlternateURLForImage)
+            [[UIApplication sharedApplication] openURL:element.URL options:@{ } completionHandler:nil];
+        else
+            [delegate actionSheetAssistant:self openElementAtLocation:element._interactionLocation];
         break;
     case _WKElementActionTypeSaveImage:
         [delegate actionSheetAssistant:self performAction:WebKit::SheetAction::SaveImage];
@@ -1054,6 +1075,14 @@ static NSArray<UIMenuElement *> *menuElementsFromDefaultActions(RetainPtr<NSArra
         [delegate actionSheetAssistant:self copySubject:element.image sourceMIMEType:element.imageMIMEType];
 #endif
         break;
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+    case _WKElementActionPlayAnimation:
+        [delegate actionSheetAssistant:self performAction:WebKit::SheetAction::PlayAnimation];
+        break;
+    case _WKElementActionPauseAnimation:
+        [delegate actionSheetAssistant:self performAction:WebKit::SheetAction::PauseAnimation];
+        break;
+#endif // ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     default:
         ASSERT_NOT_REACHED();
         break;

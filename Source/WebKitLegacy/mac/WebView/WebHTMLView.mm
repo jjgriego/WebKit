@@ -81,6 +81,7 @@
 #import <WebCore/CompositionHighlight.h>
 #import <WebCore/ContextMenu.h>
 #import <WebCore/ContextMenuController.h>
+#import <WebCore/DeprecatedGlobalSettings.h>
 #import <WebCore/DictationAlternative.h>
 #import <WebCore/DictionaryLookup.h>
 #import <WebCore/Document.h>
@@ -117,7 +118,6 @@
 #import <WebCore/RenderView.h>
 #import <WebCore/RenderWidget.h>
 #import <WebCore/RuntimeApplicationChecks.h>
-#import <WebCore/RuntimeEnabledFeatures.h>
 #import <WebCore/SharedBuffer.h>
 #import <WebCore/StyleProperties.h>
 #import <WebCore/StyleScope.h>
@@ -419,9 +419,6 @@ static std::optional<NSInteger> toTag(WebCore::ContextMenuAction action)
 {
     using namespace WebCore;
     switch (action) {
-    case ContextMenuItemTagNoAction:
-        return std::nullopt;
-
     case ContextMenuItemTagOpenLinkInNewWindow:
         return WebMenuItemTagOpenLinkInNewWindow;
     case ContextMenuItemTagDownloadLinkToDisk:
@@ -590,18 +587,22 @@ static std::optional<NSInteger> toTag(WebCore::ContextMenuAction action)
         return WebMenuItemTagDictationAlternative;
     case ContextMenuItemTagToggleVideoFullscreen:
         return WebMenuItemTagToggleVideoFullscreen;
-    case ContextMenuItemTagAddHighlightToCurrentQuickNote:
-    case ContextMenuItemTagAddHighlightToNewQuickNote:
-        return std::nullopt;
     case ContextMenuItemTagShareMenu:
         return WebMenuItemTagShareMenu;
     case ContextMenuItemTagToggleVideoEnhancedFullscreen:
         return WebMenuItemTagToggleVideoEnhancedFullscreen;
     case ContextMenuItemTagTranslate:
         return WebMenuItemTagTranslate;
-    case ContextMenuItemTagCopySubject:
-    case ContextMenuItemTagLookUpImage:
-        return std::nullopt;
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+    case ContextMenuItemTagPlayAllAnimations:
+        return WebMenuItemTagPlayAllAnimations;
+    case ContextMenuItemTagPauseAllAnimations:
+        return WebMenuItemTagPauseAllAnimations;
+    case ContextMenuItemTagPlayAnimation:
+        return WebMenuItemTagPlayAnimation;
+    case ContextMenuItemTagPauseAnimation:
+        return WebMenuItemTagPauseAnimation;
+#endif // ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 
     case ContextMenuItemBaseCustomTag ... ContextMenuItemLastCustomTag:
         // We just pass these through.
@@ -609,6 +610,10 @@ static std::optional<NSInteger> toTag(WebCore::ContextMenuAction action)
 
     case ContextMenuItemBaseApplicationTag:
         ASSERT_NOT_REACHED();
+        break;
+
+    default:
+        break;
     }
 
     return std::nullopt;
@@ -634,8 +639,24 @@ static std::optional<NSInteger> toTag(WebCore::ContextMenuAction action)
 
 - (void)forwardContextMenuAction:(id)sender
 {
-    if (auto action = toAction([sender tag]))
+    auto action = toAction([sender tag]);
+    if (!action)
+        return;
+
+    switch (*action) {
+    case WebCore::ContextMenuItemTagShowFonts:
+        [[NSFontManager sharedFontManager] orderFrontFontPanel:nil];
+        break;
+    case WebCore::ContextMenuItemTagStyles:
+        [[NSFontManager sharedFontManager] orderFrontStylesPanel:nil];
+        break;
+    case WebCore::ContextMenuItemTagShowColors:
+        [[NSApplication sharedApplication] orderFrontColorPanel:nil];
+        break;
+    default:
         _menuController->contextMenuItemSelected(*action, [sender title]);
+        break;
+    }
 }
 
 @end
@@ -1134,7 +1155,7 @@ static NSControlStateValue kit(TriState state)
         nil]);
 
 #if ENABLE(ATTACHMENT_ELEMENT)
-    if (!WebCore::RuntimeEnabledFeatures::sharedFeatures().attachmentElementEnabled())
+    if (!WebCore::DeprecatedGlobalSettings::attachmentElementEnabled())
         [elements addObject:@"object"];
 #endif
 
@@ -4256,8 +4277,10 @@ IGNORE_WARNINGS_END
 
     if (!_private->ignoringMouseDraggedEvents) {
         if (auto* frame = core([self _frame])) {
-            if (auto* page = frame->page())
-                page->mainFrame().eventHandler().mouseDragged(event, [[self _webView] _pressureEvent]);
+            if (auto* page = frame->page()) {
+                if (auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(page->mainFrame()))
+                    localMainFrame->eventHandler().mouseDragged(event, [[self _webView] _pressureEvent]);
+            }
         }
     }
 
@@ -4433,11 +4456,14 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     [self _stopAutoscrollTimer];
     if (auto* frame = core([self _frame])) {
         if (auto* page = frame->page()) {
+            auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(page->mainFrame());
+            if (localMainFrame) {
 #if PLATFORM(IOS_FAMILY)
-            page->mainFrame().eventHandler().mouseUp(event);
+                localMainFrame->eventHandler().mouseUp(event);
 #else
-            page->mainFrame().eventHandler().mouseUp(event, [[self _webView] _pressureEvent]);
+                localMainFrame->eventHandler().mouseUp(event, [[self _webView] _pressureEvent]);
 #endif
+            }
         }
     }
 
@@ -4513,7 +4539,7 @@ static RefPtr<WebCore::KeyboardEvent> currentKeyboardEvent(WebCore::Frame* coreF
     switch ([event type]) {
     case NSEventTypeKeyDown: {
         WebCore::PlatformKeyboardEvent platformEvent = WebCore::PlatformEventFactory::createPlatformKeyboardEvent(event);
-        platformEvent.disambiguateKeyDownEvent(WebCore::PlatformEvent::RawKeyDown);
+        platformEvent.disambiguateKeyDownEvent(WebCore::PlatformEvent::Type::RawKeyDown);
         return WebCore::KeyboardEvent::create(platformEvent, &coreFrame->windowProxy());
     }
     case NSEventTypeKeyUp:
@@ -5045,9 +5071,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (NSDictionary *)_fontAttributesFromFontPasteboard
 {
-    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    NSPasteboard *fontPasteboard = [NSPasteboard pasteboardWithName:NSFontPboard];
-    ALLOW_DEPRECATED_DECLARATIONS_END
+    NSPasteboard *fontPasteboard = [NSPasteboard pasteboardWithName:NSPasteboardNameFont];
     if (fontPasteboard == nil)
         return nil;
     NSData *data = [fontPasteboard dataForType:WebCore::legacyFontPasteboardType()];
@@ -5252,9 +5276,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
     // Put RTF with font attributes on the pasteboard.
     // Maybe later we should add a pasteboard type that contains CSS text for "native" copy and paste font.
-        ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    NSPasteboard *fontPasteboard = [NSPasteboard pasteboardWithName:NSFontPboard];
-    ALLOW_DEPRECATED_DECLARATIONS_END
+    NSPasteboard *fontPasteboard = [NSPasteboard pasteboardWithName:NSPasteboardNameFont];
     [fontPasteboard declareTypes:@[WebCore::legacyFontPasteboardType()] owner:nil];
     [fontPasteboard setData:[self _selectionStartFontAttributesAsRTF] forType:WebCore::legacyFontPasteboardType()];
 }
@@ -5999,7 +6021,7 @@ static BOOL writingDirectionKeyBindingsEnabled()
         }
         // If there are no text insertion commands, default keydown handler is the right time to execute the commands.
         // Keypress (Char event) handler is the latest opportunity to execute.
-        if (!haveTextInsertionCommands || platformEvent->type() == WebCore::PlatformEvent::Char)
+        if (!haveTextInsertionCommands || platformEvent->type() == WebCore::PlatformEvent::Type::Char)
             [self _executeSavedKeypressCommands];
     }
     _private->interpretKeyEventsParameters = nullptr;
@@ -6041,7 +6063,7 @@ static BOOL writingDirectionKeyBindingsEnabled()
         if (!webView.isEditable && event.isTabKey)
             return NO;
 
-        bool isCharEvent = platformEvent->type() == WebCore::PlatformKeyboardEvent::Char;
+        bool isCharEvent = platformEvent->type() == WebCore::PlatformKeyboardEvent::Type::Char;
 
         if (!isCharEvent && [webView._UIKitDelegateForwarder handleKeyTextCommandForCurrentEvent])
             return YES;

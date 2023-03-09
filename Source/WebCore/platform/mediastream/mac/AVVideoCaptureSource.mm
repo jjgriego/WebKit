@@ -109,13 +109,13 @@ public:
     RetainPtr<AVCaptureDeviceFormat> format;
 };
 
-CaptureSourceOrError AVVideoCaptureSource::create(const CaptureDevice& device, String&& hashSalt, const MediaConstraints* constraints, PageIdentifier pageIdentifier)
+CaptureSourceOrError AVVideoCaptureSource::create(const CaptureDevice& device, MediaDeviceHashSalts&& hashSalts, const MediaConstraints* constraints, PageIdentifier pageIdentifier)
 {
     auto *avDevice = [PAL::getAVCaptureDeviceClass() deviceWithUniqueID:device.persistentId()];
     if (!avDevice)
         return { "No AVVideoCaptureSource device"_s };
 
-    auto source = adoptRef(*new AVVideoCaptureSource(avDevice, device, WTFMove(hashSalt), pageIdentifier));
+    auto source = adoptRef(*new AVVideoCaptureSource(avDevice, device, WTFMove(hashSalts), pageIdentifier));
     if (constraints) {
         auto result = source->applyConstraints(*constraints);
         if (result)
@@ -125,8 +125,8 @@ CaptureSourceOrError AVVideoCaptureSource::create(const CaptureDevice& device, S
     return CaptureSourceOrError(RealtimeVideoSource::create(WTFMove(source)));
 }
 
-AVVideoCaptureSource::AVVideoCaptureSource(AVCaptureDevice* avDevice, const CaptureDevice& device, String&& hashSalt, PageIdentifier pageIdentifier)
-    : RealtimeVideoCaptureSource(AtomString(device.label()), String(device.persistentId()), WTFMove(hashSalt), pageIdentifier)
+AVVideoCaptureSource::AVVideoCaptureSource(AVCaptureDevice* avDevice, const CaptureDevice& device, MediaDeviceHashSalts&& hashSalts, PageIdentifier pageIdentifier)
+    : RealtimeVideoCaptureSource(device, WTFMove(hashSalts), pageIdentifier)
     , m_objcObserver(adoptNS([[WebCoreAVVideoCaptureSourceObserver alloc] initWithCallback:this]))
     , m_device(avDevice)
     , m_verifyCapturingTimer(*this, &AVVideoCaptureSource::verifyIsCapturing)
@@ -241,11 +241,11 @@ const RealtimeMediaSourceSettings& AVVideoCaptureSource::settings()
 
     RealtimeMediaSourceSettings settings;
     if ([device() position] == AVCaptureDevicePositionFront)
-        settings.setFacingMode(RealtimeMediaSourceSettings::User);
+        settings.setFacingMode(VideoFacingMode::User);
     else if ([device() position] == AVCaptureDevicePositionBack)
-        settings.setFacingMode(RealtimeMediaSourceSettings::Environment);
+        settings.setFacingMode(VideoFacingMode::Environment);
     else
-        settings.setFacingMode(RealtimeMediaSourceSettings::Unknown);
+        settings.setFacingMode(VideoFacingMode::Unknown);
 
     settings.setLabel(name());
     settings.setFrameRate(frameRate());
@@ -283,15 +283,47 @@ const RealtimeMediaSourceCapabilities& AVVideoCaptureSource::capabilities()
 
     AVCaptureDevice *videoDevice = device();
     if ([videoDevice position] == AVCaptureDevicePositionFront)
-        capabilities.addFacingMode(RealtimeMediaSourceSettings::User);
+        capabilities.addFacingMode(VideoFacingMode::User);
     if ([videoDevice position] == AVCaptureDevicePositionBack)
-        capabilities.addFacingMode(RealtimeMediaSourceSettings::Environment);
+        capabilities.addFacingMode(VideoFacingMode::Environment);
 
     updateCapabilities(capabilities);
 
     m_capabilities = WTFMove(capabilities);
 
     return *m_capabilities;
+}
+
+double AVVideoCaptureSource::facingModeFitnessDistanceAdjustment() const
+{
+    ASSERT(isMainThread());
+
+    if ([device() position] != AVCaptureDevicePositionBack)
+        return 0;
+
+    static NSMutableArray *devicePriorities;
+    if (!devicePriorities) {
+        devicePriorities = [[NSMutableArray alloc] init];
+
+        if (PAL::canLoad_AVFoundation_AVCaptureDeviceTypeBuiltInTripleCamera())
+            [devicePriorities addObject:AVCaptureDeviceTypeBuiltInTripleCamera];
+        if (PAL::canLoad_AVFoundation_AVCaptureDeviceTypeBuiltInDualWideCamera())
+            [devicePriorities addObject:AVCaptureDeviceTypeBuiltInDualWideCamera];
+        [devicePriorities addObject:AVCaptureDeviceTypeBuiltInUltraWideCamera];
+        [devicePriorities addObject:AVCaptureDeviceTypeBuiltInDualCamera];
+        [devicePriorities addObject:AVCaptureDeviceTypeBuiltInWideAngleCamera];
+        [devicePriorities addObject:AVCaptureDeviceTypeBuiltInTelephotoCamera];
+        if (PAL::canLoad_AVFoundation_AVCaptureDeviceTypeDeskViewCamera())
+            [devicePriorities addObject:AVCaptureDeviceTypeDeskViewCamera];
+    }
+
+    auto relativePriority = [devicePriorities indexOfObject:[device() deviceType]];
+    if (relativePriority == NSNotFound)
+        relativePriority = devicePriorities.count;
+
+    ALWAYS_LOG_IF(loggerPtr(), LOGIDENTIFIER, captureDevice().label(), " has priority ", relativePriority);
+
+    return relativePriority;
 }
 
 bool AVVideoCaptureSource::prefersPreset(VideoPreset& preset)
@@ -423,12 +455,20 @@ bool AVVideoCaptureSource::setupSession()
 
 #if ENABLE(APP_PRIVACY_REPORT)
     auto identity = RealtimeMediaSourceCenter::singleton().identity();
+    ERROR_LOG_IF(loggerPtr() && !identity, LOGIDENTIFIER, "RealtimeMediaSourceCenter::identity() returned null!");
+
     if (identity && [PAL::getAVCaptureSessionClass() instancesRespondToSelector:@selector(initWithAssumedIdentity:)])
         m_session = adoptNS([PAL::allocAVCaptureSessionInstance() initWithAssumedIdentity:identity.get()]);
-    else
-#else
-        m_session = adoptNS([PAL::allocAVCaptureSessionInstance() init]);
+
+    if (!m_session)
 #endif
+        m_session = adoptNS([PAL::allocAVCaptureSessionInstance() init]);
+
+    if (!m_session) {
+        ERROR_LOG_IF(loggerPtr(), LOGIDENTIFIER, "failed to allocate AVCaptureSession");
+        captureFailed();
+        return false;
+    }
 
 #if PLATFORM(IOS_FAMILY)
     PAL::AVCaptureSessionSetAuthorizedToUseCameraInMultipleForegroundAppLayout(m_session.get());

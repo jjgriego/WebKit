@@ -30,7 +30,6 @@
 #include "MediaPlayerPrivate.h"
 #include "MediaStreamPrivate.h"
 #include "SampleBufferDisplayLayer.h"
-#include "VideoFrame.h"
 #include <wtf/Deque.h>
 #include <wtf/Forward.h>
 #include <wtf/Lock.h>
@@ -48,6 +47,8 @@ class MediaSourcePrivateClient;
 class PixelBufferConformerCV;
 class VideoLayerManagerObjC;
 class VideoTrackPrivateMediaStream;
+
+enum class VideoFrameRotation : uint16_t;
 
 class MediaPlayerPrivateMediaStreamAVFObjC final
     : public MediaPlayerPrivateInterface
@@ -85,7 +86,8 @@ public:
     WTFLogChannel& logChannel() const final;
 
     using MediaStreamTrackPrivate::Observer::weakPtrFactory;
-    using WeakValueType = MediaStreamTrackPrivate::Observer::WeakValueType;
+    using MediaStreamTrackPrivate::Observer::WeakValueType;
+    using MediaStreamTrackPrivate::Observer::WeakPtrImplType;
 
 private:
     PlatformLayer* rootLayer() const;
@@ -154,8 +156,6 @@ private:
     void acceleratedRenderingStateChanged() final { updateLayersAsNeeded(); }
     bool supportsAcceleratedRendering() const override { return true; }
 
-    bool hasSingleSecurityOrigin() const override { return true; }
-
     MediaPlayer::MovieLoadType movieLoadType() const override { return MediaPlayer::MovieLoadType::LiveStream; }
 
     String engineDescription() const override;
@@ -168,6 +168,7 @@ private:
     void audioOutputDeviceChanged() final;
     std::optional<VideoFrameMetadata> videoFrameMetadata() final;
     void setResourceOwner(const ProcessIdentity&) final { ASSERT_NOT_REACHED(); }
+    void renderVideoWillBeDestroyed() final { destroyLayers(); }
 
     MediaPlayer::ReadyState currentReadyState();
     void updateReadyState();
@@ -264,7 +265,7 @@ private:
     // Written on main thread, read on sample thread.
     bool m_canEnqueueDisplayLayer { false };
     // Used on sample thread.
-    VideoFrame::Rotation m_videoRotation { VideoFrame::Rotation::None };
+    VideoFrameRotation m_videoRotation { };
     bool m_videoMirrored { false };
 
     Ref<const Logger> m_logger;

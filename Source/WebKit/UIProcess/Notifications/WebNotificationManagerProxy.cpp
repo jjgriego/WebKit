@@ -28,6 +28,7 @@
 
 #include "APIArray.h"
 #include "APINotificationProvider.h"
+#include "APINumber.h"
 #include "APISecurityOrigin.h"
 #include "Logging.h"
 #include "WebNotification.h"
@@ -103,14 +104,27 @@ static WebPageProxyIdentifier identifierForPagePointer(WebPageProxy* webPage)
     return webPage ? webPage->identifier() : WebPageProxyIdentifier();
 }
 
-void WebNotificationManagerProxy::show(WebPageProxy* webPage, IPC::Connection& connection, const WebCore::NotificationData& notificationData)
+void WebNotificationManagerProxy::show(WebPageProxy* webPage, IPC::Connection& connection, const WebCore::NotificationData& notificationData, RefPtr<WebCore::NotificationResources>&& notificationResources)
 {
     LOG(Notifications, "WebPageProxy (%p) asking to show notification (%s)", webPage, notificationData.notificationID.toString().utf8().data());
 
-    auto notification = WebNotification::create(notificationData, identifierForPagePointer(webPage), connection);
+    auto notification = WebNotification::createNonPersistent(notificationData, identifierForPagePointer(webPage), connection);
+    showImpl(webPage, WTFMove(notification), WTFMove(notificationResources));
+}
+
+void WebNotificationManagerProxy::show(const WebsiteDataStore& dataStore, IPC::Connection& connection, const WebCore::NotificationData& notificationData, RefPtr<WebCore::NotificationResources>&& notificationResources)
+{
+    LOG(Notifications, "WebsiteDataStore (%p) asking to show notification (%s)", &dataStore, notificationData.notificationID.toString().utf8().data());
+
+    auto notification = WebNotification::createPersistent(notificationData, dataStore.configuration().identifier(), connection);
+    showImpl(nullptr, WTFMove(notification), WTFMove(notificationResources));
+}
+
+void WebNotificationManagerProxy::showImpl(WebPageProxy* webPage, Ref<WebNotification>&& notification, RefPtr<WebCore::NotificationResources>&& notificationResources)
+{
     m_globalNotificationMap.set(notification->notificationID(), notification->coreNotificationID());
     m_notifications.set(notification->coreNotificationID(), notification);
-    m_provider->show(webPage, notification.get());
+    m_provider->show(webPage, notification.get(), WTFMove(notificationResources));
 }
 
 void WebNotificationManagerProxy::cancel(WebPageProxy* page, const UUID& pageNotificationID)
@@ -177,7 +191,7 @@ void WebNotificationManagerProxy::providerDidShowNotification(uint64_t globalNot
 
     LOG(Notifications, "Provider did show notification (%s)", notification->coreNotificationID().toString().utf8().data());
 
-    auto* connection = notification->sourceConnection();
+    auto connection = notification->sourceConnection();
     if (!connection)
         return;
 
@@ -201,7 +215,7 @@ static void dispatchDidClickNotification(WebNotification* notification)
     }
 #endif
 
-    if (auto* connection = notification->sourceConnection())
+    if (auto connection = notification->sourceConnection())
         connection->send(Messages::WebNotificationManager::DidClickNotification(notification->coreNotificationID()), 0);
 }
 
@@ -269,7 +283,7 @@ void WebNotificationManagerProxy::providerDidCloseNotifications(API::Array* glob
     }
 
     for (auto& notification : closedNotifications) {
-        if (auto* connection = notification->sourceConnection()) {
+        if (auto connection = notification->sourceConnection()) {
             LOG(Notifications, "Provider did close notification (%s)", notification->coreNotificationID().toString().utf8().data());
             Vector<UUID> notificationIDs = { notification->coreNotificationID() };
             connection->send(Messages::WebNotificationManager::DidCloseNotifications(notificationIDs), 0);
@@ -277,35 +291,22 @@ void WebNotificationManagerProxy::providerDidCloseNotifications(API::Array* glob
     }
 }
 
-void WebNotificationManagerProxy::providerDidUpdateNotificationPolicy(const API::SecurityOrigin* origin, bool allowed)
+static void setPushesAndNotificationsEnabledForOrigin(const WebCore::SecurityOriginData& origin, bool enabled)
 {
-    LOG(Notifications, "Provider did update notification policy for origin %s to %i", origin->securityOrigin().toString().utf8().data(), allowed);
-
-    WebProcessPool::sendToAllRemoteWorkerProcesses(Messages::WebNotificationManager::DidUpdateNotificationDecision(origin->securityOrigin().toString(), allowed));
-
-    if (!processPool())
-        return;
-
-    processPool()->sendToAllProcesses(Messages::WebNotificationManager::DidUpdateNotificationDecision(origin->securityOrigin().toString(), allowed));
+    WebsiteDataStore::forEachWebsiteDataStore([&origin, enabled](WebsiteDataStore& dataStore) {
+        if (dataStore.isPersistent())
+            dataStore.networkProcess().setPushAndNotificationsEnabledForOrigin(dataStore.sessionID(), origin, enabled, []() { });
+    });
 }
 
 static void removePushSubscriptionsForOrigins(const Vector<WebCore::SecurityOriginData>& origins)
 {
-    RefPtr<NetworkProcessProxy> networkProcess;
-    auto sessionID = PAL::SessionID::defaultSessionID();
-
-    WebsiteDataStore::forEachWebsiteDataStore([&networkProcess, &sessionID](WebsiteDataStore& dataStore) {
-        if (!networkProcess && dataStore.isPersistent()) {
-            networkProcess = &dataStore.networkProcess();
-            sessionID = dataStore.sessionID();
+    WebsiteDataStore::forEachWebsiteDataStore([&origins](WebsiteDataStore& dataStore) {
+        if (dataStore.isPersistent()) {
+            for (auto& origin : origins)
+                dataStore.networkProcess().deletePushAndNotificationRegistration(dataStore.sessionID(), origin, [originString = origin.toString()](auto&&) { });
         }
     });
-
-    if (!networkProcess)
-        return;
-
-    for (auto& origin : origins)
-        networkProcess->deletePushAndNotificationRegistration(sessionID, origin, [originString = origin.toString()](auto&&) { });
 }
 
 static Vector<WebCore::SecurityOriginData> apiArrayToSecurityOrigins(API::Array* origins)
@@ -336,6 +337,24 @@ static Vector<String> apiArrayToSecurityOriginStrings(API::Array* origins)
         originStrings.uncheckedAppend(origins->at<API::SecurityOrigin>(i)->securityOrigin().toString());
 
     return originStrings;
+}
+
+void WebNotificationManagerProxy::providerDidUpdateNotificationPolicy(const API::SecurityOrigin* origin, bool enabled)
+{
+    RELEASE_LOG(Notifications, "Provider did update notification policy for origin %" SENSITIVE_LOG_STRING " to %d", origin->securityOrigin().toString().utf8().data(), enabled);
+
+    auto originString = origin->securityOrigin().toString();
+    if (originString.isEmpty())
+        return;
+
+    if (this == &sharedServiceWorkerManager()) {
+        setPushesAndNotificationsEnabledForOrigin(origin->securityOrigin(), enabled);
+        WebProcessPool::sendToAllRemoteWorkerProcesses(Messages::WebNotificationManager::DidUpdateNotificationDecision(originString, enabled));
+        return;
+    }
+
+    if (processPool())
+        processPool()->sendToAllProcesses(Messages::WebNotificationManager::DidUpdateNotificationDecision(originString, enabled));
 }
 
 void WebNotificationManagerProxy::providerDidRemoveNotificationPolicies(API::Array* origins)

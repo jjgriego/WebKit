@@ -46,6 +46,7 @@
 #include <wtf/Ref.h>
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/UniqueRef.h>
+#include <wtf/WeakPtr.h>
 #include <wtf/text/AtomStringHash.h>
 
 namespace WebCore {
@@ -84,14 +85,14 @@ public:
     WEBCORE_EXPORT virtual void reenqueueMediaIfNeeded(const MediaTime& currentMediaTime);
     WEBCORE_EXPORT virtual void addTrackBuffer(const AtomString& trackId, RefPtr<MediaDescription>&&);
     WEBCORE_EXPORT virtual void resetTrackBuffers();
-    WEBCORE_EXPORT virtual void clearTrackBuffers();
+    WEBCORE_EXPORT virtual void clearTrackBuffers(bool shouldReportToClient = false);
     WEBCORE_EXPORT virtual void setAllTrackBuffersNeedRandomAccess();
     virtual void setGroupStartTimestamp(const MediaTime& mediaTime) { m_groupStartTimestamp = mediaTime; }
     virtual void setGroupStartTimestampToEndTimestamp() { m_groupStartTimestamp = m_groupEndTimestamp; }
     virtual void setShouldGenerateTimestamps(bool flag) { m_shouldGenerateTimestamps = flag; }
     WEBCORE_EXPORT virtual void updateBufferedFromTrackBuffers(bool sourceIsEnded);
     WEBCORE_EXPORT virtual void removeCodedFrames(const MediaTime& start, const MediaTime& end, const MediaTime& currentMediaTime, bool isEnded, CompletionHandler<void()>&& = [] { });
-    WEBCORE_EXPORT virtual void evictCodedFrames(uint64_t newDataSize, uint64_t maximumBufferSize, const MediaTime& currentTime, const MediaTime& duration, bool isEnded);
+    WEBCORE_EXPORT virtual void evictCodedFrames(uint64_t newDataSize, uint64_t maximumBufferSize, const MediaTime& currentTime, bool isEnded);
     WEBCORE_EXPORT virtual uint64_t totalTrackBufferSizeInBytes() const;
     WEBCORE_EXPORT virtual void resetTimestampOffsetInTrackBuffers();
     virtual void startChangingType() { m_pendingInitializationSegmentForChangeType = true; }
@@ -101,7 +102,7 @@ public:
     WEBCORE_EXPORT virtual void seekToTime(const MediaTime&);
     WEBCORE_EXPORT virtual void updateTrackIds(Vector<std::pair<AtomString, AtomString>>&& trackIdPairs);
 
-    void setClient(SourceBufferPrivateClient* client) { m_client = client; }
+    WEBCORE_EXPORT void setClient(SourceBufferPrivateClient*);
     void setIsAttached(bool flag) { m_isAttached = flag; }
 
     const TimeRanges* buffered() const { return m_buffered.get(); }
@@ -115,6 +116,9 @@ public:
     MediaTime timestampOffset() const { return m_timestampOffset; }
 
     virtual size_t platformMaximumBufferSize() const { return 0; }
+
+    // Methods for ManagedSourceBuffer
+    WEBCORE_EXPORT virtual void memoryPressure(uint64_t maximumBufferSize, const MediaTime& currentTime, bool isEnded, CompletionHandler<void(bool)>&&);
 
     // Internals Utility methods
     WEBCORE_EXPORT virtual void bufferedSamplesForTrackId(const AtomString&, CompletionHandler<void(Vector<String>&&)>&&);
@@ -131,7 +135,7 @@ public:
 protected:
     // The following method should never be called directly and be overridden instead.
     WEBCORE_EXPORT virtual void append(Vector<unsigned char>&&);
-    virtual MediaTime timeFudgeFactor() const { return { 1, 10 }; }
+    virtual MediaTime timeFudgeFactor() const { return { 2002, 24000 }; }
     virtual bool isActive() const { return false; }
     virtual bool isSeeking() const { return false; }
     virtual MediaTime currentMediaTime() const { return { }; }
@@ -148,12 +152,12 @@ protected:
 
     void appendCompleted(bool parsingSucceeded, bool isEnded);
     void reenqueSamples(const AtomString& trackID);
-    WEBCORE_EXPORT void didReceiveInitializationSegment(SourceBufferPrivateClient::InitializationSegment&&, CompletionHandler<void()>&&);
+    WEBCORE_EXPORT void didReceiveInitializationSegment(SourceBufferPrivateClient::InitializationSegment&&, CompletionHandler<void(SourceBufferPrivateClient::ReceiveResult)>&&);
     WEBCORE_EXPORT void didReceiveSample(Ref<MediaSample>&&);
     WEBCORE_EXPORT void setBufferedRanges(const PlatformTimeRanges&);
     void provideMediaData(const AtomString& trackID);
 
-    SourceBufferPrivateClient* m_client { nullptr };
+    WeakPtr<SourceBufferPrivateClient> m_client;
 
 private:
     void updateHighestPresentationTimestamp();
@@ -163,6 +167,8 @@ private:
     void provideMediaData(TrackBuffer&, const AtomString& trackID);
     void setBufferedDirty(bool);
     void trySignalAllSamplesInTrackEnqueued(TrackBuffer&, const AtomString& trackID);
+    MediaTime findPreviousSyncSamplePresentationTime(const MediaTime&);
+    bool evictFrames(uint64_t newDataSize, uint64_t maximumBufferSize, const MediaTime& currentTime, bool isEnded);
 
     bool m_isAttached { false };
     bool m_hasAudio { false };

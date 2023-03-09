@@ -54,7 +54,6 @@ typedef void (*AXPostedNotificationCallback)(id element, NSString* notification,
 - (NSString *)stringForRange:(NSRange)range;
 - (NSAttributedString *)attributedStringForRange:(NSRange)range;
 - (NSAttributedString *)attributedStringForElement;
-- (NSArray *)elementsForRange:(NSRange)range;
 - (NSString *)selectionRangeString;
 - (BOOL)accessibilityInsertText:(NSString *)text;
 - (CGPoint)accessibilityClickPoint;
@@ -102,6 +101,11 @@ typedef void (*AXPostedNotificationCallback)(id element, NSString* notification,
 - (BOOL)accessibilityPerformEscape;
 - (NSString *)accessibilityDOMIdentifier;
 - (NSString *)_accessibilityWebRoleAsString;
+- (BOOL)accessibilityIsInsertion;
+- (BOOL)accessibilityIsDeletion;
+- (BOOL)accessibilityIsFirstItemInSuggestion;
+- (BOOL)accessibilityIsLastItemInSuggestion;
+- (BOOL)accessibilityIsMarkAnnotation;
 
 // TextMarker related
 - (NSArray *)textMarkerRange;
@@ -410,15 +414,6 @@ bool AccessibilityUIElement::attributedStringRangeIsMisspelled(unsigned, unsigne
 }
 
 
-void AccessibilityUIElement::elementsForRange(unsigned location, unsigned length, Vector<AccessibilityUIElement>& elements)
-{ 
-    NSArray *elementsForRange = [m_element elementsForRange:NSMakeRange(location, length)];
-    for (id object in elementsForRange) {
-        AccessibilityUIElement element = AccessibilityUIElement(object);
-        elements.append(element);
-    }
-}
-
 static void _CGPathEnumerationIteration(void *info, const CGPathElement *element)
 {
     NSMutableString *result = (NSMutableString *)info;
@@ -588,6 +583,11 @@ bool AccessibilityUIElement::attributedStringForTextMarkerRangeContainsAttribute
 int AccessibilityUIElement::indexForTextMarker(AccessibilityTextMarker*)
 {
     return -1;
+}
+
+bool AccessibilityUIElement::isTextMarkerNull(AccessibilityTextMarker*)
+{
+    return true;
 }
 
 bool AccessibilityUIElement::isTextMarkerValid(AccessibilityTextMarker*)
@@ -1279,4 +1279,29 @@ unsigned AccessibilityUIElement::selectedChildrenCount() const
 AccessibilityUIElement AccessibilityUIElement::selectedChildAtIndex(unsigned) const
 {
     return 0;
+}
+
+bool AccessibilityUIElement::isInsertion()
+{
+    return [m_element accessibilityIsInsertion];
+}
+
+bool AccessibilityUIElement::isDeletion()
+{
+    return [m_element accessibilityIsDeletion];
+}
+
+bool AccessibilityUIElement::isFirstItemInSuggestion()
+{
+    return [m_element accessibilityIsFirstItemInSuggestion];
+}
+
+bool AccessibilityUIElement::isLastItemInSuggestion()
+{
+    return [m_element accessibilityIsLastItemInSuggestion];
+}
+
+bool AccessibilityUIElement::isMarkAnnotation() const
+{
+    return [m_element accessibilityIsMarkAnnotation];
 }

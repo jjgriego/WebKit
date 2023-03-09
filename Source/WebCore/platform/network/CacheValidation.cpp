@@ -68,6 +68,9 @@ static constexpr ASCIILiteral headerPrefixesToIgnoreAfterRevalidation[] = {
 
 static inline bool shouldUpdateHeaderAfterRevalidation(const String& header)
 {
+    if (header.startsWithIgnoringASCIICase("content-security-"_s))
+        return true;
+
     for (auto& headerToIgnore : headersToIgnoreAfterRevalidation) {
         if (equalIgnoringASCIICase(header, headerToIgnore))
             return false;
@@ -278,7 +281,9 @@ CacheControlDirectives parseCacheControlDirectives(const HTTPHeaderMap& headers)
 
     String cacheControlValue = headers.get(HTTPHeaderName::CacheControl);
     if (!cacheControlValue.isEmpty()) {
-        auto safeHeaderString = cacheControlValue.removeCharacters(isControlCharacterOrSpace);
+        auto safeHeaderString = cacheControlValue.removeCharacters([](auto character) {
+            return isControlCharacterOrSpace(character);
+        });
         auto directives = parseCacheHeader(safeHeaderString);
 
         size_t directivesSize = directives.size();
@@ -343,7 +348,7 @@ CacheControlDirectives parseCacheControlDirectives(const HTTPHeaderMap& headers)
 
 static String cookieRequestHeaderFieldValue(const NetworkStorageSession& session, const ResourceRequest& request)
 {
-    return session.cookieRequestHeaderFieldValue(request.firstPartyForCookies(), SameSiteInfo::create(request), request.url(), std::nullopt, std::nullopt, request.url().protocolIs("https"_s) ? IncludeSecureCookies::Yes : IncludeSecureCookies::No, ShouldAskITP::Yes, ShouldRelaxThirdPartyCookieBlocking::No).first;
+    return session.cookieRequestHeaderFieldValue(request.firstPartyForCookies(), SameSiteInfo::create(request), request.url(), std::nullopt, std::nullopt, request.url().protocolIs("https"_s) ? IncludeSecureCookies::Yes : IncludeSecureCookies::No, ApplyTrackingPrevention::Yes, ShouldRelaxThirdPartyCookieBlocking::No).first;
 }
 
 static String cookieRequestHeaderFieldValue(const CookieJar* cookieJar, const ResourceRequest& request)

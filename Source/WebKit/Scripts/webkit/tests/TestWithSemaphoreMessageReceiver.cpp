@@ -25,39 +25,14 @@
 #include "config.h"
 #include "TestWithSemaphore.h"
 
-#include "Decoder.h"
-#include "HandleMessage.h"
-#include "IPCSemaphore.h"
-#include "TestWithSemaphoreMessages.h"
+#include "Decoder.h" // NOLINT
+#include "HandleMessage.h" // NOLINT
+#include "IPCSemaphore.h" // NOLINT
+#include "TestWithSemaphoreMessages.h" // NOLINT
 
 #if ENABLE(IPC_TESTING_API)
 #include "JSIPCBinding.h"
 #endif
-
-namespace Messages {
-
-namespace TestWithSemaphore {
-
-void ReceiveSemaphore::callReply(IPC::Decoder& decoder, CompletionHandler<void(IPC::Semaphore&&)>&& completionHandler)
-{
-    std::optional<IPC::Semaphore> r0;
-    decoder >> r0;
-    if (!r0) {
-        ASSERT_NOT_REACHED();
-        cancelReply(WTFMove(completionHandler));
-        return;
-    }
-    completionHandler(WTFMove(*r0));
-}
-
-void ReceiveSemaphore::cancelReply(CompletionHandler<void(IPC::Semaphore&&)>&& completionHandler)
-{
-    completionHandler(IPC::AsyncReplyError<IPC::Semaphore>::create());
-}
-
-} // namespace TestWithSemaphore
-
-} // namespace Messages
 
 namespace WebKit {
 

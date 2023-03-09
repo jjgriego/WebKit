@@ -75,9 +75,6 @@ public:
     bool wantsDeepColorBackingStore() const { return m_wantsDeepColorBackingStore; }
     WEBCORE_EXPORT void setWantsDeepColorBackingStore(bool);
 
-    bool supportsSubpixelAntialiasedText() const { return m_supportsSubpixelAntialiasedText; }
-    WEBCORE_EXPORT void setSupportsSubpixelAntialiasedText(bool);
-
     WEBCORE_EXPORT void setTilesOpaque(bool);
     bool tilesAreOpaque() const { return m_tilesAreOpaque; }
 
@@ -161,7 +158,7 @@ private:
     void setTiledScrollingIndicatorPosition(const FloatPoint&) final;
     void setTopContentInset(float) final;
     void setVelocity(const VelocityData&) final;
-    void setScrollability(Scrollability) final;
+    void setScrollability(OptionSet<Scrollability>) final;
     void prepopulateRect(const FloatRect&) final;
     void setIsInWindow(bool) final;
     bool isInWindow() const final { return m_isInWindow; }
@@ -226,7 +223,7 @@ private:
 
     int m_marginSize { kDefaultTileSize };
 
-    Scrollability m_scrollability { HorizontallyScrollable | VerticallyScrollable };
+    OptionSet<Scrollability> m_scrollability { Scrollability::HorizontallyScrollable, Scrollability::VerticallyScrollable };
 
     // m_marginTop and m_marginBottom are the height in pixels of the top and bottom margin tiles. The width
     // of those tiles will be equivalent to the width of the other tiles in the grid. m_marginRight and
@@ -238,7 +235,6 @@ private:
     bool m_scrollingPerformanceTestingEnabled { false };
     bool m_acceleratesDrawing { false };
     bool m_wantsDeepColorBackingStore { false };
-    bool m_supportsSubpixelAntialiasedText { false };
     bool m_tilesAreOpaque { false };
     bool m_hasTilesWithTemporaryScaleFactor { false }; // Used to make low-res tiles when zooming.
     bool m_inLiveResize { false };

@@ -53,6 +53,44 @@
 SOFT_LINK_PRIVATE_FRAMEWORK(TextInput)
 SOFT_LINK_CLASS(TextInput, TIPreferencesController);
 
+#if HAVE(UI_WINDOW_SCENE_GEOMETRY_PREFERENCES)
+
+@interface WindowDidRotateObserver : NSObject
+@property (nonatomic, readonly) void (^callback)();
+@end
+
+@implementation WindowDidRotateObserver {
+}
+
+- (WindowDidRotateObserver *)initWithCallback:(void (^)())callback
+{
+    self = [super init];
+    if (!self)
+        return nil;
+
+    _callback = callback;
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_windowDidRotate) name:UIWindowDidRotateNotification object:nil];
+    return self;
+}
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:UIWindowDidRotateNotification object:nil];
+    [super dealloc];
+}
+
+- (void)_windowDidRotate
+{
+    callOnMainThread([self, protectedSelf = RetainPtr<WindowDidRotateObserver>(self)] {
+        if (_callback)
+            _callback();
+    });
+}
+
+@end
+
+#endif // HAVE(UI_WINDOW_SCENE_GEOMETRY_PREFERENCES)
+
 static void overrideSyncInputManagerToAcceptedAutocorrection(id, SEL, TIKeyboardCandidate *candidate, TIKeyboardInput *input)
 {
     // Intentionally unimplemented. See usage below for more information.
@@ -154,6 +192,60 @@ static _WKDragInteractionPolicy dragInteractionPolicy(const TestOptions& options
     return _WKDragInteractionPolicyDefault;
 }
 
+static _WKFocusStartsInputSessionPolicy focusStartsInputSessionPolicy(const TestOptions& options)
+{
+    auto policy = options.focusStartsInputSessionPolicy();
+    if (policy == "allow")
+        return _WKFocusStartsInputSessionPolicyAllow;
+    if (policy == "disallow")
+        return _WKFocusStartsInputSessionPolicyDisallow;
+    return _WKFocusStartsInputSessionPolicyAuto;
+}
+
+void TestController::restorePortraitOrientationIfNeeded()
+{
+#if HAVE(UI_WINDOW_SCENE_GEOMETRY_PREFERENCES)
+    if (!mainWebView())
+        return;
+
+    TestRunnerWKWebView *webView = mainWebView()->platformView();
+
+    auto *scene = webView.window.windowScene;
+    if (scene.effectiveGeometry.interfaceOrientation == UIInterfaceOrientationPortrait)
+        return;
+
+    __block bool didRotate = false;
+    auto rotationObserver = adoptNS([[WindowDidRotateObserver alloc] initWithCallback:^{
+        didRotate = true;
+    }]);
+
+    if (m_didLockOrientation)
+        lockScreenOrientation(kWKScreenOrientationTypePortraitPrimary);
+    else {
+        auto geometryPreferences = adoptNS([[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:UIInterfaceOrientationMaskPortrait]);
+        [scene requestGeometryUpdateWithPreferences:geometryPreferences.get() errorHandler:^(NSError *error) {
+            NSLog(@"Failed to restore portrait orientation with error: %@.", error);
+        }];
+    }
+
+    auto startTime = MonotonicTime::now();
+    while ([NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:NSDate.distantPast]) {
+        if (scene.effectiveGeometry.interfaceOrientation == UIInterfaceOrientationPortrait)
+            break;
+
+        if (MonotonicTime::now() - startTime >= m_currentInvocation->shortTimeout())
+            break;
+    }
+    runUntil(didRotate, m_currentInvocation->shortTimeout());
+    if (m_didLockOrientation) {
+        unlockScreenOrientation();
+        m_didLockOrientation = false;
+    }
+#else
+    [[UIDevice currentDevice] setOrientation:UIDeviceOrientationPortrait animated:NO];
+#endif
+}
+
 bool TestController::platformResetStateToConsistentValues(const TestOptions& options)
 {
     cocoaResetStateToConsistentValues(options);
@@ -161,8 +253,10 @@ bool TestController::platformResetStateToConsistentValues(const TestOptions& opt
     [UIKeyboardImpl.activeInstance setCorrectionLearningAllowed:NO];
     [pasteboardConsistencyEnforcer() clearPasteboard];
     [[UIApplication sharedApplication] _cancelAllTouches];
-    [[UIDevice currentDevice] setOrientation:UIDeviceOrientationPortrait animated:NO];
     [[UIScreen mainScreen] _setScale:2.0];
+    [[HIDEventGenerator sharedHIDEventGenerator] resetActiveModifiers];
+
+    restorePortraitOrientationIfNeeded();
 
     // Ensures that only the UCB is on-screen when showing the keyboard, if the hardware keyboard is attached.
     TIPreferencesController *textInputPreferences = [getTIPreferencesControllerClass() sharedPreferencesController];
@@ -226,9 +320,13 @@ bool TestController::platformResetStateToConsistentValues(const TestOptions& opt
         webView.overrideSafeAreaInsets = UIEdgeInsetsZero;
         [webView _clearOverrideLayoutParameters];
         [webView _clearInterfaceOrientationOverride];
-        [webView resetCustomMenuAction];
         [webView setAllowedMenuActions:nil];
         webView._dragInteractionPolicy = dragInteractionPolicy(options);
+        webView.focusStartsInputSessionPolicy = focusStartsInputSessionPolicy(options);
+
+#if HAVE(UIFINDINTERACTION)
+        webView.findInteractionEnabled = options.findInteractionEnabled();
+#endif
 
         UIScrollView *scrollView = webView.scrollView;
         [scrollView _removeAllAnimations:YES];
@@ -247,6 +345,10 @@ bool TestController::platformResetStateToConsistentValues(const TestOptions& opt
             shouldRestoreFirstResponder = [webView resignFirstResponder];
 
         [webView immediatelyDismissContextMenuIfNeeded];
+
+#if HAVE(UI_EDIT_MENU_INTERACTION)
+        [webView immediatelyDismissEditMenuInteractionIfNeeded];
+#endif
     }
 
     UIMenuController.sharedMenuController.menuVisible = NO;
@@ -259,7 +361,7 @@ bool TestController::platformResetStateToConsistentValues(const TestOptions& opt
         UIViewController *webViewController = [[webView window] rootViewController];
 
         MonotonicTime waitEndTime = MonotonicTime::now() + m_currentInvocation->shortTimeout();
-        
+
         bool hasPresentedViewController = !![webViewController presentedViewController];
         while (hasPresentedViewController && MonotonicTime::now() < waitEndTime) {
             [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate distantPast]];
@@ -396,5 +498,46 @@ UIPasteboardConsistencyEnforcer *TestController::pasteboardConsistencyEnforcer()
         m_pasteboardConsistencyEnforcer = adoptNS([[UIPasteboardConsistencyEnforcer alloc] initWithPasteboardName:UIPasteboardNameGeneral]);
     return m_pasteboardConsistencyEnforcer.get();
 }
+
+#if PLATFORM(IOS)
+void TestController::lockScreenOrientation(WKScreenOrientationType orientation)
+{
+    TestRunnerWKWebView *webView = mainWebView()->platformView();
+
+    // Make sure this is the top-most window or the call to setNeedsUpdateOfSupportedInterfaceOrientations
+    // below won't do anything. UIKit prioritizes the top-most scene-sized window when determining interface
+    // orientation.
+    [webView.window makeKeyWindow];
+
+    m_didLockOrientation = true;
+
+    switch (orientation) {
+    case kWKScreenOrientationTypePortraitPrimary:
+        webView.supportedInterfaceOrientations = UIInterfaceOrientationMaskPortrait;
+        break;
+    case kWKScreenOrientationTypePortraitSecondary:
+        webView.supportedInterfaceOrientations = UIInterfaceOrientationMaskPortraitUpsideDown;
+        break;
+    case kWKScreenOrientationTypeLandscapePrimary:
+        webView.supportedInterfaceOrientations = UIInterfaceOrientationMaskLandscapeLeft;
+        break;
+    case kWKScreenOrientationTypeLandscapeSecondary:
+        webView.supportedInterfaceOrientations = UIInterfaceOrientationMaskLandscapeRight;
+        break;
+    }
+    [UIView performWithoutAnimation:^{
+        [webView.window.rootViewController setNeedsUpdateOfSupportedInterfaceOrientations];
+    }];
+}
+
+void TestController::unlockScreenOrientation()
+{
+    TestRunnerWKWebView *webView = mainWebView()->platformView();
+    webView.supportedInterfaceOrientations = UIInterfaceOrientationMaskAll;
+    [UIView performWithoutAnimation:^{
+        [webView.window.rootViewController setNeedsUpdateOfSupportedInterfaceOrientations];
+    }];
+}
+#endif
 
 } // namespace WTR

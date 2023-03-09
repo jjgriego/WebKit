@@ -40,6 +40,7 @@
 #include <WebCore/DOMWrapperWorld.h>
 #include <WebCore/Frame.h>
 #include <WebCore/FrameDestructionObserverInlines.h>
+#include <WebCore/FrameLoader.h>
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/SerializedScriptValue.h>
 #include <WebCore/UserStyleSheet.h>
@@ -126,8 +127,23 @@ InjectedBundleScriptWorld* WebUserContentController::addContentWorld(const std::
 
 void WebUserContentController::addContentWorlds(const Vector<std::pair<ContentWorldIdentifier, String>>& worlds)
 {
-    for (auto& world : worlds)
-        addContentWorld(world);
+    for (auto& world : worlds) {
+        if (auto* contentWorld = addContentWorld(world)) {
+            Page::forEachPage([&] (auto& page) {
+                if (&page.userContentProvider() != this)
+                    return;
+
+                auto& mainFrame = page.mainFrame();
+                for (AbstractFrame* frame = &mainFrame; frame; frame = frame->tree().traverseNext()) {
+                    auto* localFrame = dynamicDowncast<LocalFrame>(frame);
+                    if (!localFrame)
+                        continue;
+                    localFrame->loader().client().dispatchGlobalObjectAvailable(contentWorld->coreWorld());
+                }
+            });
+        }
+    }
+
 }
 
 void WebUserContentController::removeContentWorlds(const Vector<ContentWorldIdentifier>& worldIdentifiers)
@@ -297,7 +313,7 @@ void WebUserContentController::addUserScriptMessageHandlers(const Vector<WebScri
             continue;
         }
 
-        addUserScriptMessageHandlerInternal(*it->value.first, handler.identifier, handler.name);
+        addUserScriptMessageHandlerInternal(*it->value.first, handler.identifier, AtomString(handler.name));
     }
 #else
     UNUSED_PARAM(scriptMessageHandlers);
@@ -414,15 +430,22 @@ void WebUserContentController::addUserScriptInternal(InjectedBundleScriptWorld& 
         Page::forEachPage([&] (auto& page) {
             if (&page.userContentProvider() != this)
                 return;
+            
+            auto* localMainFrame = dynamicDowncast<LocalFrame>(page.mainFrame());
+            if (!localMainFrame)
+                return;
 
-            auto& mainFrame = page.mainFrame();
             if (userScript.injectedFrames() == UserContentInjectedFrames::InjectInTopFrameOnly) {
-                mainFrame.injectUserScriptImmediately(world.coreWorld(), userScript);
+                localMainFrame->injectUserScriptImmediately(world.coreWorld(), userScript);
                 return;
             }
 
-            for (auto* frame = &mainFrame; frame; frame = frame->tree().traverseNext(&mainFrame))
-                frame->injectUserScriptImmediately(world.coreWorld(), userScript);
+            for (AbstractFrame* frame = localMainFrame; frame; frame = frame->tree().traverseNext(localMainFrame)) {
+                auto* localFrame = dynamicDowncast<LocalFrame>(frame);
+                if (!localFrame)
+                    continue;
+                localFrame->injectUserScriptImmediately(world.coreWorld(), userScript);
+            }
         });
     }
 

@@ -95,7 +95,6 @@ private:
     bool runJavaScriptConfirm(WebCore::Frame&, const String&) override;
     bool runJavaScriptPrompt(WebCore::Frame&, const String& message, const String& defaultValue, String& result) override;
 
-    bool supportsImmediateInvalidation() final;
     void invalidateRootView(const WebCore::IntRect&) final;
     void invalidateContentsAndRootView(const WebCore::IntRect&) final;
     void invalidateContentsForSlowScroll(const WebCore::IntRect&) final;
@@ -207,6 +206,7 @@ private:
 #endif
 
 #if ENABLE(VIDEO)
+    bool canEnterVideoFullscreen(WebCore::HTMLMediaElementEnums::VideoFullscreenMode) const final;
     bool supportsVideoFullscreen(WebCore::HTMLMediaElementEnums::VideoFullscreenMode) final;
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     void setMockVideoPresentationModeEnabled(bool) final;
@@ -248,8 +248,6 @@ private:
     void setMockMediaPlaybackTargetPickerState(const String&, WebCore::MediaPlaybackTargetContext::MockState) final;
     void mockMediaPlaybackTargetPickerDismissPopup() override;
 #endif
-
-    String signedPublicKeyAndChallengeString(unsigned keySizeIndex, const String& challengeString, const URL&) const final;
 
 #if PLATFORM(MAC)
     void changeUniversalAccessZoomFocus(const WebCore::IntRect&, const WebCore::IntRect&) final;

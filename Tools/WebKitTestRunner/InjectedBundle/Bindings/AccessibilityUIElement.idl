@@ -115,6 +115,10 @@
     readonly attribute DOMString classList;
     readonly attribute DOMString embeddedImageDescription;
     readonly attribute object imageOverlayElements;
+    readonly attribute boolean isInsertion;
+    readonly attribute boolean isDeletion;
+    readonly attribute boolean isFirstItemInSuggestion;
+    readonly attribute boolean isLastItemInSuggestion;
 
     readonly attribute long x;
     readonly attribute long y;
@@ -175,6 +179,7 @@
     long columnCount();
     object columnHeaders();
     object rowHeaders();
+    readonly attribute DOMString customContent;
 
     object detailsElements();
     object errorMessageElements();
@@ -250,6 +255,7 @@
     boolean attributedStringForTextMarkerRangeContainsAttribute(DOMString attr, AccessibilityTextMarkerRange range);
     long indexForTextMarker(AccessibilityTextMarker marker);
     boolean isTextMarkerValid(AccessibilityTextMarker marker);
+    boolean isTextMarkerNull(AccessibilityTextMarker marker);
     AccessibilityTextMarker textMarkerForIndex(long textIndex);
     readonly attribute AccessibilityTextMarker startTextMarker;
     readonly attribute AccessibilityTextMarker endTextMarker;
@@ -280,7 +286,6 @@
     readonly attribute long elementTextPosition;
     readonly attribute long elementTextLength;
     readonly attribute DOMString stringForSelection;
-    object elementsForRange(unsigned long location, unsigned long length);
     undefined increaseTextSelection();
     undefined decreaseTextSelection();
     AccessibilityUIElement linkedElement();
@@ -289,6 +294,7 @@
     undefined assistiveTechnologySimulatedFocus();
     readonly attribute boolean isSearchField;
     readonly attribute boolean isTextArea;
+    readonly attribute boolean isMarkAnnotation;
 
     readonly attribute boolean hasDocumentRoleAncestor;
     readonly attribute boolean hasWebApplicationAncestor;
@@ -297,6 +303,9 @@
 
     readonly attribute boolean hasContainedByFieldsetTrait;
     AccessibilityUIElement fieldsetAncestorElement();
+    AccessibilityUIElement focusableAncestor();
+    AccessibilityUIElement editableAncestor();
+    AccessibilityUIElement highestEditableAncestor();
 
     // Notification support.
     boolean addNotificationListener(object callbackFunction);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2008, 2013-2014 Apple Inc.  All rights reserved.
+ * Copyright (C) 2006-2022 Apple Inc.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -235,11 +235,11 @@ static HFONT createMLangFont(IMLangFontLinkType* langFontLink, HDC hdc, DWORD co
     return hfont;
 }
 
-RefPtr<Font> FontCache::systemFallbackForCharacters(const FontDescription& description, const Font* originalFontData, IsForPlatformFont, PreferColoredFont, const UChar* characters, unsigned length)
+RefPtr<Font> FontCache::systemFallbackForCharacters(const FontDescription& description, const Font& originalFontData, IsForPlatformFont, PreferColoredFont, const UChar* characters, unsigned length)
 {
     RefPtr<Font> fontData;
     HWndDC hdc(0);
-    HFONT primaryFont = originalFontData->platformData().hfont();
+    HFONT primaryFont = originalFontData.platformData().hfont();
     HGDIOBJ oldFont = SelectObject(hdc, primaryFont);
     HFONT hfont = 0;
     IMLangFontLinkType* langFontLink = getFontLinkInterface();
@@ -326,7 +326,7 @@ RefPtr<Font> FontCache::systemFallbackForCharacters(const FontDescription& descr
 
         LOGFONT logFont;
         logFont.lfCharSet = DEFAULT_CHARSET;
-        StringView(linkedFonts->at(linkedFontIndex)).getCharactersWithUpconvert(ucharFrom(logFont.lfFaceName));
+        StringView(linkedFonts->at(linkedFontIndex)).getCharacters(ucharFrom(logFont.lfFaceName));
         logFont.lfFaceName[linkedFonts->at(linkedFontIndex).length()] = 0;
         EnumFontFamiliesEx(hdc, &logFont, linkedFontEnumProc, reinterpret_cast<LPARAM>(&hfont), 0);
         linkedFontIndex++;
@@ -384,7 +384,7 @@ Ref<Font> FontCache::lastResortFallbackFont(const FontDescription& fontDescripti
             "Lucida Sans Unicode"_str,
             "Arial"_str
         };
-        for (size_t i = 0; i < WTF_ARRAY_LENGTH(fallbackFonts); ++i) {
+        for (size_t i = 0; i < std::size(fallbackFonts); ++i) {
             if (fontForFamily(fontDescription, fallbackFonts[i])) {
                 fallbackFontName.get() = fallbackFonts[i];
                 return;
@@ -518,7 +518,7 @@ static GDIObject<HFONT> createGDIFont(const AtomString& family, LONG desiredWeig
     LOGFONT logFont;
     logFont.lfCharSet = DEFAULT_CHARSET;
     StringView truncatedFamily = StringView(family).left(static_cast<unsigned>(LF_FACESIZE - 1));
-    truncatedFamily.getCharactersWithUpconvert(ucharFrom(logFont.lfFaceName));
+    truncatedFamily.getCharacters(ucharFrom(logFont.lfFaceName));
     logFont.lfFaceName[truncatedFamily.length()] = 0;
     logFont.lfPitchAndFamily = 0;
 
@@ -632,7 +632,7 @@ Vector<FontSelectionCapabilities> FontCache::getFontSelectionCapabilitiesInFamil
     LOGFONT logFont;
     logFont.lfCharSet = DEFAULT_CHARSET;
     StringView truncatedFamily = StringView(familyName).left(static_cast<unsigned>(LF_FACESIZE - 1));
-    truncatedFamily.getCharactersWithUpconvert(ucharFrom(logFont.lfFaceName));
+    truncatedFamily.getCharacters(ucharFrom(logFont.lfFaceName));
     logFont.lfFaceName[truncatedFamily.length()] = 0;
     logFont.lfPitchAndFamily = 0;
 
@@ -712,6 +712,10 @@ std::optional<ASCIILiteral> FontCache::platformAlternateFamilyName(const String&
         break;
     }
     return std::nullopt;
+}
+
+void FontCache::platformInvalidate()
+{
 }
 
 }

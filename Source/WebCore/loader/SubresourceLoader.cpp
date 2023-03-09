@@ -30,7 +30,6 @@
 #include "SubresourceLoader.h"
 
 #include "CachedRawResource.h"
-#include "CachedResourceLoader.h"
 #include "CrossOriginAccessControl.h"
 #include "DiagnosticLoggingClient.h"
 #include "DiagnosticLoggingKeys.h"
@@ -46,7 +45,6 @@
 #include "Page.h"
 #include "ResourceLoadObserver.h"
 #include "ResourceTiming.h"
-#include "RuntimeEnabledFeatures.h"
 #include "Settings.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/Ref.h>
@@ -71,7 +69,7 @@
 #undef SUBRESOURCELOADER_RELEASE_LOG
 #undef SUBRESOURCELOADER_RELEASE_LOG_ERROR
 #define PAGE_ID ((frame() ? valueOrDefault(frame()->pageID()) : PageIdentifier()).toUInt64())
-#define FRAME_ID ((frame() ? valueOrDefault(frame()->frameID()) : FrameIdentifier()).toUInt64())
+#define FRAME_ID ((frame() ? frame()->frameID() : FrameIdentifier()).object().toUInt64())
 #if RELEASE_LOG_DISABLED
 #define SUBRESOURCELOADER_RELEASE_LOG(fmt, ...) UNUSED_VARIABLE(this)
 #define SUBRESOURCELOADER_RELEASE_LOG_ERROR(fmt, ...) UNUSED_VARIABLE(this)
@@ -85,15 +83,29 @@ namespace WebCore {
 DEFINE_DEBUG_ONLY_GLOBAL(WTF::RefCountedLeakCounter, subresourceLoaderCounter, ("SubresourceLoader"));
 
 SubresourceLoader::RequestCountTracker::RequestCountTracker(CachedResourceLoader& cachedResourceLoader, const CachedResource& resource)
-    : m_cachedResourceLoader(cachedResourceLoader)
-    , m_resource(resource)
+    : m_cachedResourceLoader(&cachedResourceLoader)
+    , m_resource(&resource)
 {
-    m_cachedResourceLoader.incrementRequestCount(m_resource);
+    cachedResourceLoader.incrementRequestCount(resource);
+}
+
+SubresourceLoader::RequestCountTracker::RequestCountTracker(RequestCountTracker&& other)
+    : m_cachedResourceLoader(std::exchange(other.m_cachedResourceLoader, nullptr))
+    , m_resource(std::exchange(other.m_resource, nullptr))
+{
+}
+
+auto SubresourceLoader::RequestCountTracker::operator=(RequestCountTracker&& other) -> RequestCountTracker&
+{
+    m_cachedResourceLoader = std::exchange(other.m_cachedResourceLoader, nullptr);
+    m_resource = std::exchange(other.m_resource, nullptr);
+    return *this;
 }
 
 SubresourceLoader::RequestCountTracker::~RequestCountTracker()
 {
-    m_cachedResourceLoader.decrementRequestCount(m_resource);
+    if (m_cachedResourceLoader && m_resource)
+        m_cachedResourceLoader->decrementRequestCount(*m_resource);
 }
 
 SubresourceLoader::SubresourceLoader(Frame& frame, CachedResource& resource, const ResourceLoaderOptions& options)
@@ -109,6 +121,7 @@ SubresourceLoader::SubresourceLoader(Frame& frame, CachedResource& resource, con
     m_resourceType = ContentExtensions::toResourceType(resource.type(), resource.resourceRequest().requester());
 #endif
     m_canCrossOriginRequestsAskUserForCredentials = resource.type() == CachedResource::Type::MainResource || frame.settings().allowCrossOriginSubresourcesToAskForCredentials();
+    m_site = CachedResourceLoader::computeFetchMetadataSite(resource.resourceRequest(), resource.type(), options.mode, frame.document()->securityOrigin());
 }
 
 SubresourceLoader::~SubresourceLoader()
@@ -196,7 +209,7 @@ void SubresourceLoader::willSendRequestInternal(ResourceRequest&& newRequest, co
         return completionHandler(WTFMove(newRequest));
     }
 
-    if (newRequest.requester() != ResourceRequestBase::Requester::Main) {
+    if (newRequest.requester() != ResourceRequestRequester::Main) {
         ResourceLoadObserver::shared().logSubresourceLoading(m_frame.get(), newRequest, redirectResponse,
             (isScriptLikeDestination(options().destination) ? ResourceLoadObserver::FetchDestinationIsScriptLike::Yes : ResourceLoadObserver::FetchDestinationIsScriptLike::No));
     }
@@ -278,9 +291,12 @@ void SubresourceLoader::willSendRequestInternal(ResourceRequest&& newRequest, co
                 m_frame->page()->diagnosticLoggingClient().logDiagnosticMessageWithResult(DiagnosticLoggingKeys::cachedResourceRevalidationKey(), emptyString(), DiagnosticLoggingResultFail, ShouldSample::Yes);
         }
 
-        if (!m_documentLoader->cachedResourceLoader().updateRequestAfterRedirection(m_resource->type(), newRequest, options(), originalRequest().url())) {
+        auto originalOrigin = SecurityOrigin::create(redirectResponse.url());
+        m_site = m_documentLoader->cachedResourceLoader().computeFetchMetadataSite(newRequest, m_resource->type(), options().mode, originalOrigin, m_site);
+
+        if (!m_documentLoader->cachedResourceLoader().updateRequestAfterRedirection(m_resource->type(), newRequest, options(), m_site, originalRequest().url())) {
             SUBRESOURCELOADER_RELEASE_LOG("willSendRequestInternal: resource load canceled because CachedResourceLoader::updateRequestAfterRedirection (really CachedResourceLoader::canRequestAfterRedirection) said no");
-            cancel();
+            cancel(ResourceError { String(), 0, request().url(), "Redirect was not allowed"_s, ResourceError::Type::AccessControl });
             return completionHandler(WTFMove(newRequest));
         }
 
@@ -666,7 +682,7 @@ Expected<void, String> SubresourceLoader::checkRedirectionCrossOriginAccessContr
 
     // Implementing https://fetch.spec.whatwg.org/#concept-http-redirect-fetch step 10.
     if (crossOriginFlag && redirectingToNewOrigin)
-        m_origin = SecurityOrigin::createUnique();
+        m_origin = SecurityOrigin::createOpaque();
 
     newRequest.redirectAsGETIfNeeded(previousRequest, redirectResponse);
 
@@ -882,7 +898,7 @@ void SubresourceLoader::reportResourceTiming(const NetworkLoadMetrics& networkLo
         return;
 
     SecurityOrigin& origin = m_origin ? *m_origin : document->securityOrigin();
-    auto resourceTiming = ResourceTiming::fromLoad(*m_resource, m_resource->resourceRequest().url(), m_resource->initiatorName(), m_loadTiming, networkLoadMetrics, origin);
+    auto resourceTiming = ResourceTiming::fromLoad(*m_resource, m_resource->resourceRequest().url(), m_resource->initiatorType(), m_loadTiming, networkLoadMetrics, origin);
 
     // Worker resources loaded here are all CachedRawResources loaded through WorkerThreadableLoader.
     // Pass the ResourceTiming information on so that WorkerThreadableLoader may add them to the

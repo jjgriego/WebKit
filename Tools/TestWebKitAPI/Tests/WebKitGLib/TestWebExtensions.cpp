@@ -224,49 +224,14 @@ static void testWebExtensionIsolatedWorld(WebViewTest* test, gconstpointer)
     g_signal_handler_disconnect(test->m_webView, scriptDialogID);
 }
 
-#if PLATFORM(GTK)
-static gboolean permissionRequestCallback(WebKitWebView*, WebKitPermissionRequest* request, WebViewTest* test)
+static void didAssociateFormControlsCallback(GDBusConnection*, const char*, const char*, const char*, const char*, GVariant* result, GUniqueOutPtr<char>* formIds)
 {
-    if (!WEBKIT_IS_INSTALL_MISSING_MEDIA_PLUGINS_PERMISSION_REQUEST(request))
-        return FALSE;
-
-    test->assertObjectIsDeletedWhenTestFinishes(G_OBJECT(request));
-    WebKitInstallMissingMediaPluginsPermissionRequest* missingPluginsRequest = WEBKIT_INSTALL_MISSING_MEDIA_PLUGINS_PERMISSION_REQUEST(request);
-    g_assert_nonnull(webkit_install_missing_media_plugins_permission_request_get_description(missingPluginsRequest));
-    webkit_permission_request_deny(request);
-    test->quitMainLoop();
-
-    return TRUE;
-}
-
-static void testInstallMissingPluginsPermissionRequest(WebViewTest* test, gconstpointer)
-{
-    auto proxy = test->extensionProxy();
-    GRefPtr<GVariant> result = adoptGRef(g_dbus_proxy_call_sync(proxy.get(), "RemoveAVPluginsFromGSTRegistry",
-        nullptr, G_DBUS_CALL_FLAGS_NONE, -1, nullptr, nullptr));
-
-    test->showInWindow();
-
-    gulong permissionRequestSignalID = g_signal_connect(test->m_webView, "permission-request", G_CALLBACK(permissionRequestCallback), test);
-    // FIXME: the base URI needs to finish with / to work, that shouldn't happen.
-    GUniquePtr<char> baseURI(g_strconcat("file://", Test::getResourcesDir(Test::WebKit2Resources).data(), "/", nullptr));
-    test->loadHtml("<html><body><video src=\"test.mp4\" autoplay></video></body></html>", baseURI.get());
-    g_main_loop_run(test->m_mainLoop);
-    g_signal_handler_disconnect(test->m_webView, permissionRequestSignalID);
-}
-#endif // PLATFORM(GTK)
-
-static void didAssociateFormControlsCallback(GDBusConnection*, const char*, const char*, const char*, const char*, GVariant* result, WebViewTest* test)
-{
-    const char* formIds;
-    g_variant_get(result, "(&s)", &formIds);
-    g_assert_true(!g_strcmp0(formIds, FORM_ID FORM2_ID) || !g_strcmp0(formIds, FORM2_ID FORM_ID) || !g_strcmp0(formIds, INPUT_ID));
-
-    test->quitMainLoop();
+    g_variant_get(result, "(s)", &formIds->outPtr());
 }
 
 static void testWebExtensionFormControlsAssociated(WebViewTest* test, gconstpointer)
 {
+    GUniqueOutPtr<char> formIds;
     auto proxy = test->extensionProxy();
     GDBusConnection* connection = g_dbus_proxy_get_connection(proxy.get());
     guint id = g_dbus_connection_signal_subscribe(connection,
@@ -277,7 +242,7 @@ static void testWebExtensionFormControlsAssociated(WebViewTest* test, gconstpoin
         nullptr,
         G_DBUS_SIGNAL_FLAGS_NONE,
         reinterpret_cast<GDBusSignalCallback>(didAssociateFormControlsCallback),
-        test,
+        &formIds,
         nullptr);
     g_assert_cmpuint(id, !=, 0);
 
@@ -297,8 +262,13 @@ static void testWebExtensionFormControlsAssociated(WebViewTest* test, gconstpoin
         "placeholder.appendChild(form);"
         "placeholder.appendChild(form2);";
 
-    webkit_web_view_run_javascript(test->m_webView, addFormScript, nullptr, nullptr, nullptr);
-    g_main_loop_run(test->m_mainLoop);
+    test->runJavaScriptAndWaitUntilFinished(addFormScript, nullptr);
+    while (!formIds)
+        g_main_context_iteration(nullptr, TRUE);
+    g_assert_true(!g_strcmp0(formIds.get(), FORM_ID FORM2_ID) || !g_strcmp0(formIds.get(), FORM2_ID FORM_ID));
+
+    // GUniqueOutPtr doesn't have a clear().
+    GUniquePtr<char> deleter(formIds.release());
 
     static const char* moveFormElementScript =
         "var form = document.getElementById(\"" FORM_ID "\");"
@@ -307,8 +277,10 @@ static void testWebExtensionFormControlsAssociated(WebViewTest* test, gconstpoin
         "form.removeChild(input);"
         "form2.appendChild(input);";
 
-    webkit_web_view_run_javascript(test->m_webView, moveFormElementScript, nullptr, nullptr, nullptr);
-    g_main_loop_run(test->m_mainLoop);
+    test->runJavaScriptAndWaitUntilFinished(moveFormElementScript, nullptr);
+    while (!formIds)
+        g_main_context_iteration(nullptr, TRUE);
+    g_assert_cmpstr(formIds.get(), ==, INPUT_ID);
 
     g_dbus_connection_signal_unsubscribe(connection, id);
 }
@@ -385,8 +357,7 @@ public:
 
     void runJavaScriptAndWaitUntilFormSubmitted(const char* js)
     {
-        webkit_web_view_run_javascript(m_webView, js, nullptr, nullptr, nullptr);
-        g_main_loop_run(m_mainLoop);
+        runJavaScriptAndWait(js);
     }
 
     GRefPtr<GDBusProxy> m_proxy;
@@ -818,9 +789,6 @@ void beforeAll()
     WebViewTest::add("WebKitWebView", "web-process-crashed", testWebKitWebViewProcessCrashed);
     UserMessageTest::add("WebKitWebExtension", "window-object-cleared", testWebExtensionWindowObjectCleared);
     WebViewTest::add("WebKitWebExtension", "isolated-world", testWebExtensionIsolatedWorld);
-#if PLATFORM(GTK)
-    WebViewTest::add("WebKitWebView", "install-missing-plugins-permission-request", testInstallMissingPluginsPermissionRequest);
-#endif
     WebViewTest::add("WebKitWebExtension", "form-controls-associated-signal", testWebExtensionFormControlsAssociated);
     FormSubmissionTest::add("WebKitWebExtension", "form-submission-steps", testWebExtensionFormSubmissionSteps);
     WebViewTest::add("WebKitWebExtension", "page-id", testWebExtensionPageID);

@@ -15,6 +15,10 @@ None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-computed.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-face-src-format.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-face-src-list.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-face-src-local.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-face-src-tech.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-family-computed.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-family-invalid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-family-valid.html
@@ -31,6 +35,12 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-optical-sizing-computed.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-optical-sizing-invalid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-optical-sizing-valid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-palette-computed.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-palette-invalid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-palette-valid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-palette-values-invalid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-palette-values-valid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-shorthand-variant.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-size-adjust-computed.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-size-adjust-invalid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-size-adjust-valid.html
@@ -45,14 +55,25 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-style-valid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-synthesis-computed.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-synthesis-invalid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-synthesis-small-caps-invalid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-synthesis-small-caps-valid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-synthesis-style-invalid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-synthesis-style-valid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-synthesis-valid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-synthesis-weight-invalid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-synthesis-weight-valid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-valid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-alternates-invalid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-alternates-valid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-caps-computed.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-caps-invalid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-caps-valid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-east-asian-computed.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-east-asian-invalid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-east-asian-valid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-emoji-computed.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-emoji-invalid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-emoji-valid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-invalid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-ligatures-computed.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-ligatures-invalid.html
@@ -63,6 +84,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-position-computed.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-position-invalid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-position-valid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-serialization.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variant-valid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variation-settings-computed.html
 /LayoutTests/imported/w3c/web-platform-tests/css/css-fonts/parsing/font-variation-settings-invalid.html

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -213,10 +213,12 @@ void TestRunner::setWhatToDump(WhatToDump whatToDump)
 
 void TestRunner::setCustomPolicyDelegate(bool enabled, bool permissive)
 {
-    m_policyDelegateEnabled = enabled;
-    m_policyDelegatePermissive = permissive;
-
     InjectedBundle::singleton().setCustomPolicyDelegate(enabled, permissive);
+}
+
+void TestRunner::skipPolicyDelegateNotifyDone()
+{
+    postMessage("SkipPolicyDelegateNotifyDone");
 }
 
 void TestRunner::waitForPolicyDelegate()
@@ -449,6 +451,11 @@ void TestRunner::setAllowsAnySSLCertificate(bool enabled)
     postSynchronousPageMessage("SetAllowsAnySSLCertificate", enabled);
 }
 
+void TestRunner::setBackgroundFetchPermission(bool enabled)
+{
+    postSynchronousPageMessage("SetBackgroundFetchPermission", enabled);
+}
+
 void TestRunner::setShouldSwapToEphemeralSessionOnNextNavigation(bool shouldSwap)
 {
     postSynchronousPageMessage("SetShouldSwapToEphemeralSessionOnNextNavigation", shouldSwap);
@@ -646,10 +653,12 @@ enum {
     TextFieldDidEndEditingCallbackID,
     CustomMenuActionCallbackID,
     DidSetAppBoundDomainsCallbackID,
+    DidSetManagedDomainsCallbackID,
     EnterFullscreenForElementCallbackID,
     ExitFullscreenForElementCallbackID,
     AppBoundRequestContextDataForDomainCallbackID,
     TakeViewPortSnapshotCallbackID,
+    RemoveAllCookiesCallbackID,
     FirstUIScriptCallbackID = 100
 };
 
@@ -789,6 +798,17 @@ void TestRunner::setOnlyAcceptFirstPartyCookies(bool accept)
     postSynchronousMessage("SetOnlyAcceptFirstPartyCookies", accept);
 }
 
+void TestRunner::removeAllCookies(JSValueRef callback)
+{
+    cacheTestRunnerCallback(RemoveAllCookiesCallbackID, callback);
+    postMessage("RemoveAllCookies");
+}
+
+void TestRunner::callRemoveAllCookiesCallback()
+{
+    callTestRunnerCallback(RemoveAllCookiesCallbackID);
+}
+
 void TestRunner::setEnterFullscreenForElementCallback(JSValueRef callback)
 {
     cacheTestRunnerCallback(EnterFullscreenForElementCallbackID, callback);
@@ -902,6 +922,11 @@ void TestRunner::setGeolocationPermission(bool enabled)
 {
     // FIXME: This should be done by frame.
     InjectedBundle::singleton().setGeolocationPermission(enabled);
+}
+
+void TestRunner::setScreenWakeLockPermission(bool enabled)
+{
+    InjectedBundle::singleton().setScreenWakeLockPermission(enabled);
 }
 
 bool TestRunner::isGeolocationProviderActive()
@@ -1164,15 +1189,6 @@ void TestRunner::setAllowedMenuActions(JSValueRef actions)
     postPageMessage("SetAllowedMenuActions", messageBody);
 }
 
-void TestRunner::installCustomMenuAction(JSStringRef name, bool dismissesAutomatically, JSValueRef callback)
-{
-    cacheTestRunnerCallback(CustomMenuActionCallbackID, callback);
-    postPageMessage("InstallCustomMenuAction", createWKDictionary({
-        { "name", toWK(name) },
-        { "dismissesAutomatically", adoptWK(WKBooleanCreate(dismissesAutomatically)).get() },
-    }));
-}
-
 void TestRunner::installDidBeginSwipeCallback(JSValueRef callback)
 {
     cacheTestRunnerCallback(DidBeginSwipeCallbackID, callback);
@@ -1347,6 +1363,11 @@ void TestRunner::dumpResourceLoadStatistics()
 {
     InjectedBundle::singleton().clearResourceLoadStatistics();
     postSynchronousPageMessage("dumpResourceLoadStatistics");
+}
+
+void TestRunner::dumpPolicyDelegateCallbacks()
+{
+    postMessage("DumpPolicyDelegateCallbacks");
 }
 
 bool TestRunner::isStatisticsPrevalentResource(JSStringRef hostName)
@@ -1782,6 +1803,11 @@ void TestRunner::loadedSubresourceDomains(JSValueRef callback)
     postMessage("LoadedSubresourceDomains");
 }
 
+void TestRunner::reloadFromOrigin()
+{
+    InjectedBundle::singleton().reloadFromOrigin();
+}
+
 void TestRunner::callDidReceiveLoadedSubresourceDomainsCallback(Vector<String>&& domains)
 {
     auto result = makeDomainsValue(domains);
@@ -1822,6 +1848,14 @@ void TestRunner::removeMockMediaDevice(JSStringRef persistentId)
     postSynchronousMessage("RemoveMockMediaDevice", toWK(persistentId));
 }
 
+void TestRunner::setMockMediaDeviceIsEphemeral(JSStringRef persistentId, bool isEphemeral)
+{
+    postSynchronousMessage("SetMockMediaDeviceIsEphemeral", createWKDictionary({
+        { "PersistentID", toWK(persistentId) },
+        { "IsEphemeral", adoptWK(WKBooleanCreate(isEphemeral)) },
+    }));
+}
+
 void TestRunner::resetMockMediaDevices()
 {
     postSynchronousMessage("ResetMockMediaDevices");
@@ -1845,6 +1879,11 @@ void TestRunner::setMockCaptureDevicesInterrupted(bool isCameraInterrupted, bool
     }));
 }
 
+void TestRunner::triggerMockMicrophoneConfigurationChange()
+{
+    postSynchronousMessage("TriggerMockMicrophoneConfigurationChange");
+}
+
 #if ENABLE(GAMEPAD)
 
 void TestRunner::connectMockGamepad(unsigned index)
@@ -1857,7 +1896,7 @@ void TestRunner::disconnectMockGamepad(unsigned index)
     postSynchronousMessage("DisconnectMockGamepad", index);
 }
 
-void TestRunner::setMockGamepadDetails(unsigned index, JSStringRef gamepadID, JSStringRef mapping, unsigned axisCount, unsigned buttonCount)
+void TestRunner::setMockGamepadDetails(unsigned index, JSStringRef gamepadID, JSStringRef mapping, unsigned axisCount, unsigned buttonCount, bool supportsDualRumble)
 {
     postSynchronousMessage("SetMockGamepadDetails", createWKDictionary({
         { "GamepadID", toWK(gamepadID) },
@@ -1865,6 +1904,7 @@ void TestRunner::setMockGamepadDetails(unsigned index, JSStringRef gamepadID, JS
         { "GamepadIndex", adoptWK(WKUInt64Create(index)) },
         { "AxisCount", adoptWK(WKUInt64Create(axisCount)) },
         { "ButtonCount", adoptWK(WKUInt64Create(buttonCount)) },
+        { "SupportsDualRumble", adoptWK(WKBooleanCreate(supportsDualRumble)) },
     }));
 }
 
@@ -1896,7 +1936,7 @@ void TestRunner::disconnectMockGamepad(unsigned)
 {
 }
 
-void TestRunner::setMockGamepadDetails(unsigned, JSStringRef, JSStringRef, unsigned, unsigned)
+void TestRunner::setMockGamepadDetails(unsigned, JSStringRef, JSStringRef, unsigned, unsigned, bool)
 {
 }
 
@@ -1989,6 +2029,11 @@ void TestRunner::setAllowStorageQuotaIncrease(bool willIncrease)
     postSynchronousPageMessage("SetAllowStorageQuotaIncrease", willIncrease);
 }
 
+void TestRunner::setQuota(uint64_t quota)
+{
+    postSynchronousMessage("SetQuota", quota);
+}
+
 void TestRunner::getApplicationManifestThen(JSValueRef callback)
 {
     cacheTestRunnerCallback(GetApplicationManifestCallbackID, callback);
@@ -2003,11 +2048,6 @@ void TestRunner::didGetApplicationManifest()
 void TestRunner::installFakeHelvetica(JSStringRef configuration)
 {
     WTR::installFakeHelvetica(toWK(configuration).get());
-}
-
-void TestRunner::performCustomMenuAction()
-{
-    callTestRunnerCallback(CustomMenuActionCallbackID);
 }
 
 size_t TestRunner::userScriptInjectedCount() const
@@ -2196,9 +2236,42 @@ void TestRunner::setAppBoundDomains(JSValueRef originArray, JSValueRef completio
     WKBundlePostMessage(InjectedBundle::singleton().bundle(), messageName.get(), originURLs.get());
 }
 
+void TestRunner::setManagedDomains(JSValueRef originArray, JSValueRef completionHandler)
+{
+    cacheTestRunnerCallback(DidSetManagedDomainsCallbackID, completionHandler);
+
+    auto context = mainFrameJSContext();
+    if (!JSValueIsArray(context, originArray))
+        return;
+
+    auto origins = JSValueToObject(context, originArray, nullptr);
+    auto originURLs = adoptWK(WKMutableArrayCreate());
+    auto originsLength = arrayLength(context, origins);
+    for (unsigned i = 0; i < originsLength; ++i) {
+        JSValueRef originValue = JSObjectGetPropertyAtIndex(context, origins, i, nullptr);
+        if (!JSValueIsString(context, originValue))
+            continue;
+
+        auto origin = createJSString(context, originValue);
+        size_t originBufferSize = JSStringGetMaximumUTF8CStringSize(origin.get()) + 1;
+        auto originBuffer = makeUniqueArray<char>(originBufferSize);
+        JSStringGetUTF8CString(origin.get(), originBuffer.get(), originBufferSize);
+
+        WKArrayAppendItem(originURLs.get(), adoptWK(WKURLCreateWithUTF8CString(originBuffer.get())).get());
+    }
+
+    auto messageName = toWK("SetManagedDomains");
+    WKBundlePostMessage(InjectedBundle::singleton().bundle(), messageName.get(), originURLs.get());
+}
+
 void TestRunner::didSetAppBoundDomainsCallback()
 {
     callTestRunnerCallback(DidSetAppBoundDomainsCallbackID);
+}
+
+void TestRunner::didSetManagedDomainsCallback()
+{
+    callTestRunnerCallback(DidSetManagedDomainsCallbackID);
 }
 
 bool TestRunner::didLoadAppInitiatedRequest()
@@ -2236,6 +2309,11 @@ void TestRunner::viewPortSnapshotTaken(WKStringRef value)
     auto jsValue = JSValueMakeString(mainFrameJSContext(), toJS(value).get());
     callTestRunnerCallback(TakeViewPortSnapshotCallbackID, 1, &jsValue);
     m_takeViewPortSnapshot = false;
+}
+
+void TestRunner::generateTestReport(JSStringRef message, JSStringRef group)
+{
+    _WKBundleFrameGenerateTestReport(mainFrame(), toWK(message).get(), toWK(group).get());
 }
 
 ALLOW_DEPRECATED_DECLARATIONS_END

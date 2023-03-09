@@ -13,11 +13,11 @@ depends:
 - freedesktop-sdk.bst:components/at-spi2-atk.bst
 - freedesktop-sdk.bst:components/atk.bst
 - freedesktop-sdk.bst:components/gdk-pixbuf.bst
-- sdk/glib.bst
+- freedesktop-sdk.bst:components/glib.bst
 - sdk/graphene.bst
-- sdk/gst-plugins-bad.bst
-- sdk/gst-plugins-base.bst
-- sdk/gstreamer.bst
+- freedesktop-sdk.bst:components/gstreamer-plugins-bad.bst
+- freedesktop-sdk.bst:components/gstreamer-plugins-base.bst
+- freedesktop-sdk.bst:components/gstreamer.bst
 - freedesktop-sdk.bst:components/pango.bst
 - freedesktop-sdk.bst:components/cups.bst
 - freedesktop-sdk.bst:components/hicolor-icon-theme.bst

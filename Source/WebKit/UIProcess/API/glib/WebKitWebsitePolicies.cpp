@@ -56,7 +56,7 @@ struct _WebKitWebsitePoliciesPrivate {
     RefPtr<API::WebsitePolicies> websitePolicies;
 };
 
-WEBKIT_DEFINE_TYPE(WebKitWebsitePolicies, webkit_website_policies, G_TYPE_OBJECT)
+WEBKIT_DEFINE_FINAL_TYPE(WebKitWebsitePolicies, webkit_website_policies, G_TYPE_OBJECT, GObject)
 
 API::WebsitePolicies& webkitWebsitePoliciesGetWebsitePolicies(WebKitWebsitePolicies* policies)
 {
@@ -146,8 +146,7 @@ static void webkit_website_policies_class_init(WebKitWebsitePoliciesClass* findC
         PROP_AUTOPLAY_POLICY,
         g_param_spec_enum(
             "autoplay",
-            "Autoplay Policy",
-            _("The policy to use when deciding to autoplay media"),
+            nullptr, nullptr,
             WEBKIT_TYPE_AUTOPLAY_POLICY,
             WEBKIT_AUTOPLAY_ALLOW_WITHOUT_SOUND,
             static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY)));
@@ -156,7 +155,7 @@ static void webkit_website_policies_class_init(WebKitWebsitePoliciesClass* findC
 /**
  * webkit_website_policies_new:
  *
- * Create a new #WebKitWebsitePolicies
+ * Create a new #WebKitWebsitePolicies.
  *
  * Returns: (transfer full): the newly created #WebKitWebsitePolicies
  *
@@ -171,6 +170,8 @@ WebKitWebsitePolicies* webkit_website_policies_new(void)
  * webkit_website_policies_new_with_policies:
  * @first_policy_name: name of the first policy to set
  * @...: value of first policy, followed by more policies, %NULL-terminated
+ *
+ * Create a new #WebKitWebsitePolicies with given policies.
  *
  * Create a new #WebKitWebsitePolicies with policies given as variadic
  * arguments.

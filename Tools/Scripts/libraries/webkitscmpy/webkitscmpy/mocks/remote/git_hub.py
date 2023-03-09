@@ -1,4 +1,4 @@
-# Copyright (C) 2020 Apple Inc. All rights reserved.
+# Copyright (C) 2020-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -21,10 +21,11 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import os
+import re
 import time
 
 import json as jsonlib
-from webkitbugspy import mocks as bmocks
+from webkitbugspy import mocks as bmocks, Issue
 from webkitcorepy import mocks
 from webkitscmpy import Commit, remote as scmremote
 
@@ -145,10 +146,10 @@ class GitHub(bmocks.GitHub):
 
         base = self.commit(ref)
         if not base:
-            return mocks.Response(
-                status_code=404,
+            return mocks.Response.fromJson(
+                dict(message='No commit found for SHA: {}'.format(ref)),
                 url=url,
-                text=jsonlib.dumps(dict(message='No commit found for SHA: {}'.format(ref))),
+                status_code=404,
             )
 
         response = []
@@ -191,10 +192,10 @@ class GitHub(bmocks.GitHub):
 
         commit = self.commit(ref)
         if not commit:
-            return mocks.Response(
-                status_code=404,
+            return mocks.Response.fromJson(
+                dict(message='No commit found for SHA: {}'.format(ref)),
                 url=url,
-                text=jsonlib.dumps(dict(message='No commit found for SHA: {}'.format(ref))),
+                status_code=404,
             )
         return mocks.Response.fromJson({
             'sha': commit.hash,
@@ -213,16 +214,18 @@ class GitHub(bmocks.GitHub):
                 'url': 'https://{}/git/commits/{}'.format(self.api_remote, commit.hash),
             }, 'url': 'https://{}/commits/{}'.format(self.api_remote, commit.hash),
             'html_url': 'https://{}/commit/{}'.format(self.remote, commit.hash),
+            # FIXME: All mock commits have the same set of files changed with this implementation
+            'files': [dict(filename=name) for name in ('Source/main.cpp', 'Source/main.h')],
         }, url=url)
 
     def _compare_response(self, url, ref_a, ref_b):
         commit_a = self.commit(ref_a)
         commit_b = self.commit(ref_b)
         if not commit_a or not commit_b:
-            return mocks.Response(
-                status_code=404,
+            return mocks.Response.fromJson(
+                dict(message='Not found'),
                 url=url,
-                text=jsonlib.dumps(dict(message='Not found')),
+                status_code=404,
             )
 
         if commit_a.branch != self.default_branch or commit_b.branch == self.default_branch:
@@ -287,9 +290,67 @@ class GitHub(bmocks.GitHub):
             ), url=url
         )
 
-    def request(self, method, url, data=None, params=None, auth=None, json=None, **kwargs):
-        from datetime import datetime, timedelta
+    # FIXME: Not a very flexible mock of GitHub's GraphQL API, only supports pull-request querying
+    def graphql(self, url, auth=None, json=None):
+        query = (json or {}).get('query')
+        if not query:
+            return mocks.Response.create404(url)
 
+        qline = query.splitlines()[1]
+        pr_search = re.match(r'\s*search\(query:\s+"(?P<query>.+)",\s+type:\s+ISSUE,\s+last:\s+(?P<last>\d+)\)\s*\{', qline)
+        if pr_search:
+            query_bits = {}
+            for bit in pr_search.group('query').split():
+                key, value = bit.split(':')
+                if key in query_bits:
+                    query_bits[key].append(value)
+                else:
+                    query_bits[key] = [value]
+
+            repo_name = '/'.join(self.remote.split('/')[-2:])
+            if 'pr' not in query_bits.get('is', []) or repo_name not in query_bits.get('repo', []):
+                return mocks.Response.fromJson(
+                    dict(data=dict(search=dict(edges=[]))),
+                    url=url,
+                )
+
+            head = query_bits.get('head', [None])[0]
+            base = query_bits.get('base', [None])[0]
+            state = 'open' if 'open' in query_bits.get('is', []) else None
+            state = 'closed' if 'closed' in query_bits.get('is', []) else state
+
+            nodes = []
+            for candidate in self.pull_requests:
+                chead = candidate.get('head', {}).get('ref', '').split(':')[-1]
+                cbase = candidate.get('base', {}).get('ref', '').split(':')[-1]
+                if head and chead != head:
+                    continue
+                if base and cbase != base:
+                    continue
+                if state and candidate.get('state', 'closed') != state:
+                    continue
+
+                nodes.append(dict(node=dict(
+                    number=candidate['number'],
+                    title=candidate['title'],
+                    body=candidate['body'],
+                    state=candidate.get('state', 'closed').upper(),
+                    isDraft=candidate.get('draft', False),
+                    author=dict(login=candidate['user']['login']),
+                    baseRefName=cbase,
+                    headRefName=chead,
+                    headRef=dict(target=dict(oid=(candidate.get('head') or {}).get('sha', None))),
+                    headRepository=dict(nameWithOwner='{}/{}'.format(candidate['user']['login'], repo_name.split('/')[-1])),
+                )))
+
+            return mocks.Response.fromJson(
+                dict(data=dict(search=dict(edges=nodes))),
+                url=url,
+            )
+
+        return mocks.Response.create404(url)
+
+    def request(self, method, url, data=None, params=None, auth=None, json=None, **kwargs):
         if not url.startswith('http://') and not url.startswith('https://'):
             return mocks.Response.create404(url)
 
@@ -375,10 +436,31 @@ class GitHub(bmocks.GitHub):
                     return mocks.Response.fromJson({
                         key: value for key, value in candidate.items() if key not in ('requested_reviews', 'reviews')
                     }, url=url)
-            return mocks.Response(
-                status_code=404,
-                text=jsonlib.dumps(dict(message='Not found')),
+
+            return mocks.Response.fromJson(
+                dict(message='Not found'),
                 url=url,
+                status_code=404,
+            )
+
+        # Add review
+        if method == 'POST' and auth and stripped_url.startswith(pr_base) and stripped_url.endswith('/reviews'):
+            for candidate in self.pull_requests:
+                if stripped_url.split('/')[5] != str(candidate['number']):
+                    continue
+                candidate['reviews'].append(
+                    dict(user=dict(login=auth.username), state=json.get('event', 'COMMENT')),
+                )
+                if 'body' in json:
+                    self.issues[candidate['number']]['comments'].append(
+                        Issue.Comment(user=self.users.get(auth.username), timestamp=int(time.time()), content=json['body']),
+                    )
+                return mocks.Response.fromJson(candidate['reviews'])
+
+            return mocks.Response.fromJson(
+                dict(message='Not found'),
+                url=url,
+                status_code=404,
             )
 
         # Create/update pull-request
@@ -448,5 +530,9 @@ class GitHub(bmocks.GitHub):
         download_base = '{}/releases/download/'.format(self.remote)
         if method == 'GET' and stripped_url.startswith(download_base):
             return self.releases.get(stripped_url[len(download_base):], mocks.Response.create404(url))
+
+        # GraphQL library
+        if method == 'POST' and auth and stripped_url == '{}/graphql'.format(self.api_remote.split('/')[0]):
+            return self.graphql(url, auth=auth, json=json)
 
         return super(GitHub, self).request(method, url, data=data, params=params, auth=auth, json=json, **kwargs)

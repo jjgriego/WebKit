@@ -35,6 +35,7 @@ namespace WebCore {
 class File;
 class HTMLImageElement;
 class RenderAttachment;
+class ShadowRoot;
 class ShareableBitmap;
 class FragmentedSharedBuffer;
 
@@ -52,7 +53,7 @@ public:
     void setFile(RefPtr<File>&&, UpdateDisplayAttributes = UpdateDisplayAttributes::No);
 
     const String& uniqueIdentifier() const { return m_uniqueIdentifier; }
-    void setUniqueIdentifier(const String& uniqueIdentifier) { m_uniqueIdentifier = uniqueIdentifier; }
+    void setUniqueIdentifier(const String&);
 
     void copyNonAttributePropertiesFromElement(const Element&) final;
 
@@ -68,23 +69,32 @@ public:
     RefPtr<HTMLImageElement> enclosingImageElement() const;
 
     WEBCORE_EXPORT String attachmentTitle() const;
+    const AtomString& attachmentSubtitle() const;
+    const AtomString& attachmentActionForDisplay() const;
     String attachmentTitleForDisplay() const;
+    const AtomString& attachmentSubtitleForDisplay() const;
     WEBCORE_EXPORT String attachmentType() const;
     String attachmentPath() const;
     RefPtr<Image> thumbnail() const { return m_thumbnail; }
     RefPtr<Image> icon() const { return m_icon; }
     void requestIconWithSize(const FloatSize&) const;
     FloatSize iconSize() const { return m_iconSize; }
-    RenderAttachment* renderer() const;
+    void invalidateRendering();
 
 #if ENABLE(SERVICE_CONTROLS)
     bool isImageMenuEnabled() const { return m_isImageMenuEnabled; }
     void setImageMenuEnabled(bool value) { m_isImageMenuEnabled = value; }
 #endif
 
+    bool isImageOnly() const { return m_implementation == Implementation::ImageOnly; }
+
 private:
     HTMLAttachmentElement(const QualifiedName&, Document&);
     virtual ~HTMLAttachmentElement();
+
+    void didAddUserAgentShadowRoot(ShadowRoot&) final;
+    void ensureModernShadowTree(ShadowRoot&);
+    void updateSaveButton(const AtomString& eventTypeName);
 
     RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
     bool shouldSelectOnMouseDown() final {
@@ -101,11 +111,21 @@ private:
     bool childShouldCreateRenderer(const Node&) const final;
 #endif
 
+    enum class Implementation: uint8_t { Legacy, Modern, ImageOnly };
+    Implementation m_implementation { Implementation::Legacy };
+
     RefPtr<File> m_file;
     String m_uniqueIdentifier;
     RefPtr<Image> m_thumbnail;
     RefPtr<Image> m_icon;
     FloatSize m_iconSize;
+
+    RefPtr<HTMLAttachmentElement> m_innerLegacyAttachment;
+    RefPtr<HTMLElement> m_containerElement;
+    RefPtr<HTMLElement> m_actionTextElement;
+    RefPtr<HTMLElement> m_titleElement;
+    RefPtr<HTMLElement> m_subtitleElement;
+    RefPtr<HTMLElement> m_saveButton;
 
 #if ENABLE(SERVICE_CONTROLS)
     bool m_isImageMenuEnabled { false };

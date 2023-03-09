@@ -35,7 +35,7 @@
 #include "CSSSelectorList.h"
 #include "CommonAtomStrings.h"
 #include "HTMLNames.h"
-#include "MediaQueryEvaluator.h"
+#include "ScriptExecutionContext.h"
 #include "SecurityOrigin.h"
 #include "SelectorChecker.h"
 #include "SelectorFilter.h"
@@ -80,6 +80,8 @@ static inline MatchBasedOnRuleHash computeMatchBasedOnRuleHash(const CSSSelector
         return MatchBasedOnRuleHash::ClassA;
     if (selector.match() == CSSSelector::Class)
         return MatchBasedOnRuleHash::ClassB;
+    // FIXME: Valueless [attribute] case can be handled here too.
+
     return MatchBasedOnRuleHash::None;
 }
 

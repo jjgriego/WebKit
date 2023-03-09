@@ -32,6 +32,8 @@
 #import "IntSize.h"
 #import "Logging.h"
 #import "MediaUtilities.h"
+#import "VideoFrame.h"
+#import "VideoFrameMetadata.h"
 
 #import <AVFoundation/AVSampleBufferDisplayLayer.h>
 #import <QuartzCore/CALayer.h>
@@ -143,7 +145,12 @@ static void runWithoutAnimations(const WTF::Function<void()>& function)
 
 std::unique_ptr<LocalSampleBufferDisplayLayer> LocalSampleBufferDisplayLayer::create(Client& client)
 {
-    auto sampleBufferDisplayLayer = adoptNS([PAL::allocAVSampleBufferDisplayLayerInstance() init]);
+    RetainPtr<AVSampleBufferDisplayLayer> sampleBufferDisplayLayer;
+    @try {
+        sampleBufferDisplayLayer = adoptNS([PAL::allocAVSampleBufferDisplayLayerInstance() init]);
+    } @catch(id exception) {
+        RELEASE_LOG_ERROR(WebRTC, "LocalSampleBufferDisplayLayer::create failed to allocate display layer");
+    }
     if (!sampleBufferDisplayLayer)
         return nullptr;
 
@@ -208,14 +215,23 @@ LocalSampleBufferDisplayLayer::~LocalSampleBufferDisplayLayer()
 void LocalSampleBufferDisplayLayer::layerStatusDidChange()
 {
     ASSERT(isMainThread());
-    if (m_client && m_sampleBufferDisplayLayer.get().status == AVQueuedSampleBufferRenderingStatusFailed)
-        m_client->sampleBufferDisplayLayerStatusDidFail();
+    if (m_client && m_sampleBufferDisplayLayer.get().status == AVQueuedSampleBufferRenderingStatusFailed) {
+        RELEASE_LOG_ERROR(WebRTC, "LocalSampleBufferDisplayLayer::layerStatusDidChange going to failed status (%{public}s) ", m_logIdentifier.utf8().data());
+        if (!m_didFail) {
+            m_didFail = true;
+            m_client->sampleBufferDisplayLayerStatusDidFail();
+        }
+    }
 }
 
 void LocalSampleBufferDisplayLayer::layerErrorDidChange()
 {
     ASSERT(isMainThread());
-    // FIXME: Log error.
+    RELEASE_LOG_ERROR(WebRTC, "LocalSampleBufferDisplayLayer::layerErrorDidChange (%{public}s) ", m_logIdentifier.utf8().data());
+    if (!m_client || m_didFail)
+        return;
+    m_didFail = true;
+    m_client->sampleBufferDisplayLayerStatusDidFail();
 }
 
 PlatformLayer* LocalSampleBufferDisplayLayer::displayLayer()
@@ -230,7 +246,7 @@ PlatformLayer* LocalSampleBufferDisplayLayer::rootLayer()
 
 bool LocalSampleBufferDisplayLayer::didFail() const
 {
-    return [m_sampleBufferDisplayLayer status] == AVQueuedSampleBufferRenderingStatusFailed;
+    return m_didFail || [m_sampleBufferDisplayLayer status] == AVQueuedSampleBufferRenderingStatusFailed;
 }
 
 void LocalSampleBufferDisplayLayer::updateDisplayMode(bool hideDisplayLayer, bool hideRootLayer)
@@ -308,7 +324,12 @@ void LocalSampleBufferDisplayLayer::flush()
 void LocalSampleBufferDisplayLayer::flushAndRemoveImage()
 {
     m_processingQueue->dispatch([this] {
-        [m_sampleBufferDisplayLayer flushAndRemoveImage];
+        @try {
+            [m_sampleBufferDisplayLayer flushAndRemoveImage];
+        } @catch(id exception) {
+            RELEASE_LOG_ERROR(WebRTC, "LocalSampleBufferDisplayLayer::flushAndRemoveImage failed");
+            layerErrorDidChange();
+        }
     });
 }
 

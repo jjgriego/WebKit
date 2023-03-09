@@ -31,13 +31,14 @@ namespace WebKit::WebPushD {
 constexpr unsigned maxSilentPushCount = 3;
 
 constexpr const char* protocolVersionKey = "protocol version";
-constexpr uint64_t protocolVersionValue = 1;
+constexpr uint64_t protocolVersionValue = 2;
 constexpr const char* protocolEncodedMessageKey = "encoded message";
 
 constexpr const char* protocolDebugMessageKey { "debug message" };
 constexpr const char* protocolDebugMessageLevelKey { "debug message level" };
 
 constexpr const char* protocolMessageTypeKey { "message type" };
+
 enum class MessageType : uint8_t {
     EchoTwice = 1,
     RequestSystemNotificationPermission,
@@ -56,6 +57,11 @@ enum class MessageType : uint8_t {
     RemoveAllPushSubscriptions,
     RemovePushSubscriptionsForOrigin,
     SetPublicTokenForTesting,
+    SetPushAndNotificationsEnabledForOrigin,
+};
+
+enum class RawXPCMessageType : uint8_t {
+    GetPushTopicsForTesting = 192,
 };
 
 inline bool messageTypeSendsReply(MessageType messageType)
@@ -76,6 +82,7 @@ inline bool messageTypeSendsReply(MessageType messageType)
     case MessageType::RemoveAllPushSubscriptions:
     case MessageType::RemovePushSubscriptionsForOrigin:
     case MessageType::SetPublicTokenForTesting:
+    case MessageType::SetPushAndNotificationsEnabledForOrigin:
         return true;
     case MessageType::SetDebugModeIsEnabled:
     case MessageType::UpdateConnectionConfiguration:

@@ -29,6 +29,10 @@ bool IsNoOp(TIntermNode *node)
     {
         return true;
     }
+    if (node->getAsSymbolNode() != nullptr)
+    {
+        return true;
+    }
     bool isEmptyDeclaration = node->getAsDeclarationNode() != nullptr &&
                               node->getAsDeclarationNode()->getSequence()->empty();
     if (isEmptyDeclaration)
@@ -41,9 +45,9 @@ bool IsNoOp(TIntermNode *node)
 class PruneNoOpsTraverser : private TIntermTraverser
 {
   public:
-    ANGLE_NO_DISCARD static bool apply(TCompiler *compiler,
-                                       TIntermBlock *root,
-                                       TSymbolTable *symbolTable);
+    [[nodiscard]] static bool apply(TCompiler *compiler,
+                                    TIntermBlock *root,
+                                    TSymbolTable *symbolTable);
 
   private:
     PruneNoOpsTraverser(TSymbolTable *symbolTable);

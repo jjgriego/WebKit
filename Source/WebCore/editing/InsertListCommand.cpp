@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2006, 2010 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2015 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -145,6 +146,9 @@ void InsertListCommand::doApply()
             VisiblePosition endOfSelection = selection.visibleEnd();
             VisiblePosition startOfLastParagraph = startOfParagraph(endOfSelection, CanSkipOverEditingBoundary);
 
+            RefPtr<ContainerNode> startScope;
+            int startIndex = indexForVisiblePosition(startOfSelection, startScope);
+
             if (startOfLastParagraph.isNotNull() && startOfParagraph(startOfSelection, CanSkipOverEditingBoundary) != startOfLastParagraph) {
                 bool forceCreateList = !selectionHasListOfType(selection, listTag);
 
@@ -175,7 +179,7 @@ void InsertListCommand::doApply()
                         // If endOfSelection is null, then some contents have been deleted from the document.
                         // This should never happen and if it did, exit early immediately because we've lost the loop invariant.
                         ASSERT(endOfSelection.isNotNull());
-                        if (endOfSelection.isNull())
+                        if (endOfSelection.isNull() || !endOfSelection.rootEditableElement())
                             return;
                         startOfLastParagraph = startOfParagraph(endOfSelection, CanSkipOverEditingBoundary);
                     }
@@ -193,6 +197,8 @@ void InsertListCommand::doApply()
                 doApplyForSingleParagraph(forceCreateList, listTag, currentSelection);
                 // Fetch the end of the selection, for the reason mentioned above.
                 endOfSelection = endingSelection().visibleEnd();
+                if (startOfSelection.isOrphan())
+                    startOfSelection = visiblePositionForIndex(startIndex, startScope.get());
                 setEndingSelection(VisibleSelection(startOfSelection, endOfSelection, endingSelection().isDirectional()));
                 return;
             }
@@ -268,26 +274,27 @@ void InsertListCommand::doApplyForSingleParagraph(bool forceCreateList, const HT
             if (rangeEndIsInList && newList)
                 currentSelection.end = makeBoundaryPointAfterNodeContents(*newList);
 
-            setEndingSelection(VisiblePosition(firstPositionInNode(newList.get())));
+            setEndingSelection(VisibleSelection(makeContainerOffsetPosition(currentSelection.start),
+                makeContainerOffsetPosition(currentSelection.end)));
 
             return;
         }
         
-        unlistifyParagraph(endingSelection().visibleStart(), listNode.get(), listChildNode);
+        unlistifyParagraph(endingSelection().visibleStart(), *listNode, listChildNode);
     }
 
     if (!listChildNode || switchListType || forceCreateList)
         m_listElement = listifyParagraph(endingSelection().visibleStart(), listTag);
 }
 
-void InsertListCommand::unlistifyParagraph(const VisiblePosition& originalStart, HTMLElement* listNode, Node* listChildNode)
+void InsertListCommand::unlistifyParagraph(const VisiblePosition& originalStart, HTMLElement& listNode, Node* listChildNode)
 {
     RefPtr<Node> nextListChild;
     RefPtr<Node> previousListChild;
     VisiblePosition start;
     VisiblePosition end;
 
-    if (!listNode->parentNode()->hasEditableStyle())
+    if (!listNode.parentNode() || !listNode.parentNode()->hasEditableStyle())
         return;
 
     if (listChildNode->hasTagName(liTag)) {
@@ -299,9 +306,9 @@ void InsertListCommand::unlistifyParagraph(const VisiblePosition& originalStart,
         // A paragraph is visually a list item minus a list marker.  The paragraph will be moved.
         start = startOfParagraph(originalStart, CanSkipOverEditingBoundary);
         end = endOfParagraph(start, CanSkipOverEditingBoundary);
-        nextListChild = enclosingListChild(end.next().deepEquivalent().deprecatedNode(), listNode);
+        nextListChild = enclosingListChild(end.next().deepEquivalent().deprecatedNode(), &listNode);
         ASSERT(nextListChild != listChildNode);
-        previousListChild = enclosingListChild(start.previous().deepEquivalent().deprecatedNode(), listNode);
+        previousListChild = enclosingListChild(start.previous().deepEquivalent().deprecatedNode(), &listNode);
         ASSERT(previousListChild != listChildNode);
     }
 
@@ -314,7 +321,7 @@ void InsertListCommand::unlistifyParagraph(const VisiblePosition& originalStart,
     RefPtr<Element> nodeToInsert = placeholder.copyRef();
     // If the content of the list item will be moved into another list, put it in a list item
     // so that we don't create an orphaned list child.
-    if (enclosingList(listNode)) {
+    if (enclosingList(&listNode)) {
         nodeToInsert = HTMLLIElement::create(document());
         appendNode(placeholder.copyRef(), *nodeToInsert);
     }
@@ -327,18 +334,18 @@ void InsertListCommand::unlistifyParagraph(const VisiblePosition& originalStart,
         // FIXME: We appear to split at nextListChild as opposed to listChildNode so that when we remove
         // listChildNode below in moveParagraphs, previousListChild will be removed along with it if it is 
         // unrendered. But we ought to remove nextListChild too, if it is unrendered.
-        splitElement(*listNode, *splitTreeToNode(*nextListChild, *listNode));
-        insertNodeBefore(nodeToInsert.releaseNonNull(), *listNode);
-    } else if (nextListChild || listChildNode->parentNode() != listNode) {
+        splitElement(listNode, *splitTreeToNode(*nextListChild, listNode));
+        insertNodeBefore(nodeToInsert.releaseNonNull(), listNode);
+    } else if (nextListChild || listChildNode->parentNode() != &listNode) {
         // Just because listChildNode has no previousListChild doesn't mean there isn't any content
         // in listNode that comes before listChildNode, as listChildNode could have ancestors
         // between it and listNode. So, we split up to listNode before inserting the placeholder
         // where we're about to move listChildNode to.
-        if (RefPtr listChildNodeParentNode { listChildNode->parentNode() }; listChildNodeParentNode && listChildNodeParentNode != listNode)
-            splitElement(*listNode, *splitTreeToNode(*listChildNode, *listNode).get());
-        insertNodeBefore(nodeToInsert.releaseNonNull(), *listNode);
+        if (RefPtr listChildNodeParentNode { listChildNode->parentNode() }; listChildNodeParentNode && listChildNodeParentNode != &listNode)
+            splitElement(listNode, *splitTreeToNode(*listChildNode, listNode).get());
+        insertNodeBefore(nodeToInsert.releaseNonNull(), listNode);
     } else
-        insertNodeAfter(nodeToInsert.releaseNonNull(), *listNode);
+        insertNodeAfter(nodeToInsert.releaseNonNull(), listNode);
 
     VisiblePosition insertionPoint = VisiblePosition(positionBeforeNode(placeholder.ptr()));
     moveParagraphs(start, end, insertionPoint, true);
@@ -418,13 +425,14 @@ RefPtr<HTMLElement> InsertListCommand::listifyParagraph(const VisiblePosition& o
         // Update the start of content, so we don't try to move the list into itself.  bug 19066
         // Layout is necessary since start's node's inline renderers may have been destroyed by the insertion
         // The end of the content may have changed after the insertion and layout so update it as well.
-        if (insertionPos == start.deepEquivalent()) {
-            listElement->document().updateLayoutIgnorePendingStylesheets();
-            start = startOfParagraph(originalStart, CanSkipOverEditingBoundary);
-            end = endOfParagraph(start, CanSkipOverEditingBoundary);
-        }
+        if (insertionPos == start.deepEquivalent())
+            start = originalStart;
     }
 
+    // Inserting list element and list item list may change start of pargraph to move. We calculate start of paragraph again.
+    document().updateLayoutIgnorePendingStylesheets();
+    start = startOfParagraph(start, CanSkipOverEditingBoundary);
+    end = endOfParagraph(start, CanSkipOverEditingBoundary);
     moveParagraph(start, end, positionBeforeNode(placeholder.ptr()), true);
 
     if (listElement)

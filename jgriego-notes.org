@@ -1,0 +1,78 @@
+* Big ticket items:
+** TODO Port isel `appendBinOp` and `appendUnOp`
+This seems pretty important to avoiding generating ridiculous code, but this
+also means we need weird pseudo-64-bit-opcodes [1] for all the opcode groups that
+use it.
+
+Though, `appendUnOp` seems less important since our target archs (even MIPS!)
+are pretty RISC-y and won't have the instructions that that helper is trying to
+select
+
+[1] Like the 32-bit ~Add64~ in AirOpcode.opcodes
+
+** TODO How should we cope with ArgumentRegValue changing from 64-bit to 32-bit?
+As far as I can see, we basically have two options:
+- Leave it as-is: ArgumentRegValue should describe exactly a machine register
+
+  Honestly this is kind of in tension with the idea of B3 as a hardware-agnostic
+  backend, but it might not be a huge deal--every client of B3 is generating at
+  least register-width dependent code anyways since JSVALUE32_64 is so different
+
+- Teach B3 (more) about the C calling convention--give a B3::Procedure a signature
+  and change ArgumentRegValue to a more generic ArgumentRegister
+
+  (Does B3::Procedure already have this?? Need to read FTL to really know how
+  things are used outside of testb3)
+
+  This seems _better_ (and it makes it easier for us to exercise more of the
+  compiler in the testb3 suite) but it might be overkill.
+
+** TODO How are we going to treat phi/upsilons in the isel pass?
+Tentatively the plan is to "flatten" these out.
+
+The concern here is balancing fiddling with old code (changing types in isel
+state means potentially changing a lot of code) with tricky new code
+(recalling the discarded Tuple structure in the right places)
+
+At present, B3 tuples must contain numeric types as their elements, so as long
+as we have the original B3::Procedure and know which tuple it is, we should
+always be able to figure out a canonical map from e.g.
+
+#+begin_example
+   ( Int32, Int64,   Int64,  Int32 ) <- B3 view    ( Vector<Type> ts s.t. forall t ∈ ts, t.isNumeric() )
+      |     /  \      /  \     |
+   { Tmp, Tmp, Tmp, Tmp, Tmp, Tmp }  <- isel view  ( Vector<Tmp> tmps s.t. forall tmp ∈ tmps, tmp )
+#+end_example
+
+... which means we don't have to change the representation of tuples in the isel
+bookkeeping _at all_ (which is good!), but makes access or modification kind of
+a pain--however, B3 really _doesn't have_ many primitives that operate on tuples
+( indeed, only Patchpoint, Extract, Upsilon, and Set can consume a tuple; and
+only Patchpoint, BottomTuple, Phi, and Get can produce a tuple ), so the fiddly
+bits should be contained to Patchpoints and lowering Extract.
+
+However, I might just be underestimating the inconvenience and we should just do
+the work to change the representation
+  
+** TODO Would it be useful to have a passing/failing list for testb3?
+Upstream probably won't care--it seems they only ever added tests as things
+started to pass but it's quite slow to modify the test files with preprocessor
+directives and might be easier to just have a text file of passing or failing tests.
+
+** TODO Is there any way to save work preserving isel optimizations for the 64-bit ops we're adding?
+My guess is not--they seem pretty idiosyncratic, but many of them should still
+work for us, it's just more effort to port
+
+
+
+Punt on this!
+* Meeting 2023-03-03: Work items
+** 64-bit ops, find lowering (we can use wasm backend for this) (angelos)
+- Mod / UMod 
+- Sqrt, etc [get called out]
+- Abs
+- CAS, other atomics
+- SIMD things
+** Change test harness to --keep-going (angelos)
+** Flatten SomeTmp phis/tuples in isel (jgriego)
+** Change test suite to use fixed-width integers, support for register-pair arguments in B3::Procedure (jgriego)

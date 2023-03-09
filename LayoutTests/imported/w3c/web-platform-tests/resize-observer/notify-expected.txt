@@ -13,9 +13,11 @@ PASS test2: remove/appendChild trigger notification
 PASS test3: dimensions match
 PASS test4: transform do not cause notifications
 PASS test5: moving an element does not trigger notifications
-PASS test6: inline element does not notify
+PASS test6: inline element notifies once with 0x0.
 PASS test7: unobserve inside notify callback
 PASS test8: observe inside notify callback
 PASS test9: disconnect inside notify callback
 PASS test10: element notifies when parent removed
+PASS test11: display:none element should be notified
+PASS test12: element sized 0x0 should be notified
 

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2017 Yusuke Suzuki <utatane.tea@gmail.com>
- * Copyright (C) 2017-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -89,6 +89,8 @@ int BytecodeDumper<Block>::outOfLineJumpOffset(JSInstructionStream::Offset offse
 template<class Block>
 CString BytecodeDumper<Block>::constantName(VirtualRegister reg) const
 {
+    if (reg.toConstantIndex() >= (int) block()->constantRegisters().size())
+        return toCString("INVALID_CONSTANT(", reg, ")");
     auto value = block()->getConstant(reg);
     return toCString(value, "(", reg, ")");
 }
@@ -371,6 +373,7 @@ void BytecodeDumper::dumpBlock(FunctionCodeBlockGenerator* block, const ModuleIn
     }
 
     dumper.dumpConstants();
+    dumper.dumpExceptionHandlers();
 
     out.printf("\n");
 }
@@ -386,6 +389,19 @@ void BytecodeDumper::dumpConstants()
             this->m_out.print("   const", i, " : ", type.kind, " = ", formatConstant(type, constant), "\n");
             ++i;
         }
+    }
+}
+
+void BytecodeDumper::dumpExceptionHandlers()
+{
+    if (unsigned count = this->block()->numberOfExceptionHandlers()) {
+        this->m_out.printf("\nException Handlers:\n");
+        unsigned i = 0;
+        do {
+            const auto& handler = this->block()->exceptionHandler(i);
+            this->m_out.printf("\t %d: { start: [%4d] end: [%4d] target: [%4d] tryDepth: [%4d] exceptionIndexOrDelegateTarget: [%4d] } %s\n", i + 1, handler.m_start, handler.m_end, handler.m_target, handler.m_tryDepth, handler.m_exceptionIndexOrDelegateTarget, handler.typeName().characters8());
+            ++i;
+        } while (i < count);
     }
 }
 
@@ -409,11 +425,17 @@ CString BytecodeDumper::formatConstant(Type type, uint64_t constant) const
     case TypeKind::F64:
         return toCString(bitwise_cast<double>(constant));
         break;
+    case TypeKind::V128:
+        return toCString(constant);
+        break;
     default: {
-        if (isFuncref(type) || isExternref(type)) {
+        // This is necessary to handle all cases, since when typed function
+        // references are enabled, if type.isFuncref() is true, then
+        // isRefType(type) is false (likewise for externref)
+        if (isRefType(type) || type.isFuncref() || type.isExternref()) {
             if (JSValue::decode(constant) == jsNull())
                 return "null";
-            return toCString(RawPointer(bitwise_cast<void*>(static_cast<uintptr_t>(constant))));
+            return toCString(RawHex(constant));
         }
 
         RELEASE_ASSERT_NOT_REACHED();

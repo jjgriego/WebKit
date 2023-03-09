@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,6 +31,8 @@
 
 namespace WebCore {
 
+class SharedBuffer;
+
 class ImageDecoderCG final : public ImageDecoder {
     WTF_MAKE_FAST_ALLOCATED;
 public:
@@ -50,7 +52,7 @@ public:
     IntSize size() const final { return IntSize(); }
     size_t frameCount() const final;
     RepetitionCount repetitionCount() const final;
-    String uti() const final;
+    String uti() const final { return m_uti; }
     String filenameExtension() const final;
     String accessibilityDescription() const final;
     std::optional<IntPoint> hotSpot() const final;
@@ -70,18 +72,15 @@ public:
     bool isAllDataReceived() const final { return m_isAllDataReceived; }
     void clearFrameBufferCache(size_t) final { }
 
-    WEBCORE_EXPORT static void enableDecodingHEIC();
-    static bool decodingHEICEnabled();
-
-    WEBCORE_EXPORT static void disableHardwareAcceleratedDecoding();
-    static bool hardwareAcceleratedDecodingDisabled();
+    static String decodeUTI(CGImageSourceRef, const SharedBuffer&);
 
 private:
+    String decodeUTI(const SharedBuffer&) const;
+    
     bool m_isAllDataReceived { false };
     mutable EncodedDataStatus m_encodedDataStatus { EncodedDataStatus::Unknown };
+    String m_uti;
     RetainPtr<CGImageSourceRef> m_nativeDecoder;
-    static bool s_enableDecodingHEIC;
-    static bool s_hardwareAcceleratedDecodingDisabled;
 };
 
 } // namespace WebCore

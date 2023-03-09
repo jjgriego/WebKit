@@ -30,13 +30,14 @@
 
 #import "APIPageConfiguration.h"
 #import "AccessibilityIOS.h"
+#import "Connection.h"
 #import "FullscreenClient.h"
 #import "GPUProcessProxy.h"
 #import "InputViewUpdateDeferrer.h"
 #import "Logging.h"
 #import "PageClientImplIOS.h"
 #import "PrintInfo.h"
-#import "RemoteLayerTreeDrawingAreaProxy.h"
+#import "RemoteLayerTreeDrawingAreaProxyIOS.h"
 #import "SmartMagnificationController.h"
 #import "UIKitSPI.h"
 #import "WKBrowsingContextControllerInternal.h"
@@ -67,12 +68,39 @@
 #import <objc/message.h>
 #import <pal/spi/cocoa/NSAccessibilitySPI.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
+#import <wtf/Condition.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #import <wtf/text/TextStream.h>
 #import <wtf/threads/BinarySemaphore.h>
 #import "AppKitSoftLink.h"
 
+@interface _WKPrintFormattingAttributes : NSObject
+@property (nonatomic, readonly) size_t pageCount;
+@property (nonatomic, readonly) WebCore::FrameIdentifier frameID;
+@property (nonatomic, readonly) WebKit::PrintInfo printInfo;
+@end
+
+@implementation _WKPrintFormattingAttributes
+
+- (instancetype)initWithPageCount:(size_t)pageCount frameID:(WebCore::FrameIdentifier)frameID printInfo:(WebKit::PrintInfo)printInfo
+{
+    if (!(self = [super init]))
+        return nil;
+
+    _pageCount = pageCount;
+    _frameID = frameID;
+    _printInfo = printInfo;
+
+    return self;
+}
+
+@end
+
+typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
+    _WKPrintRenderingCallbackTypePreview,
+    _WKPrintRenderingCallbackTypePrint,
+};
 
 @interface WKInspectorIndicationView : UIView
 @end
@@ -137,7 +165,11 @@
     RetainPtr<WKInspectorHighlightView> _inspectorHighlightView;
 
 #if HAVE(VISIBILITY_PROPAGATION_VIEW)
+#if HAVE(NON_HOSTING_VISIBILITY_PROPAGATION_VIEW)
+    RetainPtr<_UINonHostingVisibilityPropagationView> _visibilityPropagationViewForWebProcess;
+#else
     RetainPtr<_UILayerHostView> _visibilityPropagationViewForWebProcess;
+#endif
 #if ENABLE(GPU_PROCESS)
     RetainPtr<_UILayerHostView> _visibilityPropagationViewForGPUProcess;
 #endif // ENABLE(GPU_PROCESS)
@@ -148,9 +180,11 @@
     RetainPtr<NSUndoManager> _undoManager;
     RetainPtr<WKQuirkyNSUndoManager> _quirkyUndoManager;
 
-    std::unique_ptr<BinarySemaphore> _pdfPrintCompletionSemaphore;
-    uint64_t _pdfPrintCallbackID;
-    RetainPtr<CGPDFDocumentRef> _printedDocument;
+    Lock _pendingBackgroundPrintFormattersLock;
+    RetainPtr<NSMutableSet> _pendingBackgroundPrintFormatters;
+    IPC::Connection::AsyncReplyID _printRenderingCallbackID;
+    _WKPrintRenderingCallbackType _printRenderingCallbackType;
+
     Vector<RetainPtr<NSURL>> _temporaryURLsToDeleteWhenDeallocated;
 }
 
@@ -171,15 +205,9 @@ static NSArray *keyCommandsPlaceholderHackForEvernote(id self, SEL _cmd)
     _page->initializeWebPage();
     _page->setIntrinsicDeviceScaleFactor(WebCore::screenScaleFactor([UIScreen mainScreen]));
     _page->setUseFixedLayout(true);
-    _page->setDelegatesScrolling(true);
     _page->setScreenIsBeingCaptured([[[self window] screen] isCaptured]);
 
-    // In order to ensure that we get a unique DisplayRefreshMonitor per-DrawingArea (necessary because DisplayRefreshMonitor
-    // is driven by this class), give each page a unique DisplayID derived from WebPage's unique ID.
-    // FIXME: While using the high end of the range of DisplayIDs makes a collision with real, non-RemoteLayerTreeDrawingArea
-    // DisplayIDs less likely, it is not entirely safe to have a RemoteLayerTreeDrawingArea and TiledCoreAnimationDrawingArea
-    // coeexist in the same process.
-    _page->windowScreenDidChange(std::numeric_limits<uint32_t>::max() - _page->webPageID().toUInt64(), std::nullopt);
+    _page->windowScreenDidChange(_page->generateDisplayIDFromPageID(), std::nullopt);
 
 #if ENABLE(FULLSCREEN_API)
     _page->setFullscreenClient(makeUnique<WebKit::FullscreenClient>(self.webView));
@@ -235,12 +263,21 @@ static NSArray *keyCommandsPlaceholderHackForEvernote(id self, SEL _cmd)
 {
     auto processIdentifier = _page->process().processIdentifier();
     auto contextID = _page->contextIDForVisibilityPropagationInWebProcess();
+#if HAVE(NON_HOSTING_VISIBILITY_PROPAGATION_VIEW)
+    if (!processIdentifier)
+#else
     if (!processIdentifier || !contextID)
+#endif
         return;
 
     ASSERT(!_visibilityPropagationViewForWebProcess);
     // Propagate the view's visibility state to the WebContent process so that it is marked as "Foreground Running" when necessary.
+#if HAVE(NON_HOSTING_VISIBILITY_PROPAGATION_VIEW)
+    auto environmentIdentifier = _page->process().environmentIdentifier();
+    _visibilityPropagationViewForWebProcess = adoptNS([[_UINonHostingVisibilityPropagationView alloc] initWithFrame:CGRectZero pid:processIdentifier environmentIdentifier:environmentIdentifier]);
+#else
     _visibilityPropagationViewForWebProcess = adoptNS([[_UILayerHostView alloc] initWithFrame:CGRectZero pid:processIdentifier contextID:contextID]);
+#endif
     RELEASE_LOG(Process, "Created visibility propagation view %p (contextID=%u) for WebContent process with PID=%d", _visibilityPropagationViewForWebProcess.get(), contextID, processIdentifier);
     [self addSubview:_visibilityPropagationViewForWebProcess.get()];
 }
@@ -531,7 +568,7 @@ static WebCore::FloatBoxExtent floatBoxExtent(UIEdgeInsets insets)
     _page->updateVisibleContentRects(visibleContentRectUpdateInfo, sendEvenIfUnchanged);
 
     auto layoutViewport = _page->unconstrainedLayoutViewportRect();
-    _page->adjustLayersForLayoutViewport(layoutViewport);
+    _page->adjustLayersForLayoutViewport(_page->unobscuredContentRect().location(), layoutViewport, _page->displayedContentScale());
 
     _sizeChangedSinceLastVisibleContentRectUpdate = NO;
 
@@ -622,12 +659,11 @@ static WebCore::FloatBoxExtent floatBoxExtent(UIEdgeInsets insets)
     [self _accessibilityRegisterUIProcessTokens];
 }
 
-static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid, mach_port_t sendPort, NSUUID *uuid)
+static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid, NSUUID *uuid)
 {
     // The accessibility bundle needs to know the uuid, pid and mach_port that this object will refer to.
     objc_setAssociatedObject(element, (void*)[@"ax-uuid" hash], uuid, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(element, (void*)[@"ax-pid" hash], @(pid), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    objc_setAssociatedObject(element, (void*)[@"ax-machport" hash], @(sendPort), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 
@@ -657,8 +693,7 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
     // Store information about the WebProcess that can later be retrieved by the iOS Accessibility runtime.
     if (_page->process().state() == WebKit::WebProcessProxy::State::Running) {
         [self _updateRemoteAccessibilityRegistration:YES];
-        IPC::Connection* connection = _page->process().connection();
-        storeAccessibilityRemoteConnectionInformation(self, _page->process().processIdentifier(), connection->identifier().port, uuid);
+        storeAccessibilityRemoteConnectionInformation(self, _page->process().processIdentifier(), uuid);
 
         IPC::DataReference elementToken = IPC::DataReference(reinterpret_cast<const uint8_t*>([remoteElementToken bytes]), [remoteElementToken length]);
         _page->registerUIProcessAccessibilityTokens(elementToken, elementToken);
@@ -670,11 +705,21 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
     _webView = nil;
 }
 
+- (void)_resetPrintingState
+{
+    _printRenderingCallbackID = { };
+
+    Locker locker { _pendingBackgroundPrintFormattersLock };
+    for (_WKWebViewPrintFormatter *printFormatter in _pendingBackgroundPrintFormatters.get())
+        [printFormatter _invalidatePrintRenderingState];
+    [_pendingBackgroundPrintFormatters removeAllObjects];
+}
+
 #pragma mark PageClientImpl methods
 
 - (std::unique_ptr<WebKit::DrawingAreaProxy>)_createDrawingAreaProxy:(WebKit::WebProcessProxy&)process
 {
-    return makeUnique<WebKit::RemoteLayerTreeDrawingAreaProxy>(*_page, process);
+    return makeUnique<WebKit::RemoteLayerTreeDrawingAreaProxyIOS>(*_page, process);
 }
 
 - (void)_processDidExit
@@ -689,10 +734,7 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
     [self _removeVisibilityPropagationViewForWebProcess];
 #endif
 
-    if (auto pdfPrintCompletionSemaphore = std::exchange(_pdfPrintCompletionSemaphore, nullptr))
-        pdfPrintCompletionSemaphore->signal();
-
-    _pdfPrintCallbackID = 0;
+    [self _resetPrintingState];
 }
 
 #if ENABLE(GPU_PROCESS)
@@ -767,7 +809,7 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
     // Updating the selection requires a full editor state. If the editor state is missing post layout
     // data then it means there is a layout pending and we're going to be called again after the layout
     // so we delay the selection update.
-    if (!_page->editorState().isMissingPostLayoutData)
+    if (_page->editorState().hasPostLayoutAndVisualData())
         [self _updateChangedSelection];
 }
 
@@ -866,24 +908,31 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
 
 @implementation WKContentView (_WKWebViewPrintFormatter)
 
+- (std::optional<WebCore::FrameIdentifier>)_frameIdentifierForPrintFormatter:(_WKWebViewPrintFormatter *)printFormatter
+{
+    ASSERT(isMainRunLoop());
+
+    if (_WKFrameHandle *handle = printFormatter.frameToPrint)
+        return handle->_frameHandle->frameID();
+
+    if (auto mainFrame = _page->mainFrame())
+        return mainFrame->frameID();
+
+    ASSERT_NOT_REACHED();
+    return std::nullopt;
+}
+
 - (BOOL)_wk_printFormatterRequiresMainThread
 {
     return NO;
 }
 
-- (NSUInteger)_wk_pageCountForPrintFormatter:(_WKWebViewPrintFormatter *)printFormatter
+- (RetainPtr<_WKPrintFormattingAttributes>)_attributesForPrintFormatter:(_WKWebViewPrintFormatter *)printFormatter
 {
     bool isPrintingOnBackgroundThread = !isMainRunLoop();
-
-    [self _waitForDrawToPDFCallbackIfNeeded];
-
-    WebCore::FrameIdentifier frameID;
-    if (_WKFrameHandle *handle = printFormatter.frameToPrint)
-        frameID = handle->_frameHandle->frameID();
-    else if (auto mainFrame = _page->mainFrame())
-        frameID = mainFrame->frameID();
-    else
-        return 0;
+    
+    [self _waitForDrawToImageCallbackForPrintFormatterIfNeeded:printFormatter];
+    [self _waitForDrawToPDFCallbackForPrintFormatterIfNeeded:printFormatter];
 
     // The first page can have a smaller content rect than subsequent pages if a top content inset
     // is specified. Since WebKit requires a uniform content rect for each page during layout, use
@@ -891,7 +940,7 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
     // FIXME: Teach WebCore::PrintContext to accept an initial content offset when paginating.
     CGRect printingRect = CGRectIntersection([printFormatter _pageContentRect:YES], [printFormatter _pageContentRect:NO]);
     if (CGRectIsEmpty(printingRect))
-        return 0;
+        return nil;
 
     WebKit::PrintInfo printInfo;
     printInfo.pageSetupScaleFactor = 1;
@@ -907,66 +956,212 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
     printInfo.availablePaperWidth = CGRectGetWidth(printingRect);
     printInfo.availablePaperHeight = CGRectGetHeight(printingRect);
 
-    size_t pageCount;
-    if (printInfo.snapshotFirstPage)
-        pageCount = 1;
-    else {
-        if (isPrintingOnBackgroundThread) {
-            BinarySemaphore computePagesSemaphore;
-            callOnMainRunLoop([self, frameID, printInfo, &pageCount, &computePagesSemaphore]() mutable {
-                _page->computePagesForPrinting(frameID, printInfo, [&pageCount, &computePagesSemaphore](const Vector<WebCore::IntRect>& pageRects, double /* totalScaleFactorForPrinting */, const WebCore::FloatBoxExtent& /* computedPageMargin */) mutable {
-                    ASSERT(pageRects.size() >= 1);
-                    pageCount = pageRects.size();
+    WebCore::FrameIdentifier frameID;
+    size_t pageCount = printInfo.snapshotFirstPage ? 1 : 0;
 
-                    computePagesSemaphore.signal();
-                });
+    if (isPrintingOnBackgroundThread) {
+        BinarySemaphore computePagesSemaphore;
+        callOnMainRunLoop([self, printFormatter, printInfo, &frameID, &pageCount, &computePagesSemaphore]() mutable {
+            auto identifier = [self _frameIdentifierForPrintFormatter:printFormatter];
+            if (!identifier) {
+                computePagesSemaphore.signal();
+                return;
+            }
+
+            frameID = *identifier;
+            if (pageCount) {
+                computePagesSemaphore.signal();
+                return;
+            }
+
+            // This has the side effect of calling `WebPage::beginPrinting`. It is important that all calls
+            // of `WebPage::beginPrinting` are matched with a corresponding call to `WebPage::endPrinting`.
+            _page->computePagesForPrinting(frameID, printInfo, [&pageCount, &computePagesSemaphore](const Vector<WebCore::IntRect>& pageRects, double /* totalScaleFactorForPrinting */, const WebCore::FloatBoxExtent& /* computedPageMargin */) mutable {
+                ASSERT(pageRects.size() >= 1);
+                pageCount = pageRects.size();
+                computePagesSemaphore.signal();
             });
-            computePagesSemaphore.wait();
-        } else
+        });
+        computePagesSemaphore.wait();
+    } else {
+        auto identifier = [self _frameIdentifierForPrintFormatter:printFormatter];
+        if (!identifier)
+            return nil;
+
+        frameID = *identifier;
+
+        if (!pageCount)
             pageCount = _page->computePagesForPrintingiOS(frameID, printInfo);
     }
 
-    ASSERT(!_pdfPrintCompletionSemaphore);
-    if (isPrintingOnBackgroundThread)
-        _pdfPrintCompletionSemaphore = makeUnique<BinarySemaphore>();
+    if (!pageCount)
+        return nil;
 
-    // Begin generating the PDF in expectation of a (eventual) request for the drawn data.
-    _pdfPrintCallbackID = _page->drawToPDFiOS(frameID, printInfo, pageCount, [retainedSelf = retainPtr(self)](RefPtr<WebCore::SharedBuffer>&& pdfData) {
-        if (!pdfData || pdfData->isEmpty())
-            retainedSelf->_printedDocument = nullptr;
-        else {
-            auto data = pdfData->createCFData();
-            auto dataProvider = adoptCF(CGDataProviderCreateWithCFData(data.get()));
-            retainedSelf->_printedDocument = adoptCF(CGPDFDocumentCreateWithProvider(dataProvider.get()));
+    auto attributes = adoptNS([[_WKPrintFormattingAttributes alloc] initWithPageCount:pageCount frameID:frameID printInfo:printInfo]);
+    return attributes;
+}
+
+- (NSUInteger)_wk_pageCountForPrintFormatter:(_WKWebViewPrintFormatter *)printFormatter
+{
+    auto attributes = [self _attributesForPrintFormatter:printFormatter];
+    if (!attributes)
+        return 0;
+
+    return [attributes pageCount];
+}
+
+- (void)_createImage:(_WKPrintFormattingAttributes *)formatterAttributes printFormatter:(_WKWebViewPrintFormatter *)printFormatter
+{
+    bool isPrintingOnBackgroundThread = !isMainRunLoop();
+
+    ensureOnMainRunLoop([formatterAttributes = retainPtr(formatterAttributes), isPrintingOnBackgroundThread, printFormatter = retainPtr(printFormatter), retainedSelf = retainPtr(self)] {
+        // Begin generating the image in expectation of a (eventual) request for the drawn data.
+        auto callbackID = retainedSelf->_page->drawToImage([formatterAttributes frameID], [formatterAttributes printInfo], [formatterAttributes pageCount], [isPrintingOnBackgroundThread, printFormatter, retainedSelf](WebKit::ShareableBitmapHandle&& imageHandle) mutable {
+            if (!isPrintingOnBackgroundThread)
+                retainedSelf->_printRenderingCallbackID = { };
+            else {
+                Locker locker { retainedSelf->_pendingBackgroundPrintFormattersLock };
+                [retainedSelf->_pendingBackgroundPrintFormatters removeObject:printFormatter.get()];
+            }
+
+            if (imageHandle.isNull()) {
+                [printFormatter _setPrintPreviewImage:nullptr];
+                return;
+            }
+
+            auto bitmap = WebKit::ShareableBitmap::create(imageHandle, WebKit::SharedMemory::Protection::ReadOnly);
+            if (!bitmap) {
+                [printFormatter _setPrintPreviewImage:nullptr];
+                return;
+            }
+
+            auto image = bitmap->makeCGImageCopy();
+            [printFormatter _setPrintPreviewImage:image.get()];
+        });
+
+        if (!isPrintingOnBackgroundThread) {
+            retainedSelf->_printRenderingCallbackID = callbackID;
+            retainedSelf->_printRenderingCallbackType = _WKPrintRenderingCallbackTypePreview;
         }
-
-        if (auto pdfPrintCompletionSemaphore = std::exchange(retainedSelf->_pdfPrintCompletionSemaphore, nullptr))
-            pdfPrintCompletionSemaphore->signal();
-
-        retainedSelf->_pdfPrintCallbackID = 0;
     });
-
-    return pageCount;
 }
 
-- (BOOL)_waitForDrawToPDFCallbackIfNeeded
+- (void)_createPDF:(_WKPrintFormattingAttributes *)formatterAttributes printFormatter:(_WKWebViewPrintFormatter *)printFormatter
 {
-    if (auto callbackID = std::exchange(_pdfPrintCallbackID, 0)) {
-        if (_pdfPrintCompletionSemaphore)
-            _pdfPrintCompletionSemaphore->wait();
-        else if (!_page->process().connection()->waitForAsyncCallbackAndDispatchImmediately<Messages::WebPage::DrawToPDFiOS>(callbackID, Seconds::infinity()))
-            return false;
+    bool isPrintingOnBackgroundThread = !isMainRunLoop();
+
+    ensureOnMainRunLoop([formatterAttributes = retainPtr(formatterAttributes), isPrintingOnBackgroundThread, printFormatter = retainPtr(printFormatter), retainedSelf = retainPtr(self)] {
+        // Begin generating the PDF in expectation of a (eventual) request for the drawn data.
+        auto callbackID = retainedSelf->_page->drawToPDFiOS([formatterAttributes frameID], [formatterAttributes printInfo], [formatterAttributes pageCount], [isPrintingOnBackgroundThread, printFormatter, retainedSelf](RefPtr<WebCore::SharedBuffer>&& pdfData) mutable {
+            if (!isPrintingOnBackgroundThread)
+                retainedSelf->_printRenderingCallbackID = { };
+            else {
+                Locker locker { retainedSelf->_pendingBackgroundPrintFormattersLock };
+                [retainedSelf->_pendingBackgroundPrintFormatters removeObject:printFormatter.get()];
+            }
+
+            if (!pdfData || pdfData->isEmpty())
+                [printFormatter _setPrintedDocument:nullptr];
+            else {
+                auto data = pdfData->createCFData();
+                auto dataProvider = adoptCF(CGDataProviderCreateWithCFData(data.get()));
+                [printFormatter _setPrintedDocument:adoptCF(CGPDFDocumentCreateWithProvider(dataProvider.get())).get()];
+            }
+        });
+
+        if (!isPrintingOnBackgroundThread) {
+            retainedSelf->_printRenderingCallbackID = callbackID;
+            retainedSelf->_printRenderingCallbackType = _WKPrintRenderingCallbackTypePrint;
+        }
+    });
+}
+
+- (void)_waitForDrawToPDFCallbackForPrintFormatterIfNeeded:(_WKWebViewPrintFormatter *)printFormatter
+{
+    if (isMainRunLoop()) {
+        if (_printRenderingCallbackType != _WKPrintRenderingCallbackTypePrint)
+            return;
+
+        auto callbackID = std::exchange(_printRenderingCallbackID, { });
+        if (!callbackID)
+            return;
+
+        _page->process().connection()->waitForAsyncReplyAndDispatchImmediately<Messages::WebPage::DrawToPDFiOS>(callbackID, Seconds::infinity());
+        return;
     }
-    ASSERT(!_pdfPrintCallbackID);
-    return true;
+
+    {
+        Locker locker { _pendingBackgroundPrintFormattersLock };
+        if (![_pendingBackgroundPrintFormatters containsObject:printFormatter])
+            return;
+    }
+
+    [printFormatter _waitForPrintedDocumentOrImage];
 }
 
-- (CGPDFDocumentRef)_wk_printedDocument
+- (void)_wk_requestDocumentForPrintFormatter:(_WKWebViewPrintFormatter *)printFormatter
 {
-    if (![self _waitForDrawToPDFCallbackIfNeeded])
-        return nullptr;
+    bool isPrintingOnBackgroundThread = !isMainRunLoop();
 
-    return _printedDocument.get();
+    auto attributes = [self _attributesForPrintFormatter:printFormatter];
+    if (!attributes)
+        return;
+
+    if (isPrintingOnBackgroundThread) {
+        Locker locker { _pendingBackgroundPrintFormattersLock };
+
+        if (!_pendingBackgroundPrintFormatters)
+            _pendingBackgroundPrintFormatters = adoptNS([[NSMutableSet alloc] init]);
+
+        [_pendingBackgroundPrintFormatters addObject:printFormatter];
+    }
+
+    [self _createPDF:attributes.get() printFormatter:printFormatter];
+    [self _waitForDrawToPDFCallbackForPrintFormatterIfNeeded:printFormatter];
+}
+
+- (void)_waitForDrawToImageCallbackForPrintFormatterIfNeeded:(_WKWebViewPrintFormatter *)printFormatter
+{
+    if (isMainRunLoop()) {
+        if (_printRenderingCallbackType != _WKPrintRenderingCallbackTypePreview)
+            return;
+
+        auto callbackID = std::exchange(_printRenderingCallbackID, { });
+        if (!callbackID)
+            return;
+
+        _page->process().connection()->waitForAsyncReplyAndDispatchImmediately<Messages::WebPage::DrawRectToImage>(callbackID, Seconds::infinity());
+        return;
+    }
+
+    {
+        Locker locker { _pendingBackgroundPrintFormattersLock };
+        if (![_pendingBackgroundPrintFormatters containsObject:printFormatter])
+            return;
+    }
+
+    [printFormatter _waitForPrintedDocumentOrImage];
+}
+
+- (void)_wk_requestImageForPrintFormatter:(_WKWebViewPrintFormatter *)printFormatter
+{
+    bool isPrintingOnBackgroundThread = !isMainRunLoop();
+
+    auto attributes = [self _attributesForPrintFormatter:printFormatter];
+    if (!attributes)
+        return;
+
+    if (isPrintingOnBackgroundThread) {
+        Locker locker { _pendingBackgroundPrintFormattersLock };
+
+        if (!_pendingBackgroundPrintFormatters)
+            _pendingBackgroundPrintFormatters = adoptNS([[NSMutableSet alloc] init]);
+
+        [_pendingBackgroundPrintFormatters addObject:printFormatter];
+    }
+
+    [self _createImage:attributes.get() printFormatter:printFormatter];
+    [self _waitForDrawToImageCallbackForPrintFormatterIfNeeded:printFormatter];
 }
 
 @end

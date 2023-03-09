@@ -104,7 +104,6 @@ class JSObject : public JSCell {
     enum PutMode : uint8_t {
         PutModePut,
         PutModeDefineOwnProperty,
-        PutModeDefineOwnPropertyIgnoringExtensibility,
     };
 
 public:
@@ -165,7 +164,8 @@ public:
     template<typename CallbackWhenNoException> typename std::invoke_result<CallbackWhenNoException, bool, PropertySlot&>::type getPropertySlot(JSGlobalObject*, PropertyName, CallbackWhenNoException) const;
     template<typename CallbackWhenNoException> typename std::invoke_result<CallbackWhenNoException, bool, PropertySlot&>::type getPropertySlot(JSGlobalObject*, PropertyName, PropertySlot&, CallbackWhenNoException) const;
 
-    JSValue getIfPropertyExists(JSGlobalObject*, PropertyName);
+    template<typename PropertyNameType> JSValue getIfPropertyExists(JSGlobalObject*, const PropertyNameType&);
+    bool noSideEffectMayHaveNonIndexProperty(VM&, PropertyName);
 
 private:
     static bool getOwnPropertySlotImpl(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
@@ -517,18 +517,9 @@ public:
                 butterfly->setPublicLength(i + 1);
             break;
         }
-        case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
-            ArrayStorage* storage = butterfly->arrayStorage();
-            WriteBarrier<Unknown>& x = storage->m_vector[i];
-            JSValue old = x.get();
-            x.set(vm, this, v);
-            if (!old) {
-                ++storage->m_numValuesInVector;
-                if (i >= storage->length())
-                    storage->setLength(i + 1);
-            }
+        case ALL_ARRAY_STORAGE_INDEXING_TYPES:
+            setIndexQuicklyForArrayStorageIndexingType(vm, i, v);
             break;
-        }
         case ALL_BLANK_INDEXING_TYPES:
             setIndexQuicklyForTypedArray(i, v);
             break;
@@ -687,7 +678,6 @@ public:
     bool putDirect(VM&, PropertyName, JSValue, unsigned attributes = 0);
     bool putDirect(VM&, PropertyName, JSValue, unsigned attributes, PutPropertySlot&);
     bool putDirect(VM&, PropertyName, JSValue, PutPropertySlot&);
-    ASCIILiteral putDirectRespectingExtensibility(VM&, PropertyName, JSValue, unsigned attributes, PutPropertySlot&);
     void putDirectWithoutTransition(VM&, PropertyName, JSValue, unsigned attributes = 0);
     bool putDirectNonIndexAccessor(VM&, PropertyName, GetterSetter*, unsigned attributes);
     void putDirectNonIndexAccessorWithoutTransition(VM&, PropertyName, GetterSetter*, unsigned attributes);
@@ -732,8 +722,6 @@ public:
     JS_EXPORT_PRIVATE JSValue toPrimitive(JSGlobalObject*, PreferredPrimitiveType = NoPreference) const;
     JS_EXPORT_PRIVATE double toNumber(JSGlobalObject*) const;
     JS_EXPORT_PRIVATE JSString* toString(JSGlobalObject*) const;
-
-    JS_EXPORT_PRIVATE static JSValue toThis(JSCell*, JSGlobalObject*, ECMAMode);
 
     // This get function only looks at the property map.
     JSValue getDirect(VM& vm, PropertyName propertyName) const
@@ -843,9 +831,9 @@ public:
 
     JS_EXPORT_PRIVATE bool putDirectNativeIntrinsicGetter(VM&, JSGlobalObject*, Identifier, NativeFunction, Intrinsic, unsigned attributes);
     JS_EXPORT_PRIVATE void putDirectNativeIntrinsicGetterWithoutTransition(VM&, JSGlobalObject*, Identifier, NativeFunction, Intrinsic, unsigned attributes);
-    JS_EXPORT_PRIVATE bool putDirectNativeFunction(VM&, JSGlobalObject*, const PropertyName&, unsigned functionLength, NativeFunction, Intrinsic, unsigned attributes);
-    JS_EXPORT_PRIVATE bool putDirectNativeFunction(VM&, JSGlobalObject*, const PropertyName&, unsigned functionLength, NativeFunction, Intrinsic, const DOMJIT::Signature*, unsigned attributes);
-    JS_EXPORT_PRIVATE void putDirectNativeFunctionWithoutTransition(VM&, JSGlobalObject*, const PropertyName&, unsigned functionLength, NativeFunction, Intrinsic, unsigned attributes);
+    JS_EXPORT_PRIVATE bool putDirectNativeFunction(VM&, JSGlobalObject*, const PropertyName&, unsigned functionLength, NativeFunction, ImplementationVisibility, Intrinsic, unsigned attributes);
+    JS_EXPORT_PRIVATE bool putDirectNativeFunction(VM&, JSGlobalObject*, const PropertyName&, unsigned functionLength, NativeFunction, ImplementationVisibility, Intrinsic, const DOMJIT::Signature*, unsigned attributes);
+    JS_EXPORT_PRIVATE void putDirectNativeFunctionWithoutTransition(VM&, JSGlobalObject*, const PropertyName&, unsigned functionLength, NativeFunction, ImplementationVisibility, Intrinsic, unsigned attributes);
 
     JS_EXPORT_PRIVATE JSFunction* putDirectBuiltinFunction(VM&, JSGlobalObject*, const PropertyName&, FunctionExecutable*, unsigned attributes);
     JSFunction* putDirectBuiltinFunctionWithoutTransition(VM&, JSGlobalObject*, const PropertyName&, FunctionExecutable*, unsigned attributes);
@@ -1006,6 +994,9 @@ public:
     std::optional<Structure::PropertyHashEntry> findPropertyHashEntry(PropertyName) const;
 
     DECLARE_EXPORT_INFO;
+
+    template<typename Functor>
+    bool fastForEachPropertyWithSideEffectFreeFunctor(VM&, const Functor&);
 
 protected:
     void finishCreation(VM& vm)
@@ -1586,28 +1577,21 @@ inline bool JSObject::putDirect(VM& vm, PropertyName propertyName, JSValue value
     ASSERT(!value.isGetterSetter() && !(attributes & PropertyAttribute::Accessor));
     ASSERT(!value.isCustomGetterSetter() && !(attributes & PropertyAttribute::CustomAccessorOrValue));
     PutPropertySlot slot(this);
-    return putDirectInternal<PutModeDefineOwnPropertyIgnoringExtensibility>(vm, propertyName, value, attributes, slot).isNull();
+    return putDirectInternal<PutModeDefineOwnProperty>(vm, propertyName, value, attributes, slot).isNull();
 }
 
 inline bool JSObject::putDirect(VM& vm, PropertyName propertyName, JSValue value, unsigned attributes, PutPropertySlot& slot)
 {
     ASSERT(!value.isGetterSetter());
     ASSERT(!value.isCustomGetterSetter());
-    return putDirectInternal<PutModeDefineOwnPropertyIgnoringExtensibility>(vm, propertyName, value, attributes, slot).isNull();
+    return putDirectInternal<PutModeDefineOwnProperty>(vm, propertyName, value, attributes, slot).isNull();
 }
 
 inline bool JSObject::putDirect(VM& vm, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     ASSERT(!value.isGetterSetter());
     ASSERT(!value.isCustomGetterSetter());
-    return putDirectInternal<PutModeDefineOwnPropertyIgnoringExtensibility>(vm, propertyName, value, 0, slot).isNull();
-}
-
-inline ASCIILiteral JSObject::putDirectRespectingExtensibility(VM& vm, PropertyName propertyName, JSValue value, unsigned attributes, PutPropertySlot& slot)
-{
-    ASSERT(!value.isGetterSetter());
-    ASSERT(!value.isCustomGetterSetter());
-    return putDirectInternal<PutModeDefineOwnProperty>(vm, propertyName, value, attributes, slot);
+    return putDirectInternal<PutModeDefineOwnProperty>(vm, propertyName, value, 0, slot).isNull();
 }
 
 constexpr inline intptr_t offsetInButterfly(PropertyOffset offset)
@@ -1688,23 +1672,23 @@ JS_EXPORT_PRIVATE NEVER_INLINE bool ordinarySetSlow(JSGlobalObject*, JSObject*, 
 // Use this macro from within finishCreation() methods in prototypes. This assumes
 // you've defined variables called globalObject, globalObject, and vm, and they
 // have the expected meanings.
-#define JSC_NATIVE_INTRINSIC_FUNCTION(jsName, cppName, attributes, length, intrinsic) \
+#define JSC_NATIVE_INTRINSIC_FUNCTION(jsName, cppName, attributes, length, implementationVisibility, intrinsic) \
     putDirectNativeFunction(\
         vm, globalObject, makeIdentifier(vm, (jsName)), (length), cppName, \
-        (intrinsic), (attributes))
+        (implementationVisibility), (intrinsic), (attributes))
 
-#define JSC_NATIVE_INTRINSIC_FUNCTION_WITHOUT_TRANSITION(jsName, cppName, attributes, length, intrinsic) \
+#define JSC_NATIVE_INTRINSIC_FUNCTION_WITHOUT_TRANSITION(jsName, cppName, attributes, length, implementationVisibility, intrinsic) \
     putDirectNativeFunctionWithoutTransition(\
         vm, globalObject, makeIdentifier(vm, (jsName)), (length), cppName, \
-        (intrinsic), (attributes))
+        (implementationVisibility), (intrinsic), (attributes))
 
 // As above, but this assumes that the function you're defining doesn't have an
 // intrinsic.
-#define JSC_NATIVE_FUNCTION(jsName, cppName, attributes, length) \
-    JSC_NATIVE_INTRINSIC_FUNCTION(jsName, cppName, (attributes), (length), JSC::NoIntrinsic)
+#define JSC_NATIVE_FUNCTION(jsName, cppName, attributes, length, implementationVisibility) \
+    JSC_NATIVE_INTRINSIC_FUNCTION(jsName, cppName, (attributes), (length), (implementationVisibility), JSC::NoIntrinsic)
 
-#define JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION(jsName, cppName, attributes, length) \
-    JSC_NATIVE_INTRINSIC_FUNCTION_WITHOUT_TRANSITION(jsName, cppName, (attributes), (length), JSC::NoIntrinsic)
+#define JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION(jsName, cppName, attributes, length, implementationVisibility) \
+    JSC_NATIVE_INTRINSIC_FUNCTION_WITHOUT_TRANSITION(jsName, cppName, (attributes), (length), (implementationVisibility), JSC::NoIntrinsic)
 
 // Identical helpers but for builtins. Note that currently, we don't support builtins that are
 // also intrinsics, but we probably will do that eventually.

@@ -58,7 +58,6 @@ list(APPEND WebCore_LIBRARIES
     ${VIDEOTOOLBOX_LIBRARY}
     ${XML2_LIBRARY}
     opus
-    usrsctp
     vpx
     webm
     yuv
@@ -275,12 +274,14 @@ list(APPEND WebCore_SOURCES
     platform/graphics/ca/TileGrid.cpp
     platform/graphics/ca/TransformationMatrixCA.cpp
 
+    platform/graphics/ca/cocoa/GraphicsLayerAsyncContentsDisplayDelegateCocoa.mm
     platform/graphics/ca/cocoa/PlatformCAAnimationCocoa.mm
     platform/graphics/ca/cocoa/PlatformCAFiltersCocoa.mm
     platform/graphics/ca/cocoa/PlatformCALayerCocoa.mm
     platform/graphics/ca/cocoa/WebSystemBackdropLayer.mm
     platform/graphics/ca/cocoa/WebTiledBackingLayer.mm
 
+    platform/graphics/cg/CGSubimageCacheWithTimer.cpp
     platform/graphics/cg/ColorCG.cpp
     platform/graphics/cg/ColorSpaceCG.cpp
     platform/graphics/cg/FloatPointCG.cpp
@@ -296,7 +297,6 @@ list(APPEND WebCore_SOURCES
     platform/graphics/cg/ImageBufferIOSurfaceBackend.cpp
     platform/graphics/cg/ImageBufferUtilitiesCG.cpp
     platform/graphics/cg/ImageDecoderCG.cpp
-    platform/graphics/cg/ImageSourceCGMac.mm
     platform/graphics/cg/IntPointCG.cpp
     platform/graphics/cg/IntRectCG.cpp
     platform/graphics/cg/IntSizeCG.cpp
@@ -304,7 +304,6 @@ list(APPEND WebCore_SOURCES
     platform/graphics/cg/PDFDocumentImage.cpp
     platform/graphics/cg/PathCG.cpp
     platform/graphics/cg/PatternCG.cpp
-    platform/graphics/cg/SubimageCacheWithTimer.cpp
     platform/graphics/cg/TransformationMatrixCG.cpp
     platform/graphics/cg/UTIRegistry.cpp
 
@@ -313,8 +312,10 @@ list(APPEND WebCore_SOURCES
     platform/graphics/cocoa/FontCacheCoreText.cpp
     platform/graphics/cocoa/FontCascadeCocoa.cpp
     platform/graphics/cocoa/FontCocoa.cpp
+    platform/graphics/cocoa/FontDatabase.cpp
     platform/graphics/cocoa/FontDescriptionCocoa.cpp
     platform/graphics/cocoa/FontFamilySpecificationCoreText.cpp
+    platform/graphics/cocoa/FontFamilySpecificationCoreTextCache.cpp
     platform/graphics/cocoa/FontPlatformDataCocoa.mm
     platform/graphics/cocoa/GraphicsContextCocoa.mm
     platform/graphics/cocoa/GraphicsContextGLCocoa.mm
@@ -322,6 +323,7 @@ list(APPEND WebCore_SOURCES
     platform/graphics/cocoa/IntRectCocoa.mm
     platform/graphics/cocoa/IOSurface.mm
     platform/graphics/cocoa/IOSurfacePoolCocoa.mm
+    platform/graphics/cocoa/UnrealizedCoreTextFont.cpp
     platform/graphics/cocoa/WebActionDisablingCALayerDelegate.mm
     platform/graphics/cocoa/WebCoreCALayerExtras.mm
     platform/graphics/cocoa/WebCoreDecompressionSession.mm
@@ -343,7 +345,7 @@ list(APPEND WebCore_SOURCES
     platform/graphics/mac/DisplayConfigurationMonitor.cpp
     platform/graphics/mac/FloatPointMac.mm
     platform/graphics/mac/FloatSizeMac.mm
-    platform/graphics/mac/FontCustomPlatformData.cpp
+    platform/graphics/mac/FontCustomPlatformDataMac.cpp
     platform/graphics/mac/GraphicsChecksMac.cpp
     platform/graphics/mac/IconMac.mm
     platform/graphics/mac/ImageMac.mm
@@ -369,7 +371,7 @@ list(APPEND WebCore_SOURCES
     platform/mac/PlatformScreenMac.mm
     platform/mac/PowerObserverMac.cpp
     platform/mac/PublicSuffixMac.mm
-    platform/mac/SSLKeyGeneratorMac.mm
+    platform/mac/RevealUtilities.mm
     platform/mac/ScrollAnimatorMac.mm
     platform/mac/ScrollingEffectsController.mm
     platform/mac/ScrollViewMac.mm
@@ -457,6 +459,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/applepay/ApplePayError.h
     Modules/applepay/ApplePayErrorCode.h
     Modules/applepay/ApplePayErrorContactField.h
+    Modules/applepay/ApplePayFeature.h
     Modules/applepay/ApplePayLineItem.h
     Modules/applepay/ApplePayPaymentMethodUpdate.h
     Modules/applepay/ApplePayPaymentOrderDetails.h
@@ -552,9 +555,9 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     page/scrolling/ScrollingStateOverflowScrollProxyNode.h
 
-    page/scrolling/cocoa/ScrollingTreeFixedNode.h
-    page/scrolling/cocoa/ScrollingTreeOverflowScrollProxyNode.h
-    page/scrolling/cocoa/ScrollingTreePositionedNode.h
+    page/scrolling/cocoa/ScrollingTreeFixedNodeCocoa.h
+    page/scrolling/cocoa/ScrollingTreeOverflowScrollProxyNodeCocoa.h
+    page/scrolling/cocoa/ScrollingTreePositionedNodeCocoa.h
     page/scrolling/cocoa/ScrollingTreeStickyNodeCocoa.h
 
     page/scrolling/mac/ScrollingCoordinatorMac.h
@@ -567,6 +570,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/MainThreadSharedTimer.h
     platform/PictureInPictureSupport.h
     platform/PlatformContentFilter.h
+    platform/ScrollAlignment.h
     platform/ScrollAnimation.h
     platform/ScrollingEffectsController.h
     platform/ScrollSnapAnimatorState.h
@@ -640,6 +644,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ca/PlatformCALayerClient.h
     platform/graphics/ca/TileController.h
 
+    platform/graphics/ca/cocoa/GraphicsLayerAsyncContentsDisplayDelegateCocoa.h
     platform/graphics/ca/cocoa/PlatformCAAnimationCocoa.h
     platform/graphics/ca/cocoa/PlatformCALayerCocoa.h
     platform/graphics/ca/cocoa/WebVideoContainerLayer.h
@@ -660,12 +665,14 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/cocoa/ColorCocoa.h
     platform/graphics/cocoa/FontCacheCoreText.h
     platform/graphics/cocoa/FontCocoa.h
+    platform/graphics/cocoa/FontDatabase.h
     platform/graphics/cocoa/FontFamilySpecificationCoreText.h
+    platform/graphics/cocoa/FontFamilySpecificationCoreTextCache.h
     platform/graphics/cocoa/GraphicsContextGLCocoa.h
-    platform/graphics/cocoa/GraphicsContextGLOpenGL.h
     platform/graphics/cocoa/GraphicsContextGLIOSurfaceSwapChain.h
     platform/graphics/cocoa/IOSurface.h
     platform/graphics/cocoa/MediaPlaybackTargetContext.h
+    platform/graphics/cocoa/MediaPlayerPrivateWebM.h
     platform/graphics/cocoa/SourceBufferParser.h
     platform/graphics/cocoa/SourceBufferParserWebM.h
     platform/graphics/cocoa/VP9UtilitiesCocoa.h
@@ -681,7 +688,6 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     platform/graphics/mac/ColorMac.h
     platform/graphics/mac/DisplayConfigurationMonitor.h
-    platform/graphics/mac/FontCustomPlatformData.h
     platform/graphics/mac/GraphicsChecksMac.h
     platform/graphics/mac/ScopedHighPerformanceGPURequest.h
     platform/graphics/mac/SwitchingGPUClient.h
@@ -703,6 +709,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/mac/PlaybackSessionInterfaceMac.h
     platform/mac/PluginBlocklist.h
     platform/mac/PowerObserverMac.h
+    platform/mac/RevealUtilities.h
     platform/mac/SerializedPlatformDataCueMac.h
     platform/mac/ScrollbarThemeMac.h
     platform/mac/StringUtilities.h
@@ -735,12 +742,9 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/mediastream/libwebrtc/LibWebRTCProviderCocoa.h
     platform/mediastream/libwebrtc/VideoFrameLibWebRTC.h
 
-    platform/network/cf/AuthenticationCF.h
     platform/network/cf/AuthenticationChallenge.h
     platform/network/cf/CertificateInfo.h
     platform/network/cf/DownloadBundle.h
-    platform/network/cf/LoaderRunLoopCF.h
-    platform/network/cf/ProtectionSpaceCFNet.h
     platform/network/cf/ResourceError.h
     platform/network/cf/ResourceRequest.h
     platform/network/cf/ResourceRequestCFNet.h
@@ -776,6 +780,7 @@ list(APPEND WebCore_IDL_FILES
     Modules/applepay/ApplePayError.idl
     Modules/applepay/ApplePayErrorCode.idl
     Modules/applepay/ApplePayErrorContactField.idl
+    Modules/applepay/ApplePayFeature.idl
     Modules/applepay/ApplePayInstallmentItem.idl
     Modules/applepay/ApplePayInstallmentItemType.idl
     Modules/applepay/ApplePayInstallmentConfiguration.idl

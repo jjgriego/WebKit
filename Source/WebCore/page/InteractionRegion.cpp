@@ -27,111 +27,32 @@
 #include "InteractionRegion.h"
 
 #include "Document.h"
+#include "ElementAncestorIteratorInlines.h"
+#include "ElementInlines.h"
 #include "Frame.h"
 #include "FrameSnapshotting.h"
 #include "FrameView.h"
 #include "GeometryUtilities.h"
 #include "HTMLAnchorElement.h"
+#include "HTMLAttachmentElement.h"
+#include "HTMLButtonElement.h"
+#include "HTMLFieldSetElement.h"
 #include "HTMLFormControlElement.h"
+#include "HTMLInputElement.h"
 #include "HitTestResult.h"
 #include "Page.h"
 #include "PathUtilities.h"
 #include "PlatformMouseEvent.h"
 #include "RenderBox.h"
+#include "RenderLayer.h"
+#include "RenderLayerBacking.h"
 #include "SimpleRange.h"
+#include "SliderThumbElement.h"
 #include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
 InteractionRegion::~InteractionRegion() = default;
-
-static FloatRect absoluteBoundingRectForRange(const SimpleRange& range)
-{
-    return unionRectIgnoringZeroRects(RenderObject::absoluteBorderAndTextRects(range, {
-        RenderObject::BoundingRectBehavior::RespectClipping,
-        RenderObject::BoundingRectBehavior::UseVisibleBounds,
-        RenderObject::BoundingRectBehavior::IgnoreTinyRects,
-    }));
-}
-
-static std::optional<InteractionRegion> regionForElement(Element& element)
-{
-    Ref document = element.document();
-    Ref frameView = *document->frame()->view();
-    Ref mainFrameView = *document->frame()->mainFrame().view();
-    
-    IntRect frameClipRect;
-#if PLATFORM(IOS_FAMILY)
-    frameClipRect = enclosingIntRect(frameView->exposedContentRect());
-#else
-    if (auto viewExposedRect = frameView->viewExposedRect())
-        frameClipRect = enclosingIntRect(*viewExposedRect);
-    else
-        frameClipRect = frameView->visibleContentRect();
-#endif
-
-    auto* renderer = element.renderer();
-    if (!renderer)
-        return std::nullopt;
-
-    Vector<FloatRect> rectsInContentCoordinates;
-    InteractionRegion region;
-
-    region.elementIdentifier = element.identifier();
-
-    auto linkRange = makeRangeSelectingNode(element);
-    if (linkRange)
-        region.hasLightBackground = estimatedBackgroundColorForRange(*linkRange, *element.document().frame()).luminance() > 0.5;
-    
-    if (linkRange && renderer->isInline() && !renderer->isReplacedOrInlineBlock()) {
-        static constexpr float inlinePadding = 3;
-        OptionSet<RenderObject::BoundingRectBehavior> behavior { RenderObject::BoundingRectBehavior::RespectClipping };
-        rectsInContentCoordinates = RenderObject::absoluteTextRects(*linkRange, behavior).map([&](auto rect) -> FloatRect {
-            rect.inflate(inlinePadding);
-            return rect;
-        });
-
-        if (rectsInContentCoordinates.isEmpty()) {
-            auto boundingRectForRange = absoluteBoundingRectForRange(*linkRange);
-            if (!boundingRectForRange.isEmpty()) {
-                boundingRectForRange.inflate(inlinePadding);
-                rectsInContentCoordinates = { boundingRectForRange };
-            }
-        }
-    }
-
-    if (rectsInContentCoordinates.isEmpty())
-        rectsInContentCoordinates = { renderer->absoluteBoundingBoxRect() };
-    
-    auto layoutArea = mainFrameView->layoutSize().area();
-    rectsInContentCoordinates = compactMap(rectsInContentCoordinates, [&] (auto rect) -> std::optional<FloatRect> {
-        if (rect.area() > layoutArea / 2)
-            return std::nullopt;
-        return rect;
-    });
-    
-    if (is<RenderBox>(*renderer)) {
-        RoundedRect::Radii borderRadii = downcast<RenderBox>(*renderer).borderRadii();
-        region.borderRadius = borderRadii.minimumRadius();
-    }
-    
-    for (auto rect : rectsInContentCoordinates) {
-        auto contentsRect = rect;
-
-        if (frameView.ptr() != mainFrameView.ptr())
-            contentsRect.intersect(frameClipRect);
-
-        if (contentsRect.isEmpty())
-            continue;
-
-        region.regionInLayerCoordinates.unite(enclosingIntRect(contentsRect));
-    }
-
-    if (region.regionInLayerCoordinates.isEmpty())
-        return std::nullopt;
-
-    return region;
-}
 
 static CursorType cursorTypeForElement(Element& element)
 {
@@ -139,64 +60,157 @@ static CursorType cursorTypeForElement(Element& element)
     auto* style = renderer ? &renderer->style() : nullptr;
     auto cursorType = style ? style->cursor() : CursorType::Auto;
 
-    if (cursorType == CursorType::Auto && element.enclosingLinkEventParentOrSelf() && element.isLink())
+    if (cursorType == CursorType::Auto && element.enclosingLinkEventParentOrSelf())
         cursorType = CursorType::Pointer;
 
     return cursorType;
 }
 
-Vector<InteractionRegion> interactionRegions(Page& page, FloatRect rect)
+static bool shouldAllowElement(const Element& element)
 {
-    Ref frame(page.mainFrame());
-    RefPtr frameView = frame->view();
-    
-    if (!frameView)
-        return { };
+    if (is<HTMLFieldSetElement>(element))
+        return false;
 
-    frameView->updateLayoutAndStyleIfNeededRecursive();
-    
-    RefPtr document = frame->document();
-    if (!document)
-        return { };
+    if (auto* input = dynamicDowncast<HTMLInputElement>(element)) {
+        // Do not allow regions for the <input type='range'>, because we make one for the thumb.
+        if (input->isRangeControl())
+            return false;
 
-    auto result = HitTestResult { LayoutRect(rect) };
-    HitTestRequest request({
-        HitTestRequest::Type::ReadOnly,
-        HitTestRequest::Type::Active,
-        HitTestRequest::Type::AllowVisibleChildFrameContentOnly,
-        HitTestRequest::Type::CollectMultipleElements
-    });
-    document->hitTest(request, result);
-
-    Vector<InteractionRegion> regions;
-
-    for (const auto& node : result.listBasedTestResult()) {
-        if (!is<Element>(node.get()))
-            continue;
-        auto& element = downcast<Element>(node.get());
-        if (!element.renderer())
-            continue;
-
-        auto& renderer = *element.renderer();
-        // FIXME: Consider also allowing elements that only receive touch events.
-        if (!renderer.style().eventListenerRegionTypes().contains(EventListenerRegionType::MouseClick))
-            continue;
-
-        if (cursorTypeForElement(element) != CursorType::Pointer && !is<HTMLFormControlElement>(element))
-            continue;
-
-        auto region = regionForElement(element);
-        if (region)
-            regions.append(*region);
+        // Do not allow regions for the <input type='file'>, because we make one for the button.
+        if (input->isFileUpload())
+            return false;
     }
 
-    return regions;
+    return true;
+}
+
+static bool shouldAllowNonPointerCursorForElement(const Element& element)
+{
+#if ENABLE(ATTACHMENT_ELEMENT)
+    if (is<HTMLAttachmentElement>(element))
+        return true;
+#endif
+
+    if (is<HTMLFormControlElement>(element))
+        return true;
+
+    if (is<SliderThumbElement>(element))
+        return true;
+
+    return false;
+}
+
+std::optional<InteractionRegion> interactionRegionForRenderedRegion(RenderObject& regionRenderer, const Region& region)
+{
+    if (!regionRenderer.node())
+        return std::nullopt;
+
+    auto bounds = region.bounds();
+    if (bounds.isEmpty())
+        return std::nullopt;
+
+    auto* localFrame = dynamicDowncast<LocalFrame>(regionRenderer.document().frame()->mainFrame());
+    if (!localFrame)
+        return std::nullopt;
+
+    auto& mainFrameView = *localFrame->view();
+
+    FloatSize frameViewSize = mainFrameView.size();
+    // Adding some wiggle room, we use this to avoid extreme cases.
+    auto scale = 1 / mainFrameView.visibleContentScaleFactor() + 0.2;
+    frameViewSize.scale(scale, scale);
+    auto frameViewArea = frameViewSize.area();
+
+    auto checkedRegionArea = bounds.area<RecordOverflow>();
+    if (checkedRegionArea.hasOverflowed())
+        return std::nullopt;
+
+    auto originalElement = dynamicDowncast<Element>(regionRenderer.node());
+    if (originalElement && originalElement->isPseudoElement())
+        return std::nullopt;
+
+    auto matchedElement = originalElement;
+    if (!matchedElement)
+        matchedElement = regionRenderer.node()->parentElement();
+    if (!matchedElement)
+        return std::nullopt;
+
+    if (auto* linkElement = matchedElement->enclosingLinkEventParentOrSelf())
+        matchedElement = linkElement;
+    if (auto* buttonElement = ancestorsOfType<HTMLButtonElement>(*matchedElement).first())
+        matchedElement = buttonElement;
+
+    if (!shouldAllowElement(*matchedElement))
+        return std::nullopt;
+
+    if (!matchedElement->renderer())
+        return std::nullopt;
+    auto& renderer = *matchedElement->renderer();
+
+    if (renderer.style().effectivePointerEvents() == PointerEvents::None)
+        return std::nullopt;
+
+    bool isOriginalMatch = matchedElement == originalElement;
+
+    // FIXME: Consider also allowing elements that only receive touch events.
+    bool hasListener = renderer.style().eventListenerRegionTypes().contains(EventListenerRegionType::MouseClick);
+    bool hasPointer = cursorTypeForElement(*matchedElement) == CursorType::Pointer || shouldAllowNonPointerCursorForElement(*matchedElement);
+    if (!hasListener || !hasPointer) {
+        bool isOverlay = checkedRegionArea.value() <= frameViewArea && (renderer.style().specifiedZIndex() > 0 || renderer.isFixedPositioned());
+        if (isOverlay && isOriginalMatch) {
+            Region boundsRegion;
+            boundsRegion.unite(bounds);
+
+            return { {
+                matchedElement->identifier(),
+                boundsRegion,
+                0,
+                InteractionRegion::Type::Occlusion
+            } };
+        }
+
+        return std::nullopt;
+    }
+
+    if (checkedRegionArea.value() > frameViewArea / 2)
+        return std::nullopt;
+
+    bool isInlineNonBlock = renderer.isInline() && !renderer.isReplacedOrInlineBlock();
+
+    // The parent will get its own InteractionRegion.
+    if (!isOriginalMatch && !isInlineNonBlock)
+        return std::nullopt;
+
+    if (isInlineNonBlock)
+        bounds.inflate(regionRenderer.document().settings().interactionRegionInlinePadding());
+
+    float borderRadius = 0;
+    if (auto* renderBox = dynamicDowncast<RenderBox>(renderer)) {
+        borderRadius = renderBox->borderRadii().minimumRadius();
+
+        auto* input = dynamicDowncast<HTMLInputElement>(matchedElement);
+        if (input && input->containerElement()) {
+            auto borderBoxRect = renderBox->borderBoxRect();
+            auto contentBoxRect = renderBox->contentBoxRect();
+            bounds.move(IntSize(borderBoxRect.location() - contentBoxRect.location()));
+            bounds.expand(IntSize(borderBoxRect.size() - contentBoxRect.size()));
+        }
+    }
+
+    Region boundsRegion;
+    boundsRegion.unite(bounds);
+
+    return { {
+        matchedElement->identifier(),
+        boundsRegion,
+        borderRadius,
+        InteractionRegion::Type::Interaction
+    } };
 }
 
 TextStream& operator<<(TextStream& ts, const InteractionRegion& interactionRegion)
 {
-    ts.dumpProperty("region", interactionRegion.regionInLayerCoordinates);
-    ts.dumpProperty("hasLightBackground", interactionRegion.hasLightBackground);
+    ts.dumpProperty(interactionRegion.type == InteractionRegion::Type::Occlusion ? "occlusion" : "interaction", interactionRegion.regionInLayerCoordinates);
     ts.dumpProperty("borderRadius", interactionRegion.borderRadius);
 
     return ts;

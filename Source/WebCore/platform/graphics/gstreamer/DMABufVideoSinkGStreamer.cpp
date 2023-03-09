@@ -27,6 +27,10 @@
 #include <mutex>
 #include <wtf/glib/WTFGType.h>
 
+#if USE(LIBGBM)
+#include "GBMDevice.h"
+#endif
+
 using namespace WebCore;
 
 enum {
@@ -130,13 +134,12 @@ static void webKitDMABufVideoSinkGetProperty(GObject* object, guint propertyId, 
     WebKitDMABufVideoSink* sink = WEBKIT_DMABUF_VIDEO_SINK(object);
 
     switch (propertyId) {
-    case PROP_STATS:
-        if (webkitGstCheckVersion(1, 18, 0)) {
-            GUniqueOutPtr<GstStructure> stats;
-            g_object_get(sink->priv->appSink.get(), "stats", &stats.outPtr(), nullptr);
-            gst_value_set_structure(value, stats.get());
-        }
+    case PROP_STATS: {
+        GUniqueOutPtr<GstStructure> stats;
+        g_object_get(sink->priv->appSink.get(), "stats", &stats.outPtr(), nullptr);
+        gst_value_set_structure(value, stats.get());
         break;
+    }
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propertyId, paramSpec);
         RELEASE_ASSERT_NOT_REACHED();
@@ -156,25 +159,35 @@ static void webkit_dmabuf_video_sink_class_init(WebKitDMABufVideoSinkClass* klas
     gst_element_class_add_pad_template(elementClass, gst_static_pad_template_get(&sinkTemplate));
     gst_element_class_set_static_metadata(elementClass, "WebKit DMABuf video sink", "Sink/Video", "Renders video", "Zan Dobersek <zdobersek@igalia.com>");
 
-    g_object_class_install_property(objectClass, PROP_STATS, g_param_spec_boxed("stats", "Statistics",
-        "Sink Statistics", GST_TYPE_STRUCTURE, static_cast<GParamFlags>(G_PARAM_READABLE | G_PARAM_STATIC_STRINGS)));
+    g_object_class_install_property(objectClass, PROP_STATS, g_param_spec_boxed("stats",
+        nullptr, nullptr, GST_TYPE_STRUCTURE, static_cast<GParamFlags>(G_PARAM_READABLE | G_PARAM_STATIC_STRINGS)));
 }
 
 bool webKitDMABufVideoSinkIsEnabled()
 {
-    static bool s_enabled = false;
+    static bool s_disabled = false;
+#if USE(LIBGBM)
     static std::once_flag s_flag;
-    std::call_once(s_flag,
-        [&] {
-            const char* value = g_getenv("WEBKIT_GST_DMABUF_SINK_ENABLED");
-            s_enabled = value && (equalLettersIgnoringASCIICase(value, "true"_s) || equalLettersIgnoringASCIICase(value, "1"_s));
-        });
-    return s_enabled;
+    std::call_once(s_flag, [&] {
+        const char* value = g_getenv("WEBKIT_GST_DMABUF_SINK_DISABLED");
+        s_disabled = value && (equalLettersIgnoringASCIICase(value, "true"_s) || equalLettersIgnoringASCIICase(value, "1"_s));
+        if (!s_disabled) {
+            auto& gbmDevice = GBMDevice::singleton();
+            if (!gbmDevice.device()) {
+                WTFLogAlways("Unable to access the GBM device, disabling DMABuf video sink.");
+                s_disabled = true;
+            }
+        }
+    });
+#else
+    s_disabled = true;
+#endif
+    return !s_disabled;
 }
 
 bool webKitDMABufVideoSinkProbePlatform()
 {
-    return isGStreamerPluginAvailable("app");
+    return webkitGstCheckVersion(1, 22, 0) && isGStreamerPluginAvailable("app");
 }
 
 void webKitDMABufVideoSinkSetMediaPlayerPrivate(WebKitDMABufVideoSink* sink, MediaPlayerPrivateGStreamer* player)

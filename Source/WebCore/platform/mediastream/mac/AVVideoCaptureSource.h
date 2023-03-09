@@ -52,9 +52,11 @@ namespace WebCore {
 class AVVideoPreset;
 class ImageTransferSessionVT;
 
+enum class VideoFrameRotation : uint16_t;
+
 class AVVideoCaptureSource : public RealtimeVideoCaptureSource, private OrientationNotifier::Observer {
 public:
-    static CaptureSourceOrError create(const CaptureDevice&, String&& hashSalt, const MediaConstraints*, PageIdentifier);
+    static CaptureSourceOrError create(const CaptureDevice&, MediaDeviceHashSalts&&, const MediaConstraints*, PageIdentifier);
 
     WEBCORE_EXPORT static VideoCaptureFactory& factory();
 
@@ -70,7 +72,7 @@ public:
     void captureDeviceSuspendedDidChange();
 
 private:
-    AVVideoCaptureSource(AVCaptureDevice*, const CaptureDevice&, String&& hashSalt, PageIdentifier);
+    AVVideoCaptureSource(AVCaptureDevice*, const CaptureDevice&, MediaDeviceHashSalts&&, PageIdentifier);
     virtual ~AVVideoCaptureSource();
 
     void clearSession();
@@ -81,6 +83,7 @@ private:
 
     const RealtimeMediaSourceCapabilities& capabilities() final;
     const RealtimeMediaSourceSettings& settings() final;
+    double facingModeFitnessDistanceAdjustment() const final;
     void startProducingData() final;
     void stopProducingData() final;
     void settingsDidChange(OptionSet<RealtimeMediaSourceSettings::Flag>) final;
@@ -91,7 +94,7 @@ private:
     CaptureDevice::DeviceType deviceType() const final { return CaptureDevice::DeviceType::Camera; }
     bool interrupted() const final;
 
-    VideoFrame::Rotation videoFrameRotation() const final { return m_videoFrameRotation; }
+    VideoFrameRotation videoFrameRotation() const final { return m_videoFrameRotation; }
     void setFrameRateWithPreset(double, RefPtr<VideoPreset>) final;
     bool prefersPreset(VideoPreset&) final;
     void generatePresets() final;
@@ -124,7 +127,7 @@ private:
 
     int m_sensorOrientation { 0 };
     int m_deviceOrientation { 0 };
-    VideoFrame::Rotation m_videoFrameRotation { VideoFrame::Rotation::None };
+    VideoFrameRotation m_videoFrameRotation { };
 
     std::optional<RealtimeMediaSourceSettings> m_currentSettings;
     std::optional<RealtimeMediaSourceCapabilities> m_capabilities;

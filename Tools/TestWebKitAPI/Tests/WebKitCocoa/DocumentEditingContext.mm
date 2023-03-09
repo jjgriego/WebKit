@@ -428,17 +428,17 @@ TEST(DocumentEditingContext, RequestMarkedTextRectsAndTextOnly)
     auto context = retainPtr([webView synchronouslyRequestDocumentContext:request.get()]);
     auto *rectValues = [context markedTextRects];
 #if PLATFORM(MACCATALYST)
-    EXPECT_EQ(CGRectMake(165, 8, 26, 26), [rectValues[0] CGRectValue]);
-    EXPECT_EQ(CGRectMake(190, 8, 26, 26), [rectValues[1] CGRectValue]);
-    EXPECT_EQ(CGRectMake(215, 8, 26, 26), [rectValues[2] CGRectValue]);
-    EXPECT_EQ(CGRectMake(240, 8, 26, 26), [rectValues[3] CGRectValue]);
-    EXPECT_EQ(CGRectMake(265, 8, 26, 26), [rectValues[4] CGRectValue]);
+    EXPECT_EQ(CGRectMake(163, 6, 26, 26), [rectValues[0] CGRectValue]);
+    EXPECT_EQ(CGRectMake(188, 6, 26, 26), [rectValues[1] CGRectValue]);
+    EXPECT_EQ(CGRectMake(213, 6, 26, 26), [rectValues[2] CGRectValue]);
+    EXPECT_EQ(CGRectMake(238, 6, 26, 26), [rectValues[3] CGRectValue]);
+    EXPECT_EQ(CGRectMake(263, 6, 26, 26), [rectValues[4] CGRectValue]);
 #else
-    EXPECT_EQ(CGRectMake(165, 8, 26, 25), [rectValues[0] CGRectValue]);
-    EXPECT_EQ(CGRectMake(190, 8, 26, 25), [rectValues[1] CGRectValue]);
-    EXPECT_EQ(CGRectMake(215, 8, 26, 25), [rectValues[2] CGRectValue]);
-    EXPECT_EQ(CGRectMake(240, 8, 26, 25), [rectValues[3] CGRectValue]);
-    EXPECT_EQ(CGRectMake(265, 8, 26, 25), [rectValues[4] CGRectValue]);
+    EXPECT_EQ(CGRectMake(163, 6, 26, 25), [rectValues[0] CGRectValue]);
+    EXPECT_EQ(CGRectMake(188, 6, 26, 25), [rectValues[1] CGRectValue]);
+    EXPECT_EQ(CGRectMake(213, 6, 26, 25), [rectValues[2] CGRectValue]);
+    EXPECT_EQ(CGRectMake(238, 6, 26, 25), [rectValues[3] CGRectValue]);
+    EXPECT_EQ(CGRectMake(263, 6, 26, 25), [rectValues[4] CGRectValue]);
 #endif
 }
 
@@ -454,16 +454,16 @@ TEST(DocumentEditingContext, SpatialRequestInTextField)
     auto *textRects = [context textRects];
     EXPECT_EQ(10U, textRects.count);
     if (textRects.count >= 10) {
-        EXPECT_EQ(CGRectMake(8, 9, 12, 19), textRects[0].CGRectValue);
-        EXPECT_EQ(CGRectMake(19, 9, 8, 19), textRects[1].CGRectValue);
-        EXPECT_EQ(CGRectMake(26, 9, 6, 19), textRects[2].CGRectValue);
-        EXPECT_EQ(CGRectMake(31, 9, 5, 19), textRects[3].CGRectValue);
-        EXPECT_EQ(CGRectMake(35, 9, 9, 19), textRects[4].CGRectValue);
-        EXPECT_EQ(CGRectMake(202, 9, 12, 19), textRects[5].CGRectValue);
-        EXPECT_EQ(CGRectMake(213, 9, 9, 19), textRects[6].CGRectValue);
-        EXPECT_EQ(CGRectMake(221, 9, 7, 19), textRects[7].CGRectValue);
-        EXPECT_EQ(CGRectMake(227, 9, 5, 19), textRects[8].CGRectValue);
-        EXPECT_EQ(CGRectMake(231, 9, 9, 19), textRects[9].CGRectValue);
+        EXPECT_EQ(CGRectMake(8, 8, 12, 19), textRects[0].CGRectValue);
+        EXPECT_EQ(CGRectMake(19, 8, 8, 19), textRects[1].CGRectValue);
+        EXPECT_EQ(CGRectMake(26, 8, 6, 19), textRects[2].CGRectValue);
+        EXPECT_EQ(CGRectMake(31, 8, 5, 19), textRects[3].CGRectValue);
+        EXPECT_EQ(CGRectMake(35, 8, 9, 19), textRects[4].CGRectValue);
+        EXPECT_EQ(CGRectMake(198, 8, 12, 19), textRects[5].CGRectValue);
+        EXPECT_EQ(CGRectMake(209, 8, 9, 19), textRects[6].CGRectValue);
+        EXPECT_EQ(CGRectMake(217, 8, 7, 19), textRects[7].CGRectValue);
+        EXPECT_EQ(CGRectMake(223, 8, 5, 19), textRects[8].CGRectValue);
+        EXPECT_EQ(CGRectMake(227, 8, 9, 19), textRects[9].CGRectValue);
     }
 }
 
@@ -525,6 +525,19 @@ TEST(DocumentEditingContext, RectsRequestInContentEditableWithDivBreaks)
     }
 }
 
+TEST(DocumentEditingContext, PasswordFieldRequest)
+{
+    auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
+
+    [webView synchronouslyLoadHTMLString:applyAhemStyle(@"<input id='passwordField' type='password' value='testPassword'>")];
+    [webView stringByEvaluatingJavaScript:@"passwordField.focus(); passwordField.select();"];
+
+    UIWKDocumentContext *context = [webView synchronouslyRequestDocumentContext:makeRequest(UIWKDocumentRequestText, UITextGranularityWord, 1)];
+    EXPECT_NOT_NULL(context);
+    EXPECT_NULL(context.contextBefore);
+    EXPECT_NSSTRING_EQ("testPassword", context.selectedText);
+    EXPECT_NULL(context.contextAfter);
+}
 
 TEST(DocumentEditingContext, SpatialRequest_RectEncompassingInput)
 {
@@ -863,10 +876,10 @@ TEST(DocumentEditingContext, RequestRectsInTextAreaAcrossWordWrappedLine)
     EXPECT_EQ(18U, textRects.count);
 
 #if PLATFORM(MACCATALYST)
-    const size_t yPos = 2;
+    const size_t yPos = 0;
     const size_t height = 26;
 #else
-    const size_t yPos = 3;
+    const size_t yPos = 1;
     const size_t height = 25;
 #endif
     
@@ -881,7 +894,7 @@ TEST(DocumentEditingContext, RequestRectsInTextAreaAcrossWordWrappedLine)
         EXPECT_EQ(CGRectMake(x + 6 * glyphWidth, yPos, 25, height), textRects[6].CGRectValue); // m
         EXPECT_EQ(CGRectMake(x + 7 * glyphWidth, yPos, 25, height), textRects[7].CGRectValue); // p
         EXPECT_EQ(CGRectMake(x + 8 * glyphWidth, yPos, 25, height), textRects[8].CGRectValue); // s
-        EXPECT_EQ(CGRectMake(x + 9 * glyphWidth, yPos, 23, height), textRects[9].CGRectValue); //
+        EXPECT_EQ(CGRectMake(x + 9 * glyphWidth, yPos, 25, height), textRects[9].CGRectValue); //
 
         x = 1;
         EXPECT_EQ(CGRectMake(x + 0 * glyphWidth, 25 + yPos, 25, height), textRects[10].CGRectValue); // o
@@ -909,15 +922,15 @@ TEST(DocumentEditingContext, RequestRectsInTextAreaInsideIFrame)
     EXPECT_EQ(3U, textRects.count);
 
 #if PLATFORM(MACCATALYST)
-    const size_t yPos = 27;
+    const size_t yPos = 25;
     const size_t height = 26;
 #else
-    const size_t yPos = 28;
+    const size_t yPos = 26;
     const size_t height = 25;
 #endif
 
     if (textRects.count >= 3) {
-        CGFloat x = 28;
+        CGFloat x = 26;
         EXPECT_EQ(CGRectMake(x + 0 * glyphWidth, yPos, 25, height), textRects[0].CGRectValue); // T
         EXPECT_EQ(CGRectMake(x + 1 * glyphWidth, yPos, 25, height), textRects[1].CGRectValue); // h
         EXPECT_EQ(CGRectMake(x + 2 * glyphWidth, yPos, 25, height), textRects[2].CGRectValue); // e
@@ -938,15 +951,15 @@ TEST(DocumentEditingContext, RequestRectsInTextAreaInsideScrolledIFrame)
     EXPECT_EQ(3U, textRects.count);
 
 #if PLATFORM(MACCATALYST)
-    const size_t yPos = 27;
+    const size_t yPos = 26;
     const size_t height = 26;
 #else
-    const size_t yPos = 28;
+    const size_t yPos = 27;
     const size_t height = 25;
 #endif
 
     if (textRects.count >= 3) {
-        CGFloat x = 28;
+        CGFloat x = 26;
         EXPECT_EQ(CGRectMake(x + 0 * glyphWidth, yPos, 25, height), textRects[0].CGRectValue); // T
         EXPECT_EQ(CGRectMake(x + 1 * glyphWidth, yPos, 25, height), textRects[1].CGRectValue); // h
         EXPECT_EQ(CGRectMake(x + 2 * glyphWidth, yPos, 25, height), textRects[2].CGRectValue); // e

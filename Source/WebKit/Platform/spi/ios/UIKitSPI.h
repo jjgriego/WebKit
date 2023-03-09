@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,7 +27,9 @@
 
 #if USE(APPLE_INTERNAL_SDK)
 
+#import <CoreSVG/CGSVGDocument.h>
 #import <UIKit/NSTextAlternatives.h>
+#import <UIKit/UIActivityViewController_Private.h>
 #import <UIKit/UIAlertController_Private.h>
 #import <UIKit/UIApplication_Private.h>
 #import <UIKit/UIBarButtonItem_Private.h>
@@ -61,6 +63,7 @@
 #import <UIKit/UIPickerView_Private.h>
 #import <UIKit/UIPopoverPresentationController_Private.h>
 #import <UIKit/UIPresentationController_Private.h>
+#import <UIKit/UIPrintPageRenderer_Private.h>
 #import <UIKit/UIResponder_Private.h>
 #import <UIKit/UIScene_Private.h>
 #import <UIKit/UIScrollEvent_Private.h>
@@ -108,6 +111,7 @@
 #import <UIKit/UIContextMenuInteraction_ForSpringBoardOnly.h>
 #import <UIKit/UIContextMenuInteraction_ForWebKitOnly.h>
 #import <UIKit/UIContextMenuInteraction_Private.h>
+#import <UIKit/UIMenu_Private.h>
 #endif
 
 #if HAVE(UIDATEPICKER_OVERLAY_PRESENTATION)
@@ -125,7 +129,6 @@
 #import <UIKit/UIDragPreviewParameters.h>
 #import <UIKit/UIDragPreview_Private.h>
 #import <UIKit/UIDragSession.h>
-#import <UIKit/UIDragging.h>
 #import <UIKit/UIDropInteraction.h>
 #import <UIKit/UIPreviewInteraction.h>
 #import <UIKit/UIURLDragPreviewView.h>
@@ -133,6 +136,7 @@
 #endif
 
 #if HAVE(UIFINDINTERACTION)
+#import <UIKit/UIFindSession_Private.h>
 #import <UIKit/_UIFindInteraction.h>
 #import <UIKit/_UITextSearching.h>
 #endif
@@ -164,6 +168,13 @@
 #import <UIKit/NSItemProvider+UIKitAdditions.h>
 #endif
 
+typedef NS_ENUM(NSInteger, _UIDataOwner) {
+    _UIDataOwnerUndefined,
+    _UIDataOwnerUser,
+    _UIDataOwnerEnterprise,
+    _UIDataOwnerShared,
+};
+
 #if HAVE(LINK_PREVIEW)
 typedef NS_ENUM(NSInteger, UIPreviewItemType) {
     UIPreviewItemTypeNone,
@@ -172,13 +183,6 @@ typedef NS_ENUM(NSInteger, UIPreviewItemType) {
     UIPreviewItemTypeImage,
     UIPreviewItemTypeText,
     UIPreviewItemTypeAttachment,
-};
-
-typedef NS_ENUM(NSInteger, _UIDataOwner) {
-    _UIDataOwnerUndefined,
-    _UIDataOwnerUser,
-    _UIDataOwnerEnterprise,
-    _UIDataOwnerShared,
 };
 
 @class UIPreviewItemController;
@@ -212,6 +216,7 @@ typedef NS_ENUM(NSInteger, _UIDataOwner) {
 - (void)_addActionWithTitle:(NSString *)title style:(UIAlertActionStyle)style handler:(void (^)(void))handler;
 - (void)_addActionWithTitle:(NSString *)title style:(UIAlertActionStyle)style handler:(void (^)(void))handler shouldDismissHandler:(BOOL (^)(void))shouldDismissHandler;
 @property (nonatomic) UIAlertControllerStyle preferredStyle;
+@property (nonatomic, assign, setter=_setTitleMaximumLineCount:, getter=_titleMaximumLineCount) NSInteger titleMaximumLineCount;
 @end
 
 WTF_EXTERN_C_BEGIN
@@ -347,10 +352,22 @@ typedef id<NSCoding, NSCopying> _UITextSearchDocumentIdentifier;
 
 - (void)clearAllDecoratedFoundText;
 
+@optional
+
+- (BOOL)supportsTextReplacement;
+
 @end
 
 @interface _UIFindInteraction : NSObject <UIInteraction>
 @property (nonatomic, strong) id<_UITextSearching> searchableObject;
+@end
+
+@interface UIFindInteraction ()
+@property (class, nonatomic, copy, getter=_globalFindBuffer, setter=_setGlobalFindBuffer:) NSString *_globalFindBuffer;
+@end
+
+@interface UITextSearchingFindSession ()
+@property (nonatomic, readwrite, weak) id<UITextSearching> searchableObject;
 @end
 
 #endif // HAVE(UIFINDINTERACTION)
@@ -389,10 +406,13 @@ typedef enum {
 @property (nonatomic, setter=_setShowsFileSizePicker:) BOOL _showsFileSizePicker;
 @end
 
+typedef struct CGSVGDocument *CGSVGDocumentRef;
+
 @interface UIImage ()
 - (id)initWithCGImage:(CGImageRef)CGImage imageOrientation:(UIImageOrientation)imageOrientation;
 - (UIImage *)_flatImageWithColor:(UIColor *)color;
 + (UIImage *)_systemImageNamed:(NSString *)name;
++ (UIImage *)_imageWithCGSVGDocument:(CGSVGDocumentRef)cgSVGDocument;
 @end
 
 @interface UIKeyCommand ()
@@ -420,13 +440,10 @@ typedef enum {
 @end
 
 @interface UIKeyboard ()
++ (instancetype)activeKeyboard;
 + (CGSize)defaultSizeForInterfaceOrientation:(UIInterfaceOrientation)orientation;
-- (void)activate;
-- (void)geometryChangeDone:(BOOL)keyboardVisible;
-- (void)prepareForGeometryChange;
 + (BOOL)isInHardwareKeyboardMode;
 + (BOOL)isOnScreen;
-+ (void)removeAllDynamicDictionaries;
 @end
 
 @interface UIKeyboardImpl : UIView <UIKeyboardCandidateListDelegate>
@@ -498,15 +515,17 @@ typedef enum {
 @property (nonatomic, setter=_setMagnifierEnabled:) BOOL _magnifierEnabled;
 @end
 
+@interface UIPrintPageRenderer ()
+@property (readonly) UIPrintRenderingQuality requestedRenderingQuality;
+@end
+
 @interface UIResponder ()
 - (void)_handleKeyUIEvent:(UIEvent *)event;
 - (void)_wheelChangedWithEvent:(UIEvent *)event;
 - (void)_beginPinningInputViews;
 - (void)_endPinningInputViews;
-#if HAVE(PASTEBOARD_DATA_OWNER)
 @property (nonatomic, setter=_setDataOwnerForCopy:) _UIDataOwner _dataOwnerForCopy;
 @property (nonatomic, setter=_setDataOwnerForPaste:) _UIDataOwner _dataOwnerForPaste;
-#endif
 @end
 
 @class FBSDisplayConfiguration;
@@ -634,6 +653,10 @@ typedef enum {
 - (void)selectAll;
 @end
 
+@protocol _UITextInputTranslationSupport <UITextInput>
+@property (nonatomic, readonly, getter=isImageBacked) BOOL imageBacked;
+@end
+
 @interface UITextInputTraits : NSObject <UITextInputTraits, UITextInputTraits_Private, NSCopying>
 - (void)_setColorsToMatchTintColor:(UIColor *)tintColor;
 @end
@@ -722,6 +745,10 @@ typedef enum {
 - (UIWindow *)window;
 @end
 
+@interface UIActivityViewController ()
+@property (nonatomic) BOOL allowsCustomPresentationStyle;
+@end
+
 typedef NS_ENUM (NSInteger, _UIBackdropMaskViewFlags) {
     _UIBackdropMaskViewNone = 0,
     _UIBackdropMaskViewGrayscaleTint = 1 << 0,
@@ -801,8 +828,12 @@ typedef NS_ENUM(NSInteger, UIWKGestureType) {
 @interface UITextSelectionView : UIView
 @end
 
+@class UIContextMenuInteraction;
+@protocol UIContextMenuInteractionDelegate;
 @interface UITextInteractionAssistant (SPI)
 @property (nonatomic, readonly) UITextSelectionView *selectionView;
+@property (nonatomic, strong, readonly) UIContextMenuInteraction *contextMenuInteraction;
+@property (nonatomic, weak, readwrite) id<UIContextMenuInteractionDelegate> externalContextMenuInteractionDelegate;
 @end
 
 @interface UIWKTextInteractionAssistant : UITextInteractionAssistant <UIResponderStandardEditActions>
@@ -1333,6 +1364,10 @@ typedef NS_ENUM(NSUInteger, _UIContextMenuLayout) {
 
 #if USE(UICONTEXTMENU)
 
+typedef NS_ENUM(NSUInteger, UIMenuOptionsPrivate) {
+    UIMenuOptionsPrivateRemoveLineLimitForChildren = 1 << 6,
+};
+
 @interface UIContextMenuInteraction ()
 @property (nonatomic, readonly) UIGestureRecognizer *gestureRecognizerForFailureRelationships;
 - (void)_presentMenuAtLocation:(CGPoint)location;
@@ -1399,7 +1434,27 @@ typedef NS_ENUM(NSUInteger, _UIContextMenuLayout) {
 
 #endif // HAVE(UIKIT_RESIZABLE_WINDOWS)
 
+#if HAVE(UI_WINDOW_SCENE_LIVE_RESIZE)
+
+@interface UIWindowScene ()
+@property (nonatomic, readonly, getter=_isInLiveResize) BOOL _inLiveResize;
+@end
+
+extern NSNotificationName const _UIWindowSceneDidEndLiveResizeNotification;
+
+#endif // HAVE(UI_WINDOW_SCENE_LIVE_RESIZE)
+
 #endif // USE(APPLE_INTERNAL_SDK)
+
+#if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)
+typedef NS_ENUM(NSUInteger, _UIScrollDeviceCategory) {
+    _UIScrollDeviceCategoryOverlayScroll = 6
+};
+
+@interface UIScrollEvent ()
+- (_UIScrollDeviceCategory)_scrollDeviceCategory;
+@end
+#endif
 
 @interface UITextInteractionAssistant (IPI)
 @property (nonatomic, readonly) BOOL inGesture;
@@ -1420,12 +1475,6 @@ typedef NS_ENUM(NSUInteger, _UIContextMenuLayout) {
 
 #if USE(UICONTEXTMENU)
 
-@interface UIAction (IPI)
-- (void)_performActionWithSender:(id)sender;
-@end
-
-#if HAVE(LINK_PREVIEW)
-
 @interface UIContextMenuConfiguration (IPI)
 @property (nonatomic, copy) UIContextMenuContentPreviewProvider previewProvider;
 @property (nonatomic, copy) UIContextMenuActionProvider actionProvider;
@@ -1443,8 +1492,6 @@ typedef NS_ENUM(NSUInteger, _UIContextMenuLayout) {
 @interface UIContextMenuInteraction (IPI)
 @property (nonatomic, strong) _UIClickPresentationInteraction *presentationInteraction;
 @end
-
-#endif // HAVE(LINK_PREVIEW)
 
 #endif // USE(UICONTEXTMENU)
 
@@ -1515,6 +1562,15 @@ typedef NS_ENUM(NSUInteger, _UIContextMenuLayout) {
 - (instancetype)initWithFrame:(CGRect)frame pid:(pid_t)pid contextID:(uint32_t)contextID;
 @end
 
+@interface _UIVisibilityPropagationView : UIView
+@end
+
+#if HAVE(NON_HOSTING_VISIBILITY_PROPAGATION_VIEW)
+@interface _UINonHostingVisibilityPropagationView : _UIVisibilityPropagationView
+- (instancetype)initWithFrame:(CGRect)frame pid:(pid_t)pid environmentIdentifier:(NSString *)environmentIdentifier;
+@end
+#endif
+
 #if __has_include(<UIKit/UITextInputMultiDocument.h>)
 #import <UIKit/UITextInputMultiDocument.h>
 #else
@@ -1524,6 +1580,10 @@ typedef NS_ENUM(NSUInteger, _UIContextMenuLayout) {
 - (void)_preserveFocusWithToken:(id <NSCopying, NSSecureCoding>)token destructively:(BOOL)destructively;
 @end
 #endif
+
+@interface UIPasteboard ()
++ (void)_performAsDataOwner:(_UIDataOwner)dataOwner block:(void(^ NS_NOESCAPE)(void))block;
+@end
 
 @interface UIResponder ()
 - (UIResponder *)firstResponder;
@@ -1649,6 +1709,7 @@ extern NSString * const NSTextSizeMultiplierDocumentOption;
 
 extern NSNotificationName const _UISceneWillBeginSystemSnapshotSequence;
 extern NSNotificationName const _UISceneDidCompleteSystemSnapshotSequence;
+extern NSNotificationName const _UIWindowSceneEnhancedWindowingModeChanged;
 
 extern CGRect UIRectInsetEdges(CGRect, UIRectEdge edges, CGFloat v);
 extern CGRect UIRectInset(CGRect, CGFloat top, CGFloat right, CGFloat bottom, CGFloat left);

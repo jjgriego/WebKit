@@ -165,9 +165,13 @@
     if (!coreFrame)
         return;
 
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(coreFrame->mainFrame());
+    if (!localMainFrame)
+        return;
+
     constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowChildFrameContent };
     _hitTestResult = coreFrame->eventHandler().hitTestResultAtPoint(WebCore::IntPoint(viewPoint), hitType);
-    coreFrame->mainFrame().eventHandler().setImmediateActionStage(WebCore::ImmediateActionStage::PerformedHitTest);
+    localMainFrame->eventHandler().setImmediateActionStage(WebCore::ImmediateActionStage::PerformedHitTest);
 
     if (auto* element = _hitTestResult.targetElement())
         _contentPreventsDefault = element->dispatchMouseForceWillBegin();
@@ -337,14 +341,6 @@
         [self _cancelImmediateAction];
         return;
     }
-
-#if PLATFORM(MAC)
-    // FIXME: We should not permanently disable this for iTunes. rdar://problem/19461358
-    if (WebCore::MacApplication::isITunes()) {
-        [self _cancelImmediateAction];
-        return;
-    }
-#endif
 
     if (customClientAnimationController && [customClientAnimationController conformsToProtocol:@protocol(NSImmediateActionAnimationController)])
         [_immediateActionRecognizer setAnimationController:(id <NSImmediateActionAnimationController>)customClientAnimationController];
@@ -534,7 +530,7 @@ static WebCore::IntRect elementBoundingBoxInWindowCoordinatesFromNode(WebCore::N
     auto rangeRect = frame->view()->contentsToWindow(quads[0].enclosingBoundingBox());
 
     popupInfo.origin = NSMakePoint(rangeRect.x(), rangeRect.y() + scaledDescent);
-    popupInfo.options = lookupOptions;
+    popupInfo.platformData.options = lookupOptions;
 
     auto attributedString = editingAttributedString(range, WebCore::IncludeImages::No).string;
     auto scaledAttributedString = adoptNS([[NSMutableAttributedString alloc] initWithString:[attributedString string]]);
@@ -550,7 +546,7 @@ static WebCore::IntRect elementBoundingBoxInWindowCoordinatesFromNode(WebCore::N
         [scaledAttributedString addAttributes:scaledAttributes.get() range:attributeRange];
     }];
 
-    popupInfo.attributedString = scaledAttributedString.get();
+    popupInfo.platformData.attributedString = scaledAttributedString.get();
 
     if (auto textIndicator = WebCore::TextIndicator::createWithRange(range, indicatorOptions, presentationTransition))
         popupInfo.textIndicator = textIndicator->data();
@@ -578,7 +574,7 @@ static WebCore::IntRect elementBoundingBoxInWindowCoordinatesFromNode(WebCore::N
 
     auto [dictionaryRange, options] = WTFMove(*range);
     auto dictionaryPopupInfo = [WebImmediateActionController _dictionaryPopupInfoForRange:dictionaryRange inFrame:frame withLookupOptions:options indicatorOptions: { } transition: WebCore::TextIndicatorPresentationTransition::FadeIn];
-    if (!dictionaryPopupInfo.attributedString)
+    if (!dictionaryPopupInfo.platformData.attributedString)
         return nil;
 
     return [_webView _animationControllerForDictionaryLookupPopupInfo:dictionaryPopupInfo];

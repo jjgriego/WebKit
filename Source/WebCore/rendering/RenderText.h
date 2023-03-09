@@ -121,7 +121,7 @@ public:
     WEBCORE_EXPORT virtual IntRect linesBoundingBox() const;
     WEBCORE_EXPORT IntPoint firstRunLocation() const;
 
-    virtual void setText(const String&, bool force = false);
+    void setText(const String&, bool force = false);
     void setTextWithOffset(const String&, unsigned offset, unsigned len, bool force = false);
 
     bool canBeSelectionLeaf() const override { return true; }
@@ -151,8 +151,6 @@ public:
 
     void momentarilyRevealLastTypedCharacter(unsigned offsetAfterLastTypedCharacter);
 
-    LegacyInlineTextBox* findNextInlineTextBox(int offset, int& pos) const { return m_lineBoxes.findNext(offset, pos); }
-
     bool isAllCollapsibleWhitespace() const;
 
     bool canUseSimpleFontCodePath() const { return m_canUseSimpleFontCodePath; }
@@ -173,8 +171,6 @@ public:
     StringView stringView(unsigned start = 0, std::optional<unsigned> stop = std::nullopt) const;
     
     bool containsOnlyHTMLWhitespace(unsigned from, unsigned length) const;
-    
-    bool canUseSimplifiedTextMeasuring() const { return m_canUseSimplifiedTextMeasuring; }
 
     Vector<std::pair<unsigned, unsigned>> draggedContentRangesBetweenOffsets(unsigned startOffset, unsigned endOffset) const;
 
@@ -184,12 +180,16 @@ public:
     template <typename MeasureTextCallback>
     static float measureTextConsideringPossibleTrailingSpace(bool currentCharacterIsSpace, unsigned startIndex, unsigned wordLength, WordTrailingSpace&, HashSet<const Font*>& fallbackFonts, MeasureTextCallback&&);
 
+    static std::optional<bool> emphasisMarkExistsAndIsAbove(const RenderText&, const RenderStyle&);
+
 protected:
     virtual void computePreferredLogicalWidths(float leadWidth);
     void willBeDestroyed() override;
 
     virtual void setRenderedText(const String&);
     virtual UChar previousCharacter() const;
+
+    virtual void setTextInternal(const String&, bool force);
 
     RenderTextLineBoxes m_lineBoxes;
 
@@ -218,7 +218,6 @@ private:
     void secureText(UChar mask);
 
     LayoutRect collectSelectionGeometriesForLineBoxes(const RenderLayerModelObject* repaintContainer, bool clipToVisibleContent, Vector<FloatQuad>*);
-    bool computeCanUseSimplifiedTextMeasuring() const;
 
     void node() const = delete;
     void container() const = delete; // Use parent() instead.
@@ -228,30 +227,29 @@ private:
     float widthFromCacheConsideringPossibleTrailingSpace(const RenderStyle&, const FontCascade&, unsigned startIndex, unsigned wordLen, float xPos, bool currentCharacterIsSpace, WordTrailingSpace&, HashSet<const Font*>& fallbackFonts, GlyphOverflow&) const;
 
     // We put the bitfield first to minimize padding on 64-bit.
-    unsigned m_hasBreakableChar : 1; // Whether or not we can be broken into multiple lines.
-    unsigned m_hasBreak : 1; // Whether or not we have a hard break (e.g., <pre> with '\n').
-    unsigned m_hasTab : 1; // Whether or not we have a variable width tab character (e.g., <pre> with '\t').
-    unsigned m_hasBeginWS : 1; // Whether or not we begin with WS (only true if we aren't pre)
-    unsigned m_hasEndWS : 1; // Whether or not we end with WS (only true if we aren't pre)
-    unsigned m_linesDirty : 1; // This bit indicates that the text run has already dirtied specific
+    unsigned m_hasBreakableChar : 1 { false }; // Whether or not we can be broken into multiple lines.
+    unsigned m_hasBreak : 1 { false }; // Whether or not we have a hard break (e.g., <pre> with '\n').
+    unsigned m_hasTab : 1 { false }; // Whether or not we have a variable width tab character (e.g., <pre> with '\t').
+    unsigned m_hasBeginWS : 1 { false }; // Whether or not we begin with WS (only true if we aren't pre)
+    unsigned m_hasEndWS : 1 { false }; // Whether or not we end with WS (only true if we aren't pre)
+    unsigned m_linesDirty : 1 { false }; // This bit indicates that the text run has already dirtied specific
                            // line boxes, and this hint will enable layoutInlineChildren to avoid
                            // just dirtying everything when character data is modified (e.g., appended/inserted
                            // or removed).
-    unsigned m_needsVisualReordering : 1;
-    unsigned m_isAllASCII : 1;
-    unsigned m_canUseSimpleFontCodePath : 1;
-    mutable unsigned m_knownToHaveNoOverflowAndNoFallbackFonts : 1;
-    unsigned m_useBackslashAsYenSymbol : 1;
-    unsigned m_originalTextDiffersFromRendered : 1;
-    unsigned m_hasInlineWrapperForDisplayContents : 1;
-    unsigned m_canUseSimplifiedTextMeasuring : 1;
+    unsigned m_needsVisualReordering : 1 { false };
+    unsigned m_isAllASCII : 1 { false };
+    unsigned m_canUseSimpleFontCodePath : 1 { false };
+    mutable unsigned m_knownToHaveNoOverflowAndNoFallbackFonts : 1 { false };
+    unsigned m_useBackslashAsYenSymbol : 1 { false };
+    unsigned m_originalTextDiffersFromRendered : 1 { false };
+    unsigned m_hasInlineWrapperForDisplayContents : 1 { false };
 
 #if ENABLE(TEXT_AUTOSIZING)
     // FIXME: This should probably be part of the text sizing structures in Document instead. That would save some memory.
     float m_candidateComputedTextSize { 0 };
 #endif
-    float m_minWidth { -1 };
-    float m_maxWidth { -1 };
+    std::optional<float> m_minWidth;
+    std::optional<float> m_maxWidth;
     float m_beginMinWidth { 0 };
     float m_endMinWidth { 0 };
 

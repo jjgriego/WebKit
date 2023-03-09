@@ -28,6 +28,7 @@
 #include "WebFindOptions.h"
 #include "WebFoundTextRange.h"
 #include <WebCore/FindOptions.h>
+#include <WebCore/GraphicsLayer.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/PageOverlay.h>
 #include <WebCore/SimpleRange.h>
@@ -64,7 +65,12 @@ public:
     void didBeginTextSearchOperation();
     void didEndTextSearchOperation();
 
+    void addLayerForFindOverlay(CompletionHandler<void(WebCore::GraphicsLayer::PlatformLayerID)>&&);
+    void removeLayerForFindOverlay();
+
     void requestRectForFoundTextRange(const WebFoundTextRange&, CompletionHandler<void(WebCore::FloatRect)>&&);
+
+    void redraw();
 
 private:
     // PageOverlay::Client.
@@ -72,6 +78,10 @@ private:
     void didMoveToPage(WebCore::PageOverlay&, WebCore::Page*) override;
     bool mouseEvent(WebCore::PageOverlay&, const WebCore::PlatformMouseEvent&) override;
     void drawRect(WebCore::PageOverlay&, WebCore::GraphicsContext&, const WebCore::IntRect& dirtyRect) override;
+
+    RefPtr<WebCore::TextIndicator> createTextIndicatorForRange(const WebCore::SimpleRange&, WebCore::TextIndicatorPresentationTransition);
+    void setTextIndicatorWithRange(const WebCore::SimpleRange&);
+    void flashTextIndicatorAndUpdateSelectionWithRange(const WebCore::SimpleRange&);
 
     Vector<WebCore::FloatRect> rectsForTextMatchesInRect(WebCore::IntRect clipRect);
 

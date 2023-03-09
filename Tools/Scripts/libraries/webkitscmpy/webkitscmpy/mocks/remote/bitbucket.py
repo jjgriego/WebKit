@@ -1,4 +1,4 @@
-# Copyright (C) 2020 Apple Inc. All rights reserved.
+# Copyright (C) 2020-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -193,6 +193,9 @@ class BitBucket(mocks.Requests):
             return mocks.Response.create404(url)
 
         stripped_url = url.split('://')[-1]
+        if stripped_url == '{}/plugins/servlet/applinks/whoami'.format(self.hosts[0]):
+            return mocks.Response.fromText('timcommitter')
+
         if stripped_url == '{}/rest/api/1.0/{}/branches/default'.format(self.hosts[0], self.project):
             return self._branches_default(url)
 
@@ -203,6 +206,16 @@ class BitBucket(mocks.Requests):
             return self._tags(url, params or {})
 
         if stripped_url.startswith('{}/rest/api/1.0/{}/commits/'.format(self.hosts[0], self.project)):
+            if stripped_url.endswith('/changes'):
+                # FIXME: All mock commits have the same set of files changed with this implementation
+                return mocks.Response.fromJson(dict(
+                    values=[dict(
+                        path=dict(
+                            components=path.split('/'),
+                            toString=path,
+                        )
+                    ) for path in ('Source/main.cpp', 'Source/main.h')],
+                ))
             commit = self.commit(stripped_url.split('/')[-1])
             if not commit:
                 return mocks.Response.create404(url)
@@ -212,9 +225,11 @@ class BitBucket(mocks.Requests):
                 author=dict(
                     emailAddress=commit.author.email,
                     displayName=commit.author.name,
+                    name=commit.author.name.lower().replace(' ', ''),
                 ), committer=dict(
                     emailAddress=commit.author.email,
                     displayName=commit.author.name,
+                    name=commit.author.name.lower().replace(' ', ''),
                 ),
                 committerTimestamp=commit.timestamp * 1000,
                 message=commit.message + ('\ngit-svn-id: https://svn.example.org/repository/webkit/{}@{} 268f45cc-cd09-0410-ab3c-d52691b4dbfc\n'.format(
@@ -247,10 +262,11 @@ class BitBucket(mocks.Requests):
 
         # Create pull-request
         if method == 'POST' and stripped_url == pr_base:
-            json['author'] = dict(user=dict(displayName='Tim Committer', emailAddress='committer@webkit.org'))
+            json['author'] = dict(user=dict(displayName='Tim Committer', emailAddress='committer@webkit.org', name='timcommitter'))
             json['participants'] = [json['author']]
             json['id'] = 1 + max([0] + [pr.get('id', 0) for pr in self.pull_requests])
             json['fromRef']['displayId'] = '/'.join(json['fromRef']['id'].split('/')[-2:])
+            json['fromRef']['latestCommit'] = json['fromRef']['latestCommit']
             json['toRef']['displayId'] = '/'.join(json['toRef']['id'].split('/')[-2:])
             json['state'] = 'OPEN'
             json['activities'] = []
@@ -267,9 +283,29 @@ class BitBucket(mocks.Requests):
                     existing = i
             if existing is None:
                 return mocks.Response.create404(url)
+            if method == 'PUT' and split_url[-2] == 'participants':
+                slug = (json.get('user') or {}).get('name') or split_url[-1]
+                for candidate in self.pull_requests[existing]['reviewers']:
+                    name = (candidate.get('user') or {}).get('name') or ''
+                    display_name = (candidate.get('user') or {}).get('displayName') or ''
+                    if name == slug or display_name.lower().replace(' ', '') == slug:
+                        reviewer = candidate
+                        break
+                else:
+                    if not self.pull_requests[existing]['reviewers']:
+                        self.pull_requests[existing]['reviewers'] = []
+                    self.pull_requests[existing]['reviewers'].append(dict(
+                        user=json.get('user', dict(name=slug))
+                    ))
+                    reviewer = self.pull_requests[existing]['reviewers'][-1]
+                    reviewer['user']['displayName'] = reviewer['user'].get('displayName', slug)
+                reviewer['approved'] = json.get('approved', False)
+                reviewer['status'] = json.get('status', 'UNAPPROVED')
+                return mocks.Response.fromJson({})
             if method == 'PUT':
                 self.pull_requests[existing].update(json)
                 self.pull_requests[existing]['fromRef']['displayId'] = '/'.join(json['fromRef']['id'].split('/')[-2:])
+                self.pull_requests[existing]['fromRef']['latestCommit'] = json['fromRef']['latestCommit']
                 self.pull_requests[existing]['toRef']['displayId'] = '/'.join(json['toRef']['id'].split('/')[-2:])
             if len(split_url) < 11:
                 return mocks.Response.fromJson({key: value for key, value in self.pull_requests[existing].items() if key != 'activities'})
@@ -282,7 +318,7 @@ class BitBucket(mocks.Requests):
                 ))
             if method == 'POST' and split_url[-1] == 'comments':
                 self.pull_requests[existing]['activities'].append(dict(comment=dict(
-                    author=dict(displayName='Tim Committer', emailAddress='committer@webkit.org'),
+                    author=dict(displayName='Tim Committer', emailAddress='committer@webkit.org', name='timcommitter'),
                     createdDate=int(time.time() * 1000),
                     updatedDate=int(time.time() * 1000),
                     text=json.get('text', ''),

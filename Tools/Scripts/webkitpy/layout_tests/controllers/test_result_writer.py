@@ -26,7 +26,7 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
+import re
 import logging
 
 from webkitpy.common.wavediff import WaveDiff
@@ -61,6 +61,7 @@ class TestResultWriter(object):
     FILENAME_SUFFIX_PRETTY_PATCH = "-pretty-diff.html"
     FILENAME_SUFFIX_IMAGE_DIFF = "-diff.png"
     FILENAME_SUFFIX_IMAGE_DIFFS_HTML = "-diffs.html"
+    PROCESS_NAME_RE = re.compile(r'(com\.apple|org\.WebKit)\..+')
 
     @staticmethod
     def expected_filename(test_name, filesystem, port_name=None, suffix='txt'):
@@ -98,20 +99,24 @@ class TestResultWriter(object):
         """
         fs = self._filesystem
 
-        ext_parts = fs.splitext(self._test_name)
+        test_name = self._test_name
+        variant = ''
+        if '?' in test_name:
+            (test_name, variant) = test_name.split('?', 1)
+        if '#' in test_name:
+            (test_name, variant) = test_name.split('#', 1)
+
+        # Test names that are actually process names are treated like they don't have any extension
+        if self.PROCESS_NAME_RE.match(fs.basename(test_name)):
+            ext_parts = (test_name, '', '')
+        else:
+            ext_parts = fs.splitext(test_name)
         output_basename = ext_parts[0]
-        if len(ext_parts) > 1 and '?' in ext_parts[1]:
-            output_basename += '_' + ext_parts[1].split('?')[1]
-        if len(ext_parts) > 1 and '#' in ext_parts[1]:
-            output_basename += '_' + ext_parts[1].split('#')[1]
 
-        output_filename = fs.join(self._root_output_dir, output_basename + ext_parts[1])
+        if len(variant):
+            output_basename += "_" + re.sub(r'[|* <>:]', '_', variant)
 
-        # Temporary fix, also in LayoutTests/fast/harness/results.html, line 275.
-        # FIXME: Refactor to avoid confusing reference to both test and process names.
-        if len(fs.splitext(output_filename)[1]) - 1 > 5:
-            return output_filename + modifier
-        return fs.splitext(output_filename)[0] + modifier
+        return fs.join(self._root_output_dir, output_basename) + modifier
 
     def _write_binary_file(self, path, contents):
         if contents is not None:

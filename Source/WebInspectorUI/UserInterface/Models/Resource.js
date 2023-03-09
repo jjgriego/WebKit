@@ -26,9 +26,10 @@
 
 WI.Resource = class Resource extends WI.SourceCode
 {
-    constructor(url, {mimeType, type, loaderIdentifier, targetId, requestIdentifier, requestMethod, requestHeaders, requestData, requestSentTimestamp, requestSentWalltime, initiatorCallFrames, initiatorSourceCodeLocation, initiatorNode} = {})
+    constructor(url, {mimeType, type, loaderIdentifier, targetId, requestIdentifier, requestMethod, requestHeaders, requestData, requestSentTimestamp, requestSentWalltime, referrerPolicy, integrity, initiatorStackTrace, initiatorSourceCodeLocation, initiatorNode} = {})
     {
         console.assert(url);
+        console.assert(!initiatorStackTrace || initiatorStackTrace instanceof WI.StackTrace, initiatorStackTrace);
 
         super(url);
 
@@ -54,7 +55,7 @@ WI.Resource = class Resource extends WI.SourceCode
         this._responseCookies = null;
         this._serverTimingEntries = null;
         this._parentFrame = null;
-        this._initiatorCallFrames = initiatorCallFrames || null;
+        this._initiatorStackTrace = initiatorStackTrace || null;
         this._initiatorSourceCodeLocation = initiatorSourceCodeLocation || null;
         this._initiatorNode = initiatorNode || null;
         this._initiatedResources = [];
@@ -82,6 +83,8 @@ WI.Resource = class Resource extends WI.SourceCode
         this._isProxyConnection = false;
         this._target = targetId ? WI.targetManager.targetForIdentifier(targetId) : WI.mainTarget;
         this._redirects = [];
+        this._referrerPolicy = referrerPolicy ?? null;
+        this._integrity = integrity ?? null;
 
         // Exact sizes if loaded over the network or cache.
         this._requestHeadersTransferSize = NaN;
@@ -325,7 +328,7 @@ WI.Resource = class Resource extends WI.SourceCode
     get requestIdentifier() { return this._requestIdentifier; }
     get requestMethod() { return this._requestMethod; }
     get requestData() { return this._requestData; }
-    get initiatorCallFrames() { return this._initiatorCallFrames; }
+    get initiatorStackTrace() { return this._initiatorStackTrace; }
     get initiatorSourceCodeLocation() { return this._initiatorSourceCodeLocation; }
     get initiatorNode() { return this._initiatorNode; }
     get initiatedResources() { return this._initiatedResources; }
@@ -357,6 +360,8 @@ WI.Resource = class Resource extends WI.SourceCode
     get responseBodyTransferSize() { return this._responseBodyTransferSize; }
     get cachedResponseBodySize() { return this._cachedResponseBodySize; }
     get redirects() { return this._redirects; }
+    get referrerPolicy() { return this._referrerPolicy; }
+    get integrity() { return this._integrity; }
 
     get loadedSecurely()
     {
@@ -429,6 +434,13 @@ WI.Resource = class Resource extends WI.SourceCode
 
         // Return the actual MIME-type since we don't have a better synthesized one to return.
         return this._mimeType;
+    }
+
+    get hasMetadata()
+    {
+        // Some metadata is only collected when Web Inspector is open (e.g. resource timing data, HTTP method, request headers, etc.).
+        // Use `_requestIdentifier` as a general signal since it is always included when metadata is collected.
+        return !!this._requestIdentifier;
     }
 
     createObjectURL()
@@ -698,6 +710,8 @@ WI.Resource = class Resource extends WI.SourceCode
         this._requestCookies = null;
         this._requestMethod = request.method || null;
         this._redirects.push(new WI.Redirect(oldURL, oldMethod, oldHeaders, response.status, response.statusText, response.headers, elapsedTime));
+        this._referrerPolicy = request.referrerPolicy ?? null;
+        this._integrity = request.integrity ?? null;
 
         if (oldURL !== request.url) {
             // Delete the URL components so the URL is re-parsed the next time it is requested.
@@ -966,26 +980,6 @@ WI.Resource = class Resource extends WI.SourceCode
         this._finishedOrFailedTimestamp = NaN;
     }
 
-    legacyMarkServedFromMemoryCache()
-    {
-        // COMPATIBILITY (iOS 10.3): This is a legacy code path where we know the resource came from the MemoryCache.
-        console.assert(this._responseSource === WI.Resource.ResponseSource.Unknown);
-
-        this._responseSource = WI.Resource.ResponseSource.MemoryCache;
-
-        this.markAsCached();
-    }
-
-    legacyMarkServedFromDiskCache()
-    {
-        // COMPATIBILITY (iOS 10.3): This is a legacy code path where we know the resource came from the DiskCache.
-        console.assert(this._responseSource === WI.Resource.ResponseSource.Unknown);
-
-        this._responseSource = WI.Resource.ResponseSource.DiskCache;
-
-        this.markAsCached();
-    }
-
     isLoading()
     {
         return !this._finished && !this._failed;
@@ -1188,7 +1182,8 @@ WI.Resource = class Resource extends WI.SourceCode
         if (!isEmptyObject(headers))
             options.headers = headers;
 
-        // FIXME: <https://webkit.org/b/241217> Web Inspector: include `integrity` in "Copy as fetch"
+        if (this._integrity)
+            options.integrity = this._integrity;
 
         if (this.requestMethod)
             options.method = this.requestMethod;
@@ -1200,7 +1195,8 @@ WI.Resource = class Resource extends WI.SourceCode
         if (referrer)
             options.referrer = referrer;
 
-        // FIXME: <https://webkit.org/b/241218> Web Inspector: include `referrerPolicy` in "Copy as fetch"
+        if (this._referrerPolicy)
+            options.referrerPolicy = this._referrerPolicy;
 
         return `fetch(${JSON.stringify(this.url)}, ${JSON.stringify(options, null, WI.indentString())})`;
     }

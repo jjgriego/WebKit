@@ -91,8 +91,6 @@ NetworkDataTaskSoup::NetworkDataTaskSoup(NetworkSession& session, NetworkDataTas
 NetworkDataTaskSoup::~NetworkDataTaskSoup()
 {
     clearRequest();
-    if (m_session)
-        m_session->unregisterNetworkDataTask(*this);
 }
 
 String NetworkDataTaskSoup::suggestedFilename() const
@@ -190,7 +188,7 @@ void NetworkDataTaskSoup::createRequest(ResourceRequest&& request, WasBlockingCo
     }
     soup_message_set_flags(m_soupMessage.get(), static_cast<SoupMessageFlags>(soup_message_get_flags(m_soupMessage.get()) | messageFlags));
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     bool shouldBlockCookies = wasBlockingCookies == WasBlockingCookies::Yes ? true : m_storedCredentialsPolicy == StoredCredentialsPolicy::EphemeralStateless;
     if (!shouldBlockCookies) {
         if (auto* networkStorageSession = m_session->networkStorageSession())
@@ -946,6 +944,17 @@ void NetworkDataTaskSoup::continueHTTPRedirection()
     request.setURL(redirectedURL);
 
     m_networkLoadMetrics.hasCrossOriginRedirect = m_networkLoadMetrics.hasCrossOriginRedirect || !SecurityOrigin::create(m_currentRequest.url())->canRequest(request.url());
+
+    if (m_response.httpStatusCode() == 307 || m_response.httpStatusCode() == 308) {
+        ASSERT(m_lastHTTPMethod == request.httpMethod());
+        auto body = m_firstRequest.httpBody();
+        if (body && !body->isEmpty() && !equalLettersIgnoringASCIICase(m_lastHTTPMethod, "get"_s))
+            request.setHTTPBody(WTFMove(body));
+
+        String originalContentType = m_firstRequest.httpContentType();
+        if (!originalContentType.isEmpty())
+            request.setHTTPHeaderField(WebCore::HTTPHeaderName::ContentType, originalContentType);
+    }
 
     // Clear the user agent to ensure a new one is computed.
     auto userAgent = request.httpUserAgent();

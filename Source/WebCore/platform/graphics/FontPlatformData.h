@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2023 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Michael Emmel mike.emmel@gmail.com
  * Copyright (C) 2007 Holger Hans Peter Freyther
  * Copyright (C) 2007 Pioneer Research Center USA, Inc.
@@ -43,9 +43,12 @@
 
 #if USE(FREETYPE)
 #include "FcUniquePtr.h"
-#include "HbUniquePtr.h"
 #include "RefPtrFontconfig.h"
 #include <memory>
+
+#if ENABLE(MATHML) && USE(HARFBUZZ)
+#include "HbUniquePtr.h"
+#endif
 #endif
 
 #if USE(APPKIT)
@@ -76,7 +79,7 @@ class FontPlatformData {
     WTF_MAKE_FAST_ALLOCATED;
 public:
     struct CreationData;
-    
+
     struct FontVariationAxis {
         FontVariationAxis(const String& name, const String& tag, float defaultValue, float minimumValue, float maximumValue)
             : m_name(name)
@@ -86,7 +89,7 @@ public:
             , m_maximumValue(maximumValue)
         {
         }
-        
+
         const String& name() const { return m_name; }
         const String& tag() const { return m_tag; }
         float defaultValue() const { return m_defaultValue; }
@@ -111,10 +114,7 @@ public:
 #endif
 
 #if PLATFORM(WIN)
-    FontPlatformData(GDIObject<HFONT>, float size, bool syntheticBold, bool syntheticOblique, bool useGDI, const CreationData* = nullptr);
-#if USE(CORE_TEXT)
-    FontPlatformData(GDIObject<HFONT>, CTFontRef, CGFontRef, float size, bool syntheticBold, bool syntheticOblique, bool useGDI);
-#endif
+    WEBCORE_EXPORT FontPlatformData(GDIObject<HFONT>, float size, bool syntheticBold, bool syntheticOblique, bool useGDI, const CreationData* = nullptr);
 #if USE(CAIRO)
     FontPlatformData(GDIObject<HFONT>, cairo_font_face_t*, float size, bool bold, bool italic, const CreationData* = nullptr);
 #endif
@@ -126,7 +126,9 @@ public:
 
     static FontPlatformData cloneWithOrientation(const FontPlatformData&, FontOrientation);
     static FontPlatformData cloneWithSyntheticOblique(const FontPlatformData&, bool);
+
     static FontPlatformData cloneWithSize(const FontPlatformData&, float);
+    void updateSizeWithFontSizeAdjust(const std::optional<float>& fontSizeAdjust);
 
 #if PLATFORM(WIN)
     HFONT hfont() const { return m_font ? m_font->get() : 0; }
@@ -142,12 +144,8 @@ public:
     RetainPtr<CFTypeRef> objectForEqualityCheck() const;
     bool hasCustomTracking() const { return isSystemFont(); }
 
-#if PLATFORM(WIN)
-    CTFontRef ctFont() const { return m_ctFont.get(); }
-#else
     CTFontRef font() const { return m_font.get(); }
     CTFontRef ctFont() const;
-#endif
 #endif
 
 #if PLATFORM(WIN) || PLATFORM(COCOA)
@@ -174,7 +172,7 @@ public:
 #endif
 
 #if USE(FREETYPE)
-#if USE(HARFBUZZ) && !ENABLE(OPENTYPE_MATH)
+#if ENABLE(MATHML) && USE(HARFBUZZ)
     HbUniquePtr<hb_font_t> createOpenTypeMathHarfBuzzFont() const;
 #endif
     bool hasCompatibleCharmap() const;
@@ -224,13 +222,15 @@ public:
 #endif
     };
 
-    const std::optional<CreationData>& creationData() const
+    const CreationData* creationData() const
     {
-        return m_creationData;
+        return m_creationData ? &m_creationData.value() : nullptr;
     }
 
 private:
     bool platformIsEqual(const FontPlatformData&) const;
+    //  updateSize to be implemented by each platform since it needs to re-instantiate the platform font object.
+    void updateSize(float);
 
 #if PLATFORM(COCOA)
     CGFloat ctFontSize() const;
@@ -246,10 +246,6 @@ private:
 
 #if PLATFORM(WIN)
     RefPtr<SharedGDIObject<HFONT>> m_font; // FIXME: Delete this in favor of m_ctFont or m_dwFont or m_scaledFont.
-#if USE(CORE_TEXT)
-    RetainPtr<CGFontRef> m_cgFont; // FIXME: Delete this in favor of m_ctFont.
-    RetainPtr<CTFontRef> m_ctFont;
-#endif
 #elif USE(CORE_TEXT)
     // FIXME: Get rid of one of these. These two fonts are subtly different, and it is not obvious which one to use where.
     RetainPtr<CTFontRef> m_font;

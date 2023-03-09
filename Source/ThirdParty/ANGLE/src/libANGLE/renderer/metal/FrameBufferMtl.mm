@@ -56,10 +56,11 @@ const gl::InternalFormat &GetReadAttachmentInfo(const gl::Context *context,
 }  // namespace
 
 // FramebufferMtl implementation
-FramebufferMtl::FramebufferMtl(const gl::FramebufferState &state,
-                               bool flipY,
-                               WindowSurfaceMtl *backbuffer)
-    : FramebufferImpl(state), mBackbuffer(backbuffer), mFlipY(flipY)
+FramebufferMtl::FramebufferMtl(const gl::FramebufferState &state, ContextMtl *context, bool flipY)
+    : FramebufferImpl(state),
+      mColorRenderTargets(context->getNativeCaps().maxColorAttachments, nullptr),
+      mBackbuffer(nullptr),
+      mFlipY(flipY)
 {
     reset();
 }
@@ -541,6 +542,24 @@ angle::Result FramebufferMtl::blitWithDraw(const gl::Context *context,
     return angle::Result::Continue;
 }
 
+bool FramebufferMtl::totalBitsUsedIsLessThanOrEqualToMaxBitsSupported(
+    const gl::Context *context) const
+{
+    ContextMtl *contextMtl = mtl::GetImpl(context);
+
+    uint32_t bitsUsed = 0;
+    for (const gl::FramebufferAttachment &attachment : mState.getColorAttachments())
+    {
+        if (attachment.isAttached())
+        {
+            bitsUsed += attachment.getRedSize() + attachment.getGreenSize() +
+                        attachment.getBlueSize() + attachment.getAlphaSize();
+        }
+    }
+
+    return bitsUsed <= contextMtl->getDisplay()->getMaxColorTargetBits();
+}
+
 gl::FramebufferStatus FramebufferMtl::checkStatus(const gl::Context *context) const
 {
     if (!mState.attachmentsHaveSameDimensions())
@@ -570,6 +589,13 @@ gl::FramebufferStatus FramebufferMtl::checkStatus(const gl::Context *context) co
         mState.getStencilAttachment()->getFormat().info->stencilBits)
     {
         return checkPackedDepthStencilAttachment();
+    }
+
+    if (!totalBitsUsedIsLessThanOrEqualToMaxBitsSupported(context))
+    {
+        return gl::FramebufferStatus::Incomplete(
+            GL_FRAMEBUFFER_UNSUPPORTED,
+            gl::err::kFramebufferIncompleteColorBitsUsedExceedsMaxColorBitsSupported);
     }
 
     return gl::FramebufferStatus::Complete();
@@ -628,8 +654,14 @@ angle::Result FramebufferMtl::syncState(const gl::Context *context,
                 ANGLE_TRY(updateStencilRenderTarget(context));
                 break;
             case gl::Framebuffer::DIRTY_BIT_DEPTH_BUFFER_CONTENTS:
+                // Restore depth attachment load action as its content may have been updated
+                // after framebuffer invalidation.
+                mRenderPassDesc.depthAttachment.loadAction = MTLLoadActionLoad;
+                break;
             case gl::Framebuffer::DIRTY_BIT_STENCIL_BUFFER_CONTENTS:
-                // NOTE(hqle): What are we supposed to do?
+                // Restore stencil attachment load action as its content may have been updated
+                // after framebuffer invalidation.
+                mRenderPassDesc.stencilAttachment.loadAction = MTLLoadActionLoad;
                 break;
             case gl::Framebuffer::DIRTY_BIT_DRAW_BUFFERS:
                 mustNotifyContext = true;
@@ -654,6 +686,12 @@ angle::Result FramebufferMtl::syncState(const gl::Context *context,
                     ASSERT(dirtyBit >= gl::Framebuffer::DIRTY_BIT_COLOR_BUFFER_CONTENTS_0 &&
                            dirtyBit < gl::Framebuffer::DIRTY_BIT_COLOR_BUFFER_CONTENTS_MAX);
                     // NOTE: might need to notify context.
+
+                    // Restore color attachment load action as its content may have been updated
+                    // after framebuffer invalidation.
+                    size_t colorIndexGL = static_cast<size_t>(
+                        dirtyBit - gl::Framebuffer::DIRTY_BIT_COLOR_BUFFER_CONTENTS_0);
+                    mRenderPassDesc.colorAttachments[colorIndexGL].loadAction = MTLLoadActionLoad;
                 }
                 break;
             }
@@ -885,7 +923,7 @@ void FramebufferMtl::onFrameEnd(const gl::Context *context)
 angle::Result FramebufferMtl::updateColorRenderTarget(const gl::Context *context,
                                                       size_t colorIndexGL)
 {
-    ASSERT(colorIndexGL < mtl::kMaxRenderTargets);
+    ASSERT(colorIndexGL < mColorRenderTargets.size());
     // Reset load store action
     mRenderPassDesc.colorAttachments[colorIndexGL].reset();
     return updateCachedRenderTarget(context, mState.getColorAttachment(colorIndexGL),
@@ -1010,6 +1048,8 @@ angle::Result FramebufferMtl::getReadableViewForRenderTarget(
 angle::Result FramebufferMtl::prepareRenderPass(const gl::Context *context,
                                                 mtl::RenderPassDesc *pDescOut)
 {
+    const gl::DrawBufferMask enabledDrawBuffers = getState().getEnabledDrawBuffers();
+
     mtl::RenderPassDesc &desc = *pDescOut;
 
     mRenderPassFirstColorAttachmentFormat = nullptr;
@@ -1019,12 +1059,15 @@ angle::Result FramebufferMtl::prepareRenderPass(const gl::Context *context,
     desc.sampleCount             = 1;
     for (uint32_t colorIndexGL = 0; colorIndexGL < maxColorAttachments; ++colorIndexGL)
     {
-        ASSERT(colorIndexGL < mtl::kMaxRenderTargets);
+        ASSERT(colorIndexGL < mColorRenderTargets.size());
 
         mtl::RenderPassColorAttachmentDesc &colorAttachment = desc.colorAttachments[colorIndexGL];
         const RenderTargetMtl *colorRenderTarget            = mColorRenderTargets[colorIndexGL];
 
-        if (colorRenderTarget)
+        // GL allows data types of fragment shader color outputs to be incompatible with disabled
+        // color attachments. To prevent various Metal validation issues, assign textures only to
+        // enabled attachments.
+        if (colorRenderTarget && enabledDrawBuffers.test(colorIndexGL))
         {
             colorRenderTarget->toRenderPassAttachmentDesc(&colorAttachment);
 
@@ -1072,6 +1115,13 @@ angle::Result FramebufferMtl::prepareRenderPass(const gl::Context *context,
         desc.stencilAttachment.reset();
     }
 
+    if (desc.numColorAttachments == 0 && mDepthRenderTarget == nullptr &&
+        mStencilRenderTarget == nullptr)
+    {
+        desc.defaultWidth  = mState.getDefaultWidth();
+        desc.defaultHeight = mState.getDefaultHeight();
+    }
+
     return angle::Result::Continue;
 }
 
@@ -1114,7 +1164,7 @@ angle::Result FramebufferMtl::clearWithLoadOpRenderPassNotStarted(
 
     for (uint32_t colorIndexGL = 0; colorIndexGL < tempDesc.numColorAttachments; ++colorIndexGL)
     {
-        ASSERT(colorIndexGL < mtl::kMaxRenderTargets);
+        ASSERT(colorIndexGL < tempDesc.colorAttachments.size());
 
         mtl::RenderPassColorAttachmentDesc &colorAttachment =
             tempDesc.colorAttachments[colorIndexGL];
@@ -1196,7 +1246,7 @@ angle::Result FramebufferMtl::clearWithLoadOpRenderPassStarted(
     for (uint32_t colorIndexGL = 0; colorIndexGL < mRenderPassDesc.numColorAttachments;
          ++colorIndexGL)
     {
-        ASSERT(colorIndexGL < mtl::kMaxRenderTargets);
+        ASSERT(colorIndexGL < mRenderPassDesc.colorAttachments.size());
 
         mtl::RenderPassColorAttachmentDesc &colorAttachment =
             mRenderPassDesc.colorAttachments[colorIndexGL];
@@ -1393,6 +1443,21 @@ angle::Result FramebufferMtl::invalidateImpl(const gl::Context *context,
     {
         if (invalidateColorBuffers.test(i))
         {
+            // Some opaque formats, like RGB8, are emulated as RGBA with alpha channel initialized
+            // to 1.0. Invalidating such attachments may lead to random values in their alpha
+            // channel, so skip invalidation in this case.
+            RenderTargetMtl *renderTarget = mColorRenderTargets[i];
+            if (renderTarget && renderTarget->getTexture())
+            {
+                const mtl::Format &mtlFormat        = *renderTarget->getFormat();
+                const angle::Format &intendedFormat = mtlFormat.intendedAngleFormat();
+                const angle::Format &actualFormat   = mtlFormat.actualAngleFormat();
+                if (intendedFormat.alphaBits == 0 && actualFormat.alphaBits)
+                {
+                    continue;
+                }
+            }
+
             mtl::RenderPassColorAttachmentDesc &colorAttachment =
                 mRenderPassDesc.colorAttachments[i];
             colorAttachment.storeAction = MTLStoreActionDontCare;
@@ -1499,7 +1564,9 @@ angle::Result FramebufferMtl::readPixelsImpl(const gl::Context *context,
                                              const RenderTargetMtl *renderTarget,
                                              uint8_t *pixels) const
 {
-    ContextMtl *contextMtl = mtl::GetImpl(context);
+    ContextMtl *contextMtl             = mtl::GetImpl(context);
+    const angle::FeaturesMtl &features = contextMtl->getDisplay()->getFeatures();
+
     if (!renderTarget)
     {
         return angle::Result::Continue;
@@ -1532,7 +1599,18 @@ angle::Result FramebufferMtl::readPixelsImpl(const gl::Context *context,
     const mtl::Format &readFormat        = *renderTarget->getFormat();
     const angle::Format &readAngleFormat = readFormat.actualAngleFormat();
 
-    if (contextMtl->getDisplay()->getFeatures().copyTextureToBufferForReadOptimization.enabled)
+    if (features.copyIOSurfaceToNonIOSurfaceForReadOptimization.enabled &&
+        texture->hasIOSurface() && texture->mipmapLevels() == 1 &&
+        texture->textureType() == MTLTextureType2D)
+    {
+        // Reading a texture may be slow if it's an IOSurface because metal has to lock/unlock the
+        // surface, whereas copying the texture to non IOSurface texture and then reading from that
+        // may be fast depending on the GPU/driver.
+        ANGLE_TRY(contextMtl->copy2DTextureSlice0Level0ToWorkTexture(texture));
+        texture = contextMtl->getWorkTexture();
+    }
+
+    if (features.copyTextureToBufferForReadOptimization.enabled)
     {
         ANGLE_TRY(contextMtl->copyTextureSliceLevelToWorkBuffer(
             context, texture, renderTarget->getLevelIndex(), renderTarget->getLayerIndex()));
@@ -1557,20 +1635,6 @@ angle::Result FramebufferMtl::readPixelsImpl(const gl::Context *context,
 
         return result;
     }
-
-    if (contextMtl->getDisplay()
-            ->getFeatures()
-            .copyIOSurfaceToNonIOSurfaceForReadOptimization.enabled &&
-        texture->hasIOSurface() && texture->mipmapLevels() == 1 &&
-        texture->textureType() == MTLTextureType2D)
-    {
-        // Reading a texture may be slow if it's an IOSurface because metal has to lock/unlock the
-        // surface, whereas copying the texture to non IOSurface texture and then reading from that
-        // may be fast depending on the GPU/driver.
-        ANGLE_TRY(contextMtl->copy2DTextureSlice0Level0ToWorkTexture(texture));
-        texture = contextMtl->getWorkTexture();
-    }
-
     if (texture->isBeingUsedByGPU(contextMtl))
     {
         contextMtl->flushCommandBuffer(mtl::WaitUntilFinished);
@@ -1602,8 +1666,10 @@ angle::Result FramebufferMtl::readPixelsToPBO(const gl::Context *context,
 
     ContextMtl *contextMtl = mtl::GetImpl(context);
 
-    ANGLE_MTL_CHECK(contextMtl, packPixelsParams.offset <= std::numeric_limits<uint32_t>::max(),
-                    GL_INVALID_OPERATION);
+    if constexpr (sizeof(packPixelsParams.offset) > sizeof(uint32_t)) {
+        ANGLE_MTL_CHECK(contextMtl, static_cast<std::make_unsigned_t<decltype(packPixelsParams.offset)>>(packPixelsParams.offset) <= std::numeric_limits<uint32_t>::max(),
+                        GL_INVALID_OPERATION);
+    }
     uint32_t offset = static_cast<uint32_t>(packPixelsParams.offset);
 
     BufferMtl *packBufferMtl = mtl::GetImpl(packPixelsParams.packBuffer);

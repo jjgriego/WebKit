@@ -1,4 +1,4 @@
-# Copyright (C) 2021 Apple Inc. All rights reserved.
+# Copyright (C) 2021-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -48,6 +48,7 @@ class BitBucket(Scm):
                     data['author']['user']['displayName'],
                     data['author']['user'].get('emailAddress', None),
                 ), head=data['fromRef']['displayId'],
+                hash=data['fromRef'].get('latestCommit', None),
                 base=data['toRef']['displayId'],
                 opened=True if data.get('open') else (False if data.get('closed') else None),
                 generator=self,
@@ -120,6 +121,15 @@ class BitBucket(Scm):
             description = PullRequest.create_body(body, commits, linkify=False)
             if description and len(description) > self.BODY_CHAR_LIMIT:
                 raise ValueError('Body length too long. Limit is: {}'.format(self.BODY_CHAR_LIMIT))
+            fromRef = dict(
+                id='refs/heads/{}'.format(head),
+                repository=dict(
+                    slug=self.repository.name,
+                    project=dict(key=self.repository.project),
+                ),
+            )
+            if commits:
+                fromRef['latestCommit'] = commits[0].hash,
             response = requests.post(
                 'https://{domain}/rest/api/1.0/projects/{project}/repos/{name}/pull-requests'.format(
                     domain=self.repository.domain,
@@ -128,13 +138,8 @@ class BitBucket(Scm):
                 ), json=dict(
                     title=title,
                     description=PullRequest.create_body(body, commits, linkify=False),
-                    fromRef=dict(
-                        id='refs/heads/{}'.format(head),
-                        repository=dict(
-                            slug=self.repository.name,
-                            project=dict(key=self.repository.project),
-                        ),
-                    ), toRef=dict(
+                    fromRef=fromRef,
+                    toRef=dict(
                         id='refs/heads/{}'.format(base or self.repository.default_branch),
                         repository=dict(
                             slug=self.repository.name,
@@ -216,6 +221,8 @@ class BitBucket(Scm):
 
             response = requests.put(pr_url, json=data)
             if response.status_code // 100 != 2:
+                for error in response.json().get('errors', []):
+                    sys.stderr.write('{}: {}\n'.format(error.get('context'), error.get('message')))
                 return None
             data = response.json()
 
@@ -248,6 +255,8 @@ class BitBucket(Scm):
             )
             if response.status_code // 100 != 2:
                 sys.stderr.write("Failed to add comment to '{}'\n".format(pull_request))
+                return None
+            return pull_request
 
         def comments(self, pull_request):
             for action in reversed(self.repository.request('pull-requests/{}/activities'.format(pull_request.number)) or []):
@@ -262,12 +271,49 @@ class BitBucket(Scm):
                     content=comment.get('text'),
                 )
 
+        def review(self, pull_request, comment=None, approve=None):
+            failed = False
+            if comment and not self.comment(pull_request, comment):
+                failed = True
+
+            user_slug = self.repository.whoami()
+            if not user_slug:
+                sys.stderr.write('Failed to determine Bitbucket username for current session\n')
+                return None
+            response = requests.put(
+                'https://{domain}/rest/api/1.0/projects/{project}/repos/{name}/pull-requests/{id}/participants/{userSlug}'.format(
+                    domain=self.repository.domain,
+                    project=self.repository.project,
+                    name=self.repository.name,
+                    id=pull_request.number,
+                    userSlug=user_slug,
+                ), json=dict(
+                    user=dict(name=user_slug),
+                    approved=bool(approve),
+                    status={
+                        True: 'APPROVED',
+                        False: 'NEEDS_WORK',
+                    }.get(approve, 'UNAPPROVED'),
+                ),
+            )
+            if response.status_code // 100 != 2:
+                sys.stderr.write("Failed to {} '{}'\n".format(
+                    'approve' if approve else 'reject',
+                    pull_request,
+                ))
+                return None
+
+            pull_request._approvers = None
+            pull_request._blockers = None
+
+            return None if failed else pull_request
+
 
     @classmethod
     def is_webserver(cls, url):
         return True if cls.URL_RE.match(url) else False
 
-    def __init__(self, url, dev_branches=None, prod_branches=None, contributors=None, id=None):
+    def __init__(self, url, dev_branches=None, prod_branches=None, contributors=None, id=None, classifier=None):
         match = self.URL_RE.match(url)
         if not match:
             raise self.Exception("'{}' is not a valid BitBucket project".format(url))
@@ -280,11 +326,21 @@ class BitBucket(Scm):
             dev_branches=dev_branches, prod_branches=prod_branches,
             contributors=contributors,
             id=id or self.name.lower(),
+            classifier=classifier,
         )
 
         self.pull_requests = self.PRGenerator(self)
 
-    def credentials(self):
+    @decorators.Memoize()
+    def whoami(self):
+        url = 'https://{domain}/plugins/servlet/applinks/whoami'.format(domain=self.domain)
+        response = requests.get(url)
+        if response.status_code != 200:
+            sys.stderr.write("Request to '{}' returned status code '{}'\n".format(url, response.status_code))
+            return None
+        return response.text.rstrip()
+
+    def credentials(self, required=True, validate=False, save_in_keyring=None):
         return None, None
 
     @property
@@ -525,3 +581,18 @@ class BitBucket(Scm):
         if not commit_data:
             raise ValueError("'{}' is not an argument recognized by git".format(argument))
         return self.commit(hash=commit_data['id'], include_log=include_log, include_identifier=include_identifier)
+
+    def files_changed(self, argument=None):
+        if not argument:
+            return self.modified()
+        if not Commit.HASH_RE.match(argument):
+            commit = self.find(argument, include_log=False, include_identifier=False)
+            if not commit:
+                raise ValueError("'{}' is not an argument recognized by git".format(argument))
+            argument = commit.hash
+
+        return [
+            change.get('path', {}).get('toString')
+            for change in self.request('commits/{}/changes'.format(argument))
+            if change.get('path', {}).get('toString')
+        ]

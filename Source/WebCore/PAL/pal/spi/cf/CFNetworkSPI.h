@@ -174,6 +174,10 @@ typedef enum {
 #endif
 @end
 
+@interface NSURLCredentialStorage ()
+- (id)_initWithIdentifier:(NSString *)identifier private:(bool)isPrivate;
+@end
+
 @interface NSURLConnection ()
 - (id)_initWithRequest:(NSURLRequest *)request delegate:(id)delegate usesCache:(BOOL)usesCacheFlag maxContentLength:(long long)maxContentLength startImmediately:(BOOL)startImmediately connectionProperties:(NSDictionary *)connectionProperties;
 @end
@@ -183,6 +187,15 @@ typedef enum {
 - (void)setBoundInterfaceIdentifier:(NSString *)identifier;
 - (void)_setPreventHSTSStorage:(BOOL)preventHSTSStorage;
 - (void)_setIgnoreHSTS:(BOOL)ignoreHSTS;
+#if HAVE(PROHIBIT_PRIVACY_PROXY)
+@property (setter=_setProhibitPrivacyProxy:) BOOL _prohibitPrivacyProxy;
+#endif
+#if HAVE(PRIVACY_PROXY_FAIL_CLOSED_FOR_UNREACHABLE_HOSTS)
+@property (setter=_setPrivacyProxyFailClosedForUnreachableHosts:) BOOL _privacyProxyFailClosedForUnreachableHosts;
+#endif
+#if ENABLE(TRACKER_DISPOSITION)
+@property (setter=_setNeedsNetworkTrackingPrevention:) BOOL _needsNetworkTrackingPrevention;
+#endif
 @end
 
 @interface NSURLProtocol ()
@@ -230,7 +243,6 @@ typedef NS_ENUM(NSInteger, NSURLSessionCompanionProxyPreference) {
 @class _NSHTTPAlternativeServicesStorage;
 #endif
 
-#if HAVE(HSTS_STORAGE)
 @interface _NSHSTSStorage : NSObject
 - (instancetype)initPersistentStoreWithURL:(nullable NSURL*)path;
 - (BOOL)shouldPromoteHostToHTTPS:(NSString *)host;
@@ -238,7 +250,6 @@ typedef NS_ENUM(NSInteger, NSURLSessionCompanionProxyPreference) {
 - (void)resetHSTSForHost:(NSString *)host;
 - (void)resetHSTSHostsSinceDate:(NSDate *)date;
 @end
-#endif
 
 @interface NSURLSessionConfiguration ()
 @property (assign) _TimingDataOptions _timingDataOptions;
@@ -268,9 +279,7 @@ typedef NS_ENUM(NSInteger, NSURLSessionCompanionProxyPreference) {
 @property (nullable, retain) _NSHTTPAlternativeServicesStorage *_alternativeServicesStorage;
 @property (readwrite, assign) BOOL _allowsHTTP3;
 #endif
-#if HAVE(HSTS_STORAGE)
 @property (nullable, retain) _NSHSTSStorage *_hstsStorage;
-#endif
 #if HAVE(NETWORK_LOADER)
 @property BOOL _usesNWLoader;
 #endif
@@ -299,6 +308,9 @@ typedef NS_ENUM(NSInteger, NSURLSessionCompanionProxyPreference) {
 #endif
 #if ENABLE(SERVER_PRECONNECT)
 @property (nonatomic, assign) BOOL _preconnect;
+#endif
+#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
+@property (readwrite, assign) int64_t _bytesPerSecondLimit;
 #endif
 @end
 
@@ -354,12 +366,10 @@ enum : NSUInteger {
     NSHTTPCookieAcceptPolicyExclusivelyFromMainDocumentDomain = 3,
 };
 
-#if HAVE(CFNETWORK_CNAME_AND_COOKIE_TRANSFORM_SPI)
 @interface NSURLSessionTask ()
 @property (nonatomic, copy, nullable) NSArray<NSHTTPCookie*>* (^_cookieTransformCallback)(NSArray<NSHTTPCookie*>* cookies);
 @property (nonatomic, readonly, nullable) NSArray<NSString*>* _resolvedCNAMEChain;
 @end
-#endif
 
 #endif // defined(__OBJC__)
 
@@ -452,14 +462,6 @@ CFDataRef _CFNetworkCopyATSContext(void);
 Boolean _CFNetworkSetATSContext(CFDataRef);
 
 Boolean _CFNetworkIsKnownHSTSHostWithSession(CFURLRef, CFURLStorageSessionRef);
-#if !HAVE(HSTS_STORAGE)
-extern const CFStringRef _kCFNetworkHSTSPreloaded;
-CFDictionaryRef _CFNetworkCopyHSTSPolicies(CFURLStorageSessionRef);
-void _CFNetworkResetHSTS(CFURLRef, CFURLStorageSessionRef);
-void _CFNetworkResetHSTSHostsSinceDate(CFURLStorageSessionRef, CFDateRef);
-void _CFNetworkResetHSTSHostsWithSession(CFURLStorageSessionRef);
-#endif
-
 CFDataRef CFHTTPCookieStorageCreateIdentifyingData(CFAllocatorRef inAllocator, CFHTTPCookieStorageRef inStorage);
 CFHTTPCookieStorageRef CFHTTPCookieStorageCreateFromIdentifyingData(CFAllocatorRef inAllocator, CFDataRef inData);
 CFArrayRef _CFHTTPParsedCookiesWithResponseHeaderFields(CFAllocatorRef inAllocator, CFDictionaryRef headerFields, CFURLRef inURL);
@@ -506,6 +508,14 @@ WTF_EXTERN_C_END
 
 @interface NSMutableURLRequest (Staging_88972294)
 @property (setter=_setPrivacyProxyFailClosedForUnreachableNonMainHosts:) BOOL _privacyProxyFailClosedForUnreachableNonMainHosts;
+@end
+
+@interface NSURLSessionConfiguration (Staging_102778152)
+@property (nonatomic) BOOL _skipsStackTraceCapture;
+@end
+
+@interface NSMutableURLRequest (Staging_103362732)
+@property (setter=_setWebSearchContent:) BOOL _isWebSearchContent;
 @end
 
 #endif // defined(__OBJC__)

@@ -39,6 +39,7 @@ OBJC_CLASS NSMutableURLRequest;
 namespace WebCore {
 class RegistrableDomain;
 class SharedBuffer;
+enum class NetworkConnectionIntegrity : uint16_t;
 }
 
 namespace WebKit {
@@ -86,6 +87,9 @@ public:
 
     void setH2PingCallback(const URL&, CompletionHandler<void(Expected<WTF::Seconds, WebCore::ResourceError>&&)>&&) override;
     void setPriority(WebCore::ResourceLoadPriority) override;
+#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
+    void setEmulatedConditions(const std::optional<int64_t>& bytesPerSecondLimit) override;
+#endif
 
     void checkTAO(const WebCore::ResourceResponse&);
 
@@ -93,14 +97,13 @@ private:
     NetworkDataTaskCocoa(NetworkSession&, NetworkDataTaskClient&, const NetworkLoadParameters&);
 
     bool tryPasswordBasedAuthentication(const WebCore::AuthenticationChallenge&, ChallengeCompletionHandler&);
-    void applySniffingPoliciesAndBindRequestToInferfaceIfNeeded(RetainPtr<NSURLRequest>&, bool shouldContentSniff, bool shouldContentEncodingSniff);
+    void applySniffingPoliciesAndBindRequestToInferfaceIfNeeded(RetainPtr<NSURLRequest>&, bool shouldContentSniff, WebCore::ContentEncodingSniffingPolicy);
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     static NSHTTPCookieStorage *statelessCookieStorage();
-#if HAVE(CFNETWORK_CNAME_AND_COOKIE_TRANSFORM_SPI)
     void updateFirstPartyInfoForSession(const URL&);
-    void applyCookiePolicyForThirdPartyCNAMECloaking(const WebCore::ResourceRequest&);
-#endif
+    bool shouldApplyCookiePolicyForThirdPartyCloaking() const;
+    void applyCookiePolicyForThirdPartyCloaking(const WebCore::ResourceRequest&);
     void blockCookies();
     void unblockCookies();
     bool needsFirstPartyCookieBlockingLatchModeQuirk(const URL& firstPartyURL, const URL& requestURL, const URL& redirectingURL) const;
@@ -115,11 +118,9 @@ private:
     WebCore::PageIdentifier m_pageID;
     WebPageProxyIdentifier m_webPageProxyID;
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     bool m_hasBeenSetToUseStatelessCookieStorage { false };
-#if HAVE(CFNETWORK_CNAME_AND_COOKIE_TRANSFORM_SPI)
     Seconds m_ageCapForCNAMECloakedCookies { 24_h * 7 };
-#endif
 #endif
 
     bool m_isForMainResourceNavigationForAnyFrame { false };
@@ -130,5 +131,7 @@ private:
 
 WebCore::Credential serverTrustCredential(const WebCore::AuthenticationChallenge&);
 void setPCMDataCarriedOnRequest(WebCore::PrivateClickMeasurement::PcmDataCarried, NSMutableURLRequest *);
+
+void enableNetworkConnectionIntegrity(NSMutableURLRequest *, OptionSet<WebCore::NetworkConnectionIntegrity>);
 
 } // namespace WebKit

@@ -25,6 +25,7 @@
 
 #import "config.h"
 
+#import "ClassMethodSwizzler.h"
 #import "PlatformUtilities.h"
 #import "TestWKWebView.h"
 #import <WebKit/WKWebViewPrivate.h>
@@ -34,6 +35,8 @@
 #import "UIKitSPI.h"
 #import <UIKit/UIFontDescriptor.h>
 #endif
+
+#import <pal/cocoa/TranslationUIServicesSoftLink.h>
 
 @interface TestWKWebView (EditActionTesting)
 - (BOOL)querySelectorExists:(NSString *)querySelector;
@@ -351,20 +354,42 @@ TEST(WKWebViewEditActions, SetFontFamily)
     EXPECT_WK_STREQ("italic", [webView stylePropertyAtSelectionStart:@"font-style"]);
 }
 
+#if HAVE(TRANSLATION_UI_SERVICES)
+
 TEST(WebKit, CanInvokeTranslateWithTextSelection)
 {
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 320, 568)]);
     [webView synchronouslyLoadTestPageNamed:@"simple"];
-    EXPECT_FALSE([webView canPerformAction:@selector(_translate:) withSender:nil]);
 
-    [webView selectAll:nil];
-    [webView waitForNextPresentationUpdate];
-    EXPECT_TRUE([webView canPerformAction:@selector(_translate:) withSender:nil]);
+    auto makeTranslationAvailabilityScope = [](BOOL available) -> ClassMethodSwizzler {
+        return {
+            PAL::getLTUITranslationViewControllerClass(),
+            @selector(isAvailable),
+            imp_implementationWithBlock(^BOOL {
+                return available;
+            })
+        };
+    };
 
-    [webView collapseToEnd];
-    [webView waitForNextPresentationUpdate];
-    EXPECT_FALSE([webView canPerformAction:@selector(_translate:) withSender:nil]);
+    {
+        auto swizzler = makeTranslationAvailabilityScope(YES);
+        EXPECT_FALSE([webView canPerformAction:@selector(_translate:) withSender:nil]);
+
+        [webView collapseToEnd];
+        [webView waitForNextPresentationUpdate];
+        EXPECT_FALSE([webView canPerformAction:@selector(_translate:) withSender:nil]);
+
+        [webView selectAll:nil];
+        [webView waitForNextPresentationUpdate];
+        EXPECT_TRUE([webView canPerformAction:@selector(_translate:) withSender:nil]);
+    }
+    {
+        auto swizzler = makeTranslationAvailabilityScope(NO);
+        EXPECT_FALSE([webView canPerformAction:@selector(_translate:) withSender:nil]);
+    }
 }
+
+#endif // HAVE(TRANSLATION_UI_SERVICES)
 
 #else
 
@@ -374,6 +399,36 @@ TEST(WKWebViewEditActions, ModifyTextWritingDirection)
     [webView selectAll:nil];
     [webView makeTextWritingDirectionNatural:nil];
     EXPECT_WK_STREQ("normal", [webView stringByEvaluatingJavaScript:@"getComputedStyle(text).unicodeBidi"]);
+}
+
+TEST(WKWebViewEditActions, CopyFontAtCaretSelection)
+{
+    auto webView = webViewForEditActionTesting(@"<p id='source' style='color: rgb(255, 0, 0);'>Source</p><p id='target'>Target</p>");
+    [webView objectByEvaluatingJavaScript:@"getSelection().setPosition(source.childNodes[0], 3)"];
+
+    auto validateAndPerformAction = [](TestWKWebView *webView, SEL action) {
+        auto menu = adoptNS([NSMenu new]);
+        auto item = adoptNS([NSMenuItem new]);
+        [item setTarget:webView];
+        [item setAction:action];
+        [menu addItem:item.get()];
+        [webView validateUserInterfaceItem:item.get()];
+        [webView waitForNextPresentationUpdate];
+        EXPECT_TRUE([item isEnabled]);
+
+        [menu performActionForItemAtIndex:0];
+        [webView waitForNextPresentationUpdate];
+    };
+
+    validateAndPerformAction(webView.get(), @selector(copyFont:));
+    [webView objectByEvaluatingJavaScript:@"getSelection().selectAllChildren(target)"];
+    validateAndPerformAction(webView.get(), @selector(pasteFont:));
+
+    auto getComputedColor = @"let deepestChild = target;"
+        "while (deepestChild.children[0])"
+        "  deepestChild = deepestChild.children[0];"
+        "getComputedStyle(deepestChild).color";
+    EXPECT_WK_STREQ("rgb(255, 0, 0)", [webView stringByEvaluatingJavaScript:getComputedColor]);
 }
 
 #endif

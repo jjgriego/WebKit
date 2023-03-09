@@ -36,55 +36,20 @@ namespace WebKit {
 struct GPUProcessConnectionParameters {
     WebCore::ProcessIdentity webProcessIdentity;
     Vector<String> overrideLanguages;
-    bool isCaptivePortalModeEnabled { false };
+    bool isLockdownModeEnabled { false };
 #if ENABLE(IPC_TESTING_API)
     bool ignoreInvalidMessageForTesting { false };
 #endif
+    bool allowTestOnlyIPC { false };
 #if HAVE(AUDIT_TOKEN)
     std::optional<audit_token_t> presentingApplicationAuditToken;
 #endif
-
-    void encode(IPC::Encoder& encoder) const
-    {
-        encoder << webProcessIdentity;
-        encoder << overrideLanguages;
-        encoder << isCaptivePortalModeEnabled;
-#if ENABLE(IPC_TESTING_API)
-        encoder << ignoreInvalidMessageForTesting;
+#if ENABLE(VP9)
+    std::optional<bool> hasVP9HardwareDecoder;
+    std::optional<bool> hasVP9ExtensionSupport;
 #endif
-#if HAVE(AUDIT_TOKEN)
-        encoder << presentingApplicationAuditToken;
-#endif
-    }
-
-    static std::optional<GPUProcessConnectionParameters> decode(IPC::Decoder& decoder)
-    {
-        auto webProcessIdentity = decoder.decode<WebCore::ProcessIdentity>();
-        auto overrideLanguages = decoder.decode<Vector<String>>();
-        auto isCaptivePortalModeEnabled = decoder.decode<bool>();
-#if ENABLE(IPC_TESTING_API)
-        auto ignoreInvalidMessageForTesting = decoder.decode<bool>();
-#endif
-#if HAVE(AUDIT_TOKEN)
-        auto presentingApplicationAuditToken = decoder.decode<std::optional<audit_token_t>>();
-#endif
-        if (!decoder.isValid())
-            return std::nullopt;
-
-        return GPUProcessConnectionParameters {
-            WTFMove(*webProcessIdentity),
-            WTFMove(*overrideLanguages),
-            *isCaptivePortalModeEnabled,
-#if ENABLE(IPC_TESTING_API)
-            *ignoreInvalidMessageForTesting,
-#endif
-#if HAVE(AUDIT_TOKEN)
-            WTFMove(*presentingApplicationAuditToken),
-#endif
-        };
-    }
 };
 
-} // namespace WebKit
+}; // namespace WebKit
 
 #endif // ENABLE(GPU_PROCESS)

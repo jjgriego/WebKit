@@ -1,3 +1,4 @@
+//@ skip if $architecture != "arm64" && $architecture != "x86_64"
 import { addOne } from "./wasm-imports-js-exports/imports.wasm"
 import * as assert from '../assert.js';
 
@@ -38,7 +39,7 @@ import("./wasm-imports-js-exports/memory-fail-1.wasm").then($vm.abort, function 
 }).then(function () { }, $vm.abort);
 
 import("./wasm-imports-js-exports/memory-fail-2.wasm").then($vm.abort, function (error) {
-    assert.eq(String(error), `LinkError: Memory import ./memory-fail-2.js:memory provided an 'initial' that is smaller than the module's declared 'initial' import memory size`);
+    assert.eq(String(error), `LinkError: Memory import ./memory-fail-2.js:memory provided a 'size' that is smaller than the module's declared 'initial' import memory size`);
 }).then(function () { }, $vm.abort);
 
 import("./wasm-imports-js-exports/memory-fail-3.wasm").then($vm.abort, function (error) {

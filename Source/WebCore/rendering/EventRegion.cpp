@@ -26,8 +26,14 @@
 #include "config.h"
 #include "EventRegion.h"
 
+#include "ElementAncestorIteratorInlines.h"
+#include "HTMLFormControlElement.h"
 #include "Logging.h"
+#include "Path.h"
+#include "RenderBox.h"
 #include "RenderStyle.h"
+#include "SimpleRange.h"
+#include "WindRule.h"
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
@@ -64,6 +70,13 @@ void EventRegionContext::pushClip(const IntRect& clipRect)
         m_clipStack.append(intersection(m_clipStack.last(), transformedClip));
 }
 
+void EventRegionContext::pushClip(const Path& path, WindRule)
+{
+    // FIXME: Approximate paths better.
+    auto pathBounds = enclosingIntRect(path.boundingRect());
+    pushClip(pathBounds);
+}
+
 void EventRegionContext::popClip()
 {
     if (m_clipStack.isEmpty()) {
@@ -73,10 +86,13 @@ void EventRegionContext::popClip()
     m_clipStack.removeLast();
 }
 
-void EventRegionContext::unite(const Region& region, const RenderStyle& style, bool overrideUserModifyIsEditable)
+void EventRegionContext::unite(const Region& region, RenderObject& renderer, const RenderStyle& style, bool overrideUserModifyIsEditable)
 {
     if (m_transformStack.isEmpty() && m_clipStack.isEmpty()) {
         m_eventRegion.unite(region, style, overrideUserModifyIsEditable);
+#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
+        uniteInteractionRegions(region, renderer);
+#endif
         return;
     }
 
@@ -86,6 +102,11 @@ void EventRegionContext::unite(const Region& region, const RenderStyle& style, b
         transformedAndClippedRegion.intersect(m_clipStack.last());
 
     m_eventRegion.unite(transformedAndClippedRegion, style, overrideUserModifyIsEditable);
+#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
+    uniteInteractionRegions(transformedAndClippedRegion, renderer);
+#else
+    UNUSED_PARAM(renderer);
+#endif
 }
 
 bool EventRegionContext::contains(const IntRect& rect) const
@@ -96,7 +117,59 @@ bool EventRegionContext::contains(const IntRect& rect) const
     return m_eventRegion.contains(m_transformStack.last().mapRect(rect));
 }
 
+#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
+
+void EventRegionContext::uniteInteractionRegions(const Region& region, RenderObject& renderer)
+{
+    if (renderer.page().shouldBuildInteractionRegions()) {
+        if (auto interactionRegion = interactionRegionForRenderedRegion(renderer, region)) {
+            auto addResult = m_interactionRegionsByElement.add(interactionRegion->elementIdentifier, *interactionRegion);
+            if (!addResult.isNewEntry)
+                addResult.iterator->value.regionInLayerCoordinates.unite(interactionRegion->regionInLayerCoordinates);
+        }
+    }
+}
+
+void EventRegionContext::copyInteractionRegionsToEventRegion()
+{
+    m_eventRegion.uniteInteractionRegions(copyToVector(m_interactionRegionsByElement.values()));
+}
+
+#endif
+
 EventRegion::EventRegion() = default;
+
+EventRegion::EventRegion(Region&& region
+#if ENABLE(TOUCH_ACTION_REGIONS)
+    , Vector<WebCore::Region> touchActionRegions
+#endif
+#if ENABLE(WHEEL_EVENT_REGIONS)
+    , WebCore::Region wheelEventListenerRegion
+    , WebCore::Region nonPassiveWheelEventListenerRegion
+#endif
+#if ENABLE(EDITABLE_REGION)
+    , std::optional<WebCore::Region> editableRegion
+#endif
+#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
+    , Vector<WebCore::InteractionRegion> interactionRegions
+#endif
+    )
+    : m_region(WTFMove(region))
+#if ENABLE(TOUCH_ACTION_REGIONS)
+    , m_touchActionRegions(WTFMove(touchActionRegions))
+#endif
+#if ENABLE(WHEEL_EVENT_REGIONS)
+    , m_wheelEventListenerRegion(WTFMove(wheelEventListenerRegion))
+    , m_nonPassiveWheelEventListenerRegion(WTFMove(nonPassiveWheelEventListenerRegion))
+#endif
+#if ENABLE(EDITABLE_REGION)
+    , m_editableRegion(WTFMove(editableRegion))
+#endif
+#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
+    , m_interactionRegions(WTFMove(interactionRegions))
+#endif
+{
+}
 
 bool EventRegion::operator==(const EventRegion& other) const
 {
@@ -127,6 +200,9 @@ bool EventRegion::operator==(const EventRegion& other) const
 
 void EventRegion::unite(const Region& region, const RenderStyle& style, bool overrideUserModifyIsEditable)
 {
+    if (style.effectivePointerEvents() == PointerEvents::None)
+        return;
+
     m_region.unite(region);
 
 #if ENABLE(TOUCH_ACTION_REGIONS)
@@ -176,6 +252,7 @@ void EventRegion::translate(const IntSize& offset)
 #endif
 }
 
+#if ENABLE(TOUCH_ACTION_REGIONS)
 static inline unsigned toIndex(TouchAction touchAction)
 {
     switch (touchAction) {
@@ -216,7 +293,6 @@ static inline TouchAction toTouchAction(unsigned index)
     return TouchAction::Auto;
 }
 
-#if ENABLE(TOUCH_ACTION_REGIONS)
 void EventRegion::uniteTouchActions(const Region& touchRegion, OptionSet<TouchAction> touchActions)
 {
     for (auto touchAction : touchActions) {
@@ -321,12 +397,6 @@ bool EventRegion::containsEditableElementsInRect(const IntRect& rect) const
 void EventRegion::uniteInteractionRegions(const Vector<InteractionRegion>& interactionRegions)
 {
     m_interactionRegions.appendVector(interactionRegions);
-}
-
-void EventRegion::computeInteractionRegions(Page& page, IntRect rect)
-{
-    // FIXME: Collect regions from `EventRegion::unite` instead of hit-testing, so that they are per-layer.
-    uniteInteractionRegions(WebCore::interactionRegions(page, rect));
 }
 
 #endif

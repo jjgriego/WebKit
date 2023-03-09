@@ -113,6 +113,8 @@ public:
     bool hasMarginBeforeQuirk(const RenderBox& child) const;
     bool hasMarginAfterQuirk(const RenderBox& child) const;
 
+    virtual bool shouldChildInlineMarginContributeToContainerIntrinsicSize(MarginTrimType /* marginSide */, const RenderElement&) const { return true; }
+
     void markPositionedObjectsForLayout();
     void markForPaginationRelayoutIfNeeded() override;
     
@@ -231,14 +233,15 @@ public:
     LayoutUnit adjustIntrinsicLogicalHeightForBoxSizing(LayoutUnit height) const override;
     void paintExcludedChildrenInBorder(PaintInfo&, const LayoutPoint&);
     
-    LayoutSize clientLogicalRightAndBottomAfterRepositioning() const;
     // Accessors for logical width/height and margins in the containing block's block-flow direction.
     enum ApplyLayoutDeltaMode { ApplyLayoutDelta, DoNotApplyLayoutDelta };
     LayoutUnit logicalWidthForChild(const RenderBox& child) const { return isHorizontalWritingMode() ? child.width() : child.height(); }
     LayoutUnit logicalHeightForChild(const RenderBox& child) const { return isHorizontalWritingMode() ? child.height() : child.width(); }
+    LayoutUnit logicalMarginBoxHeightForChild(const RenderBox& child) const { return isHorizontalWritingMode() ? child.marginBoxRect().height() : child.marginBoxRect().width(); }
     LayoutSize logicalSizeForChild(const RenderBox& child) const { return isHorizontalWritingMode() ? child.size() : child.size().transposedSize(); }
     LayoutUnit logicalTopForChild(const RenderBox& child) const { return isHorizontalWritingMode() ? child.y() : child.x(); }
     LayoutUnit logicalLeftForChild(const RenderBox& child) const { return isHorizontalWritingMode() ? child.x() : child.y(); }
+    LayoutUnit logicalMarginBoxTopForChild(const RenderBox& child) const { return logicalTopForChild(child) - marginBeforeForChild(child); }
     void setLogicalLeftForChild(RenderBox& child, LayoutUnit logicalLeft, ApplyLayoutDeltaMode = DoNotApplyLayoutDelta);
     void setLogicalTopForChild(RenderBox& child, LayoutUnit logicalTop, ApplyLayoutDeltaMode = DoNotApplyLayoutDelta);
     LayoutUnit marginBeforeForChild(const RenderBoxModelObject& child) const { return child.marginBefore(&style()); }
@@ -298,8 +301,6 @@ public:
     LayoutUnit logicalLeftSelectionOffset(RenderBlock& rootBlock, LayoutUnit position, const LogicalSelectionOffsetCaches&);
     LayoutUnit logicalRightSelectionOffset(RenderBlock& rootBlock, LayoutUnit position, const LogicalSelectionOffsetCaches&);
 
-    LayoutUnit computeStartPositionDeltaForChildAvoidingFloats(const RenderBox& child, LayoutUnit childMarginStart, RenderFragmentContainer* = 0);
-
 #if ASSERT_ENABLED
     void checkPositionedObjectsNeedLayout();
 #endif
@@ -357,6 +358,7 @@ protected:
     void computePreferredLogicalWidths() override;
     
     std::optional<LayoutUnit> firstLineBaseline() const override;
+    std::optional<LayoutUnit> lastLineBaseline() const override;
     std::optional<LayoutUnit> inlineBlockBaseline(LineDirectionMode) const override;
 
     // Delay updating scrollbars until endAndCommitUpdateScrollInfoAfterLayoutTransaction() is called. These functions are used
@@ -377,6 +379,8 @@ protected:
     virtual void simplifiedNormalFlowLayout();
 
     bool childBoxIsUnsplittableForFragmentation(const RenderBox& child) const;
+
+    static LayoutUnit layoutOverflowLogicalBottom(const RenderBlock&);
 
 public:
     virtual void computeOverflow(LayoutUnit oldClientAfterEdge, bool recomputeFloats = false);
@@ -408,8 +412,8 @@ protected:
     void addOverflowFromPositionedObjects();
     void addVisualOverflowFromTheme();
 
-    void addFocusRingRects(Vector<LayoutRect>&, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer = 0) override;
-    virtual void addFocusRingRectsForInlineChildren(Vector<LayoutRect>&, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer);
+    void addFocusRingRects(Vector<LayoutRect>&, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer = 0) const override;
+    virtual void addFocusRingRectsForInlineChildren(Vector<LayoutRect>&, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer) const;
 
     void computeFragmentRangeForBoxChild(const RenderBox&) const;
 
@@ -448,6 +452,7 @@ private:
     virtual void paintColumnRules(PaintInfo&, const LayoutPoint&) { };
     void paintSelection(PaintInfo&, const LayoutPoint&);
     void paintCaret(PaintInfo&, const LayoutPoint&, CaretType);
+    void paintCarets(PaintInfo&, const LayoutPoint&);
 
     virtual bool hitTestContents(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction);
     // FIXME-BLOCKFLOW: Remove virtualization when all callers have moved to RenderBlockFlow

@@ -61,7 +61,7 @@
 - (WKSecurityOrigin *)securityOrigin
 {
     auto& data = _frameInfo->securityOrigin();
-    auto apiOrigin = API::SecurityOrigin::create(data.protocol, data.host, data.port);
+    auto apiOrigin = API::SecurityOrigin::create(data);
     return retainPtr(wrapper(apiOrigin.get())).autorelease();
 }
 
@@ -95,6 +95,12 @@
 - (_WKFrameHandle *)_parentFrameHandle
 {
     return retainPtr(wrapper(_frameInfo->parentFrameHandle())).autorelease();
+}
+
+- (pid_t)_processIdentifier
+{
+    auto* frame = WebKit::WebFrameProxy::webFrame(_frameInfo->handle()->frameID());
+    return frame ? frame->processIdentifier() : 0;
 }
 
 @end

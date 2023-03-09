@@ -45,6 +45,9 @@ static constexpr int64_t nsPerSecond = 1000LL * 1000 * 1000;
 static constexpr int64_t nsPerMillisecond = 1000LL * 1000;
 static constexpr int64_t nsPerMicrosecond = 1000LL;
 
+static constexpr int32_t maxYear = 275760;
+static constexpr int32_t minYear = -271821;
+
 std::optional<TimeZoneID> parseTimeZoneName(StringView string)
 {
     const auto& timeZones = intlAvailableTimeZones();
@@ -70,50 +73,38 @@ static int32_t parseDecimalInt32(const CharType* characters, unsigned length)
 // https://tc39.es/proposal-temporal/#sec-temporal-durationhandlefractions
 static void handleFraction(Duration& duration, int factor, StringView fractionString, TemporalUnit fractionType)
 {
-    ASSERT(fractionString.length() && fractionString.length() <= 9 && fractionString.isAllASCII());
+    auto fractionLength = fractionString.length();
+    ASSERT(fractionLength && fractionLength <= 9 && fractionString.isAllASCII());
     ASSERT(fractionType == TemporalUnit::Hour || fractionType == TemporalUnit::Minute || fractionType == TemporalUnit::Second);
 
-    if (fractionType == TemporalUnit::Second) {
-        Vector<LChar, 9> padded(9, '0');
-        for (unsigned i = 0; i < fractionString.length(); i++)
-            padded[i] = fractionString[i];
-        duration.setMilliseconds(factor * parseDecimalInt32(padded.data(), 3));
-        duration.setMicroseconds(factor * parseDecimalInt32(padded.data() + 3, 3));
-        duration.setNanoseconds(factor * parseDecimalInt32(padded.data() + 6, 3));
-        return;
-    }
+    Vector<LChar, 9> padded(9, '0');
+    for (unsigned i = 0; i < fractionLength; i++)
+        padded[i] = fractionString[i];
 
-    double fraction = factor * parseInt(fractionString, 10) / std::pow(10, fractionString.length());
+    int64_t fraction = static_cast<int64_t>(factor) * parseDecimalInt32(padded.data(), 9);
     if (!fraction)
         return;
 
+    static constexpr int64_t divisor = 1'000'000'000LL;
     if (fractionType == TemporalUnit::Hour) {
         fraction *= 60;
-        duration.setMinutes(std::trunc(fraction));
-        fraction = std::fmod(fraction, 1);
+        duration.setMinutes(fraction / divisor);
+        fraction %= divisor;
         if (!fraction)
             return;
     }
 
-    fraction *= 60;
-    duration.setSeconds(std::trunc(fraction));
-    fraction = std::fmod(fraction, 1);
-    if (!fraction)
-        return;
+    if (fractionType != TemporalUnit::Second) {
+        fraction *= 60;
+        duration.setSeconds(fraction / divisor);
+        fraction %= divisor;
+        if (!fraction)
+            return;
+    }
 
-    fraction *= 1000;
-    duration.setMilliseconds(std::trunc(fraction));
-    fraction = std::fmod(fraction, 1);
-    if (!fraction)
-        return;
-
-    fraction *= 1000;
-    duration.setMicroseconds(std::trunc(fraction));
-    fraction = std::fmod(fraction, 1);
-    if (!fraction)
-        return;
-
-    duration.setNanoseconds(std::trunc(fraction * 1000));
+    duration.setMilliseconds(fraction / nsPerMillisecond);
+    duration.setMicroseconds(fraction % nsPerMillisecond / nsPerMicrosecond);
+    duration.setNanoseconds(fraction % nsPerMicrosecond);
 }
 
 // ParseTemporalDurationString ( isoString )
@@ -1178,8 +1169,7 @@ uint8_t weekOfYear(PlainDate plainDate)
 
     if (week == 53) {
         // Check whether this is in next year's week 1.
-        int32_t daysInYear = isLeapYear(plainDate.year()) ? 366 : 365;
-        if ((daysInYear - dayOfYear) < (4 - dayOfWeek))
+        if ((daysInYear(plainDate.year()) - dayOfYear) < (4 - dayOfWeek))
             return 1;
     }
 
@@ -1281,12 +1271,42 @@ String temporalTimeToString(PlainTime plainTime, std::tuple<Precision, unsigned>
 
 String temporalDateToString(PlainDate plainDate)
 {
-    return makeString(pad('0', 4, plainDate.year()), '-', pad('0', 2, plainDate.month()), '-', pad('0', 2, plainDate.day()));
+    auto year = plainDate.year();
+
+    String prefix;
+    auto yearDigits = 4;
+    if (year < 0 || year > 9999) {
+        prefix = year < 0 ? "-"_s : "+"_s;
+        yearDigits = 6;
+        year = abs(year);
+    }
+
+    return makeString(prefix, pad('0', yearDigits, year), '-', pad('0', 2, plainDate.month()), '-', pad('0', 2, plainDate.day()));
+}
+
+String temporalDateTimeToString(PlainDate plainDate, PlainTime plainTime, std::tuple<Precision, unsigned> precision)
+{
+    return makeString(temporalDateToString(plainDate), 'T', temporalTimeToString(plainTime, precision));
 }
 
 String monthCode(uint32_t month)
 {
     return makeString('M', pad('0', 2, month));
+}
+
+// returns 0 for any invalid string
+uint8_t monthFromCode(StringView monthCode)
+{
+    if (monthCode.length() != 3 || !monthCode.startsWith('M') || !isASCIIDigit(monthCode[2]))
+        return 0;
+
+    uint8_t result = monthCode[2] - '0';
+    if (monthCode[1] == '1')
+        result += 10;
+    else if (monthCode[1] != '0')
+        return 0;
+
+    return result;
 }
 
 // IsValidDuration ( years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds )
@@ -1440,6 +1460,12 @@ bool isDateTimeWithinLimits(int32_t year, uint8_t month, uint8_t day, unsigned h
     if (nanoseconds >= (ExactTime::maxValue + ExactTime::nsPerDay))
         return false;
     return true;
+}
+
+// More effective for our purposes than isInBounds<int32_t>.
+bool isYearWithinLimits(double year)
+{
+    return year >= minYear && year <= maxYear;
 }
 
 } // namespace ISO8601

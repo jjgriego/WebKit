@@ -1,3 +1,15 @@
+if (WTF_CPU_X86_64)
+    if (MSVC)
+        add_custom_command(
+            OUTPUT ${WTF_DERIVED_SOURCES_DIR}/AsmStubsMSVC64.obj
+            MAIN_DEPENDENCY ${WTF_DIR}/wtf/win/AsmStubsMSVC64.asm
+            COMMAND ml64 -nologo -c -Fo ${WTF_DERIVED_SOURCES_DIR}/AsmStubsMSVC64.obj ${WTF_DIR}/wtf/win/AsmStubsMSVC64.asm
+            VERBATIM)
+
+        list(APPEND WTF_SOURCES ${WTF_DERIVED_SOURCES_DIR}/AsmStubsMSVC64.obj)
+    endif ()
+endif ()
+
 list(APPEND WTF_PUBLIC_HEADERS
     text/win/WCharStringExtras.h
 
@@ -38,6 +50,7 @@ if (USE_CF)
         cf/CFURLExtras.h
         cf/SpanCF.h
         cf/TypeCastsCF.h
+        cf/VectorCF.h
 
         text/cf/StringConcatenateCF.h
         text/cf/TextBreakIteratorCF.h
@@ -53,7 +66,5 @@ if (USE_CF)
         text/cf/StringViewCF.cpp
     )
 
-    list(APPEND WTF_LIBRARIES ${COREFOUNDATION_LIBRARY})
+    list(APPEND WTF_LIBRARIES Apple::CoreFoundation)
 endif ()
-
-set(WTF_OUTPUT_NAME WTF${DEBUG_SUFFIX})

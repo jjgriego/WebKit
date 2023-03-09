@@ -26,10 +26,8 @@
 #include "config.h"
 #include "CSSMathNegate.h"
 
+#include "CSSCalcNegateNode.h"
 #include "CSSNumericValue.h"
-
-#if ENABLE(CSS_TYPED_OM)
-
 #include <wtf/IsoMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -51,7 +49,7 @@ static CSSNumericType copyType(const CSSNumberish& numberish)
 
 CSSMathNegate::CSSMathNegate(CSSNumberish&& numberish)
     : CSSMathValue(copyType(numberish))
-    , m_value(CSSNumericValue::rectifyNumberish(WTFMove(numberish)))
+    , m_value(rectifyNumberish(WTFMove(numberish)))
 {
 }
 
@@ -77,6 +75,20 @@ auto CSSMathNegate::toSumValue() const -> std::optional<SumValue>
     return values;
 }
 
-} // namespace WebCore
+bool CSSMathNegate::equals(const CSSNumericValue& other) const
+{
+    // https://drafts.css-houdini.org/css-typed-om/#equal-numeric-value
+    auto* otherNegate = dynamicDowncast<CSSMathNegate>(other);
+    if (!otherNegate)
+        return false;
+    return m_value->equals(otherNegate->value());
+}
 
-#endif
+RefPtr<CSSCalcExpressionNode> CSSMathNegate::toCalcExpressionNode() const
+{
+    if (auto value = m_value->toCalcExpressionNode())
+        return CSSCalcNegateNode::create(value.releaseNonNull());
+    return nullptr;
+}
+
+} // namespace WebCore

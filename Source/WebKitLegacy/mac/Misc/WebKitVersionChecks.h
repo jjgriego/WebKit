@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006, 2007, 2008 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,14 +34,13 @@
     For example the version 1.2.3 is returned as 0x00010203 and version 200.3.5 is returned as 0x00C80305
     A version of -1 is returned if the main executable did not link against WebKit.
 
-    Please use the current WebKit version number, available in WebKit/mac/Configurations/Version.xcconfig,
+    Please use the current WebKit version number, available in Configurations/Version.xcconfig,
     when adding a new version constant.
 */
 
 #if !PLATFORM(IOS_FAMILY)
 #define WEBKIT_FIRST_VERSION_WITH_3_0_CONTEXT_MENU_TAGS 0x020A0000 // 522.0.0
 #define WEBKIT_FIRST_VERSION_WITH_LOCAL_RESOURCE_SECURITY_RESTRICTION 0x020A0000 // 522.0.0
-#define WEBKIT_FIRST_VERSION_WITHOUT_APERTURE_QUIRK 0x020A0000 // 522.0.0
 #define WEBKIT_FIRST_VERSION_WITHOUT_QUICKBOOKS_QUIRK 0x020A0000 // 522.0.0
 #define WEBKIT_FIRST_VERSION_WITH_MAIN_THREAD_EXCEPTIONS 0x020A0000 // 522.0.0
 #define WEBKIT_FIRST_VERSION_WITHOUT_ADOBE_INSTALLER_QUIRK 0x020A0000 // 522.0.0

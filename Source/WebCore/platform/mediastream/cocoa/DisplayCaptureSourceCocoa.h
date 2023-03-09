@@ -30,6 +30,7 @@
 #include "CaptureDevice.h"
 #include "RealtimeMediaSource.h"
 #include "RealtimeMediaSourceSettings.h"
+#include "UserActivity.h"
 #include <wtf/Observer.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
@@ -77,7 +78,7 @@ public:
         virtual void stop() = 0;
         virtual DisplayFrameType generateFrame() = 0;
         virtual CaptureDevice::DeviceType deviceType() const = 0;
-        virtual RealtimeMediaSourceSettings::DisplaySurfaceType surfaceType() const = 0;
+        virtual DisplaySurfaceType surfaceType() const = 0;
         virtual void commitConfiguration(const RealtimeMediaSourceSettings&) = 0;
         virtual IntSize intrinsicSize() const = 0;
 
@@ -113,14 +114,13 @@ public:
         const void* m_logIdentifier;
     };
 
-    static CaptureSourceOrError create(const CaptureDevice&, String&&, const MediaConstraints*, PageIdentifier);
-    static CaptureSourceOrError create(Expected<UniqueRef<Capturer>, String>&&, const CaptureDevice&, String&&, const MediaConstraints*, PageIdentifier);
+    static CaptureSourceOrError create(const CaptureDevice&, MediaDeviceHashSalts&&, const MediaConstraints*, PageIdentifier);
+    static CaptureSourceOrError create(Expected<UniqueRef<Capturer>, String>&&, const CaptureDevice&, MediaDeviceHashSalts&&, const MediaConstraints*, PageIdentifier);
 
     Seconds elapsedTime();
-    void updateFrameSize();
 
 private:
-    DisplayCaptureSourceCocoa(UniqueRef<Capturer>&&, AtomString&& name, String&& deviceID, String&& hashSalt, PageIdentifier);
+    DisplayCaptureSourceCocoa(UniqueRef<Capturer>&&, const CaptureDevice&, MediaDeviceHashSalts&&, PageIdentifier);
     virtual ~DisplayCaptureSourceCocoa();
 
     // RealtimeMediaSource
@@ -142,6 +142,7 @@ private:
     void capturerConfigurationChanged() final;
 
     void emitFrame();
+    void updateFrameSize();
 
     UniqueRef<Capturer> m_capturer;
     std::optional<RealtimeMediaSourceCapabilities> m_capabilities;
@@ -151,7 +152,8 @@ private:
     MonotonicTime m_startTime { MonotonicTime::nan() };
     Seconds m_elapsedTime { 0_s };
 
-    RunLoop::Timer<DisplayCaptureSourceCocoa> m_timer;
+    RunLoop::Timer m_timer;
+    UserActivity m_userActivity;
 
     std::unique_ptr<ImageTransferSessionVT> m_imageTransferSession;
 };

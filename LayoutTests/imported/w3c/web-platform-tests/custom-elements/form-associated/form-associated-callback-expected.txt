@@ -1,15 +1,7 @@
-CONSOLE MESSAGE: TypeError: this.attachInternals is not a function. (In 'this.attachInternals()', 'this.attachInternals' is undefined)
-CONSOLE MESSAGE: TypeError: this.attachInternals is not a function. (In 'this.attachInternals()', 'this.attachInternals' is undefined)
-CONSOLE MESSAGE: TypeError: this.attachInternals is not a function. (In 'this.attachInternals()', 'this.attachInternals' is undefined)
-CONSOLE MESSAGE: TypeError: this.attachInternals is not a function. (In 'this.attachInternals()', 'this.attachInternals' is undefined)
 
-
-
-
-
-
-
-
-Harness Error (FAIL), message = TypeError: this.attachInternals is not a function. (In 'this.attachInternals()', 'this.attachInternals' is undefined)
-
+PASS Associate by parser, customized at element creation
+PASS Parsed, connected, then upgraded
+PASS Disassociation
+PASS Updating "form" content attribute
+PASS Updating "id" attribute of form element
 

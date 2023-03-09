@@ -121,6 +121,8 @@ class SingleTestRunner(object):
                 result.type = test_expectations.SKIP
                 return result
             return self._run_reftest()
+        if self._test_input.test.is_wpt_crash_test:
+            return self._run_wpt_crash_test()
         if self._options.reset_results:
             return self._run_rebaseline()
         return self._run_compare_test()
@@ -146,6 +148,23 @@ class SingleTestRunner(object):
             self._add_missing_baselines(test_result, driver_output)
         test_result_writer.write_test_result(self._filesystem, self._port, self._results_directory, self._test_name, driver_output, expected_driver_output, test_result.failures)
         return test_result
+
+    def _run_wpt_crash_test(self):
+        driver_output = self._driver.run_test(self._driver_input(), self._stop_when_done)
+        if self._options.ignore_metrics:
+            driver_output.strip_metrics()
+
+        patterns = self._port.logging_patterns_to_strip()
+        driver_output.strip_patterns(patterns)
+        driver_output.strip_text_start_if_needed(self._port.logging_detectors_to_strip_text_start(self._driver_input().test_name))
+        driver_output.strip_stderror_patterns(self._port.stderr_patterns_to_strip())
+
+        failures = []
+        failures.extend(self._handle_error(driver_output))
+        assert(isinstance(failure, test_failures.FailureCrash) or isinstance(failure, test_failures.FailureTimeout) for failure in failures)
+
+        test_result_writer.write_test_result(self._filesystem, self._port, self._results_directory, self._test_name, driver_output, None, failures)
+        return TestResult(self._test_input, failures, driver_output.test_time, driver_output.has_stderr(), pid=driver_output.pid)
 
     def _run_rebaseline(self):
         driver_output = self._driver.run_test(self._driver_input(), self._stop_when_done)
@@ -203,13 +222,16 @@ class SingleTestRunner(object):
 
         fs.maybe_make_directory(output_dir)
 
-        ext_parts = fs.splitext(self._test_name)
+        output_basename = fs.basename(self._test_name)
+        variant = ''
+        if '?' in output_basename:
+            (output_basename, variant) = output_basename.split('?', 1)
+        if '#' in output_basename:
+            (output_basename, variant) = output_basename.split('#', 1)
 
-        output_basename = fs.basename(ext_parts[0])
-        if len(ext_parts) > 1 and '?' in ext_parts[1]:
-            output_basename += '_' + ext_parts[1].split('?')[1]
-        if len(ext_parts) > 1 and '#' in ext_parts[1]:
-            output_basename += '_' + ext_parts[1].split('#')[1]
+        output_basename = fs.splitext(output_basename)[0]
+        if len(variant):
+            output_basename += "_" + re.sub(r'[|* <>:]', '_', variant)
         output_basename += '-expected' + extension
 
         output_path = fs.join(output_dir, output_basename)
@@ -321,6 +343,10 @@ class SingleTestRunner(object):
 
     def _run_reftest(self):
         test_output = self._driver.run_test(self._driver_input(), self._stop_when_done)
+        test_output.strip_patterns(self._port.logging_patterns_to_strip())
+        test_output.strip_text_start_if_needed(self._port.logging_detectors_to_strip_text_start(self._driver_input().test_name))
+        test_output.strip_stderror_patterns(self._port.stderr_patterns_to_strip())
+
         total_test_time = 0
         reference_output = None
         test_result = None
@@ -337,6 +363,10 @@ class SingleTestRunner(object):
             reference_test_name = self._port.relative_test_filename(reference_filename)
             reference_test_names.append(reference_test_name)
             reference_output = self._driver.run_test(DriverInput(reference_test_name, self._timeout, None, should_run_pixel_test=True), self._stop_when_done)
+            reference_output.strip_patterns(self._port.logging_patterns_to_strip())
+            reference_output.strip_text_start_if_needed(self._port.logging_detectors_to_strip_text_start(self._driver_input().test_name))
+            reference_output.strip_stderror_patterns(self._port.stderr_patterns_to_strip())
+
             test_result = self._compare_output_with_reference(reference_output, test_output, reference_filename, expectation == '!=')
 
             if (expectation == '!=' and test_result.failures) or (expectation == '==' and not test_result.failures):

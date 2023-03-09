@@ -35,15 +35,8 @@
 #include "SharedBuffer.h"
 #include <wtf/text/TextStream.h>
 
-#if USE(CG)
-#include "GraphicsContextPlatformPrivateCG.h"
-#endif
-
 namespace WebCore {
 namespace DisplayList {
-
-// Should match RenderTheme::platformFocusRingWidth()
-static const float platformFocusRingWidth = 3;
 
 void Save::apply(GraphicsContext& context) const
 {
@@ -102,7 +95,7 @@ SetState::SetState(const GraphicsContextState& state)
 
 void SetState::apply(GraphicsContext& context)
 {
-    context.updateState(m_state);
+    context.mergeLastChanges(m_state);
 }
 
 void SetLineCap::apply(GraphicsContext& context) const
@@ -140,11 +133,6 @@ void ClipOut::apply(GraphicsContext& context) const
     context.clipOut(m_rect);
 }
 
-NO_RETURN_DUE_TO_ASSERT void ClipToImageBuffer::apply(GraphicsContext&) const
-{
-    ASSERT_NOT_REACHED();
-}
-
 void ClipToImageBuffer::apply(GraphicsContext& context, WebCore::ImageBuffer& imageBuffer) const
 {
     context.clipToImageBuffer(imageBuffer, m_destinationRect);
@@ -167,27 +155,20 @@ DrawFilteredImageBuffer::DrawFilteredImageBuffer(std::optional<RenderingResource
 {
 }
 
-NO_RETURN_DUE_TO_ASSERT void DrawFilteredImageBuffer::apply(GraphicsContext&) const
-{
-    ASSERT_NOT_REACHED();
-}
-
 void DrawFilteredImageBuffer::apply(GraphicsContext& context, ImageBuffer* sourceImage, FilterResults& results)
 {
     context.drawFilteredImageBuffer(sourceImage, m_sourceImageRect, m_filter, results);
 }
 
-DrawGlyphs::DrawGlyphs(RenderingResourceIdentifier fontIdentifier, PositionedGlyphs&& positionedGlyphs, const FloatRect& bounds)
+DrawGlyphs::DrawGlyphs(RenderingResourceIdentifier fontIdentifier, PositionedGlyphs&& positionedGlyphs)
     : m_fontIdentifier(fontIdentifier)
     , m_positionedGlyphs(WTFMove(positionedGlyphs))
-    , m_bounds(bounds)
 {
 }
 
 DrawGlyphs::DrawGlyphs(const Font& font, const GlyphBufferGlyph* glyphs, const GlyphBufferAdvance* advances, unsigned count, const FloatPoint& localAnchor, FontSmoothingMode smoothingMode)
     : m_fontIdentifier(font.renderingResourceIdentifier())
     , m_positionedGlyphs { { glyphs, count }, { advances, count }, localAnchor, smoothingMode }
-    , m_bounds(m_positionedGlyphs.computeBounds(font))
 {
 }
 
@@ -201,24 +182,14 @@ void DrawDecomposedGlyphs::apply(GraphicsContext& context, const Font& font, con
     return context.drawDecomposedGlyphs(font, decomposedGlyphs);
 }
 
-NO_RETURN_DUE_TO_ASSERT void DrawImageBuffer::apply(GraphicsContext&) const
-{
-    ASSERT_NOT_REACHED();
-}
-
 void DrawImageBuffer::apply(GraphicsContext& context, WebCore::ImageBuffer& imageBuffer) const
 {
     context.drawImageBuffer(imageBuffer, m_destinationRect, m_srcRect, m_options);
 }
 
-NO_RETURN_DUE_TO_ASSERT void DrawNativeImage::apply(GraphicsContext&) const
-{
-    ASSERT_NOT_REACHED();
-}
-
 void DrawNativeImage::apply(GraphicsContext& context, NativeImage& image) const
 {
-    context.drawNativeImage(image, m_imageSize, m_destinationRect, m_srcRect, m_options);
+    context.drawNativeImageInternal(image, m_imageSize, m_destinationRect, m_srcRect, m_options);
 }
 
 void DrawSystemImage::apply(GraphicsContext& context) const
@@ -235,11 +206,6 @@ DrawPattern::DrawPattern(RenderingResourceIdentifier imageIdentifier, const Floa
     , m_spacing(spacing)
     , m_options(options)
 {
-}
-
-NO_RETURN_DUE_TO_ASSERT void DrawPattern::apply(GraphicsContext&) const
-{
-    ASSERT_NOT_REACHED();
 }
 
 void DrawPattern::apply(GraphicsContext& context, SourceImage& sourceImage) const
@@ -262,19 +228,12 @@ void DrawRect::apply(GraphicsContext& context) const
     context.drawRect(m_rect, m_borderThickness);
 }
 
-std::optional<FloatRect> DrawLine::localBounds(const GraphicsContext&) const
-{
-    FloatRect bounds;
-    bounds.fitToPoints(m_point1, m_point2);
-    return bounds;
-}
-
 void DrawLine::apply(GraphicsContext& context) const
 {
     context.drawLine(m_point1, m_point2);
 }
 
-DrawLinesForText::DrawLinesForText(const FloatPoint& blockLocation, const FloatSize& localAnchor, float thickness, const DashArray& widths, bool printing, bool doubleLines, StrokeStyle style)
+DrawLinesForText::DrawLinesForText(const FloatPoint& blockLocation, const FloatSize& localAnchor, const DashArray& widths, float thickness, bool printing, bool doubleLines, StrokeStyle style)
     : m_blockLocation(blockLocation)
     , m_localAnchor(localAnchor)
     , m_widths(widths)
@@ -290,29 +249,9 @@ void DrawLinesForText::apply(GraphicsContext& context) const
     context.drawLinesForText(point(), m_thickness, m_widths, m_printing, m_doubleLines, m_style);
 }
 
-std::optional<FloatRect> DrawLinesForText::localBounds(const GraphicsContext&) const
-{
-    // This function needs to return a value equal to or enclosing what GraphicsContext::computeLineBoundsAndAntialiasingModeForText() returns.
-
-    if (!m_widths.size())
-        return FloatRect();
-
-    FloatRect result(point(), FloatSize(m_widths.last(), m_thickness));
-    result.inflate(1); // Account for pixel snapping. FIXME: This isn't perfect, as it doesn't take the CTM into account.
-    return result;
-}
-
 void DrawDotsForDocumentMarker::apply(GraphicsContext& context) const
 {
-    context.drawDotsForDocumentMarker(m_rect, {
-        static_cast<DocumentMarkerLineStyle::Mode>(m_styleMode),
-        m_styleShouldUseDarkAppearance,
-    });
-}
-
-std::optional<FloatRect> DrawDotsForDocumentMarker::localBounds(const GraphicsContext&) const
-{
-    return m_rect;
+    context.drawDotsForDocumentMarker(m_rect, m_style);
 }
 
 void DrawEllipse::apply(GraphicsContext& context) const
@@ -327,36 +266,12 @@ void DrawPath::apply(GraphicsContext& context) const
 
 void DrawFocusRingPath::apply(GraphicsContext& context) const
 {
-    context.drawFocusRing(m_path, m_width, m_offset, m_color);
-}
-
-std::optional<FloatRect> DrawFocusRingPath::localBounds(const GraphicsContext&) const
-{
-    FloatRect result = m_path.fastBoundingRect();
-    result.inflate(platformFocusRingWidth);
-    return result;
-}
-
-DrawFocusRingRects::DrawFocusRingRects(const Vector<FloatRect>& rects, float width, float offset, const Color& color)
-    : m_rects(rects)
-    , m_width(width)
-    , m_offset(offset)
-    , m_color(color)
-{
+    context.drawFocusRing(m_path, m_outlineWidth, m_color);
 }
 
 void DrawFocusRingRects::apply(GraphicsContext& context) const
 {
-    context.drawFocusRing(m_rects, m_width, m_offset, m_color);
-}
-
-std::optional<FloatRect> DrawFocusRingRects::localBounds(const GraphicsContext&) const
-{
-    FloatRect result;
-    for (auto& rect : m_rects)
-        result.unite(rect);
-    result.inflate(platformFocusRingWidth);
-    return result;
+    context.drawFocusRing(m_rects, m_outlineOffset, m_outlineWidth, m_color);
 }
 
 void FillRect::apply(GraphicsContext& context) const
@@ -372,6 +287,12 @@ void FillRectWithColor::apply(GraphicsContext& context) const
 FillRectWithGradient::FillRectWithGradient(const FloatRect& rect, Gradient& gradient)
     : m_rect(rect)
     , m_gradient(gradient)
+{
+}
+
+FillRectWithGradient::FillRectWithGradient(FloatRect&& rect, Ref<Gradient>&& gradient)
+    : m_rect(WTFMove(rect))
+    , m_gradient(WTFMove(gradient))
 {
 }
 
@@ -435,35 +356,11 @@ PaintFrameForMedia::PaintFrameForMedia(MediaPlayer& player, const FloatRect& des
     , m_destination(destination)
 {
 }
-
-NO_RETURN_DUE_TO_ASSERT void PaintFrameForMedia::apply(GraphicsContext&) const
-{
-    // Should be handled by the delegate.
-    ASSERT_NOT_REACHED();
-}
-
 #endif
-
-std::optional<FloatRect> StrokeRect::localBounds(const GraphicsContext&) const
-{
-    FloatRect bounds = m_rect;
-    bounds.expand(m_lineWidth, m_lineWidth);
-    return bounds;
-}
 
 void StrokeRect::apply(GraphicsContext& context) const
 {
     context.strokeRect(m_rect, m_lineWidth);
-}
-
-std::optional<FloatRect> StrokePath::localBounds(const GraphicsContext& context) const
-{
-    // FIXME: Need to take stroke thickness into account correctly, via CGPathByStrokingPath().
-    float strokeThickness = context.strokeThickness();
-
-    FloatRect bounds = m_path.fastBoundingRect();
-    bounds.expand(strokeThickness, strokeThickness);
-    return bounds;
 }
 
 void StrokePath::apply(GraphicsContext& context) const
@@ -471,28 +368,9 @@ void StrokePath::apply(GraphicsContext& context) const
     context.strokePath(m_path);
 }
 
-std::optional<FloatRect> StrokeEllipse::localBounds(const GraphicsContext& context) const
-{
-    float strokeThickness = context.strokeThickness();
-
-    FloatRect bounds = m_rect;
-    bounds.expand(strokeThickness, strokeThickness);
-    return bounds;
-}
-
 void StrokeEllipse::apply(GraphicsContext& context) const
 {
     context.strokeEllipse(m_rect);
-}
-
-std::optional<FloatRect> StrokeLine::localBounds(const GraphicsContext& context) const
-{
-    float strokeThickness = context.strokeThickness();
-
-    FloatRect bounds;
-    bounds.fitToPoints(start(), end());
-    bounds.expand(strokeThickness, strokeThickness);
-    return bounds;
 }
 
 void StrokeLine::apply(GraphicsContext& context) const
@@ -509,44 +387,14 @@ void StrokeLine::apply(GraphicsContext& context) const
 
 #if ENABLE(INLINE_PATH_DATA)
 
-std::optional<FloatRect> StrokeArc::localBounds(const GraphicsContext& context) const
-{
-    // FIXME: Need to take stroke thickness into account correctly, via CGPathByStrokingPath().
-    float strokeThickness = context.strokeThickness();
-
-    auto bounds = path().fastBoundingRect();
-    bounds.expand(strokeThickness, strokeThickness);
-    return bounds;
-}
-
 void StrokeArc::apply(GraphicsContext& context) const
 {
     context.strokePath(path());
 }
 
-std::optional<FloatRect> StrokeQuadCurve::localBounds(const GraphicsContext& context) const
-{
-    // FIXME: Need to take stroke thickness into account correctly, via CGPathByStrokingPath().
-    float strokeThickness = context.strokeThickness();
-
-    auto bounds = path().fastBoundingRect();
-    bounds.expand(strokeThickness, strokeThickness);
-    return bounds;
-}
-
 void StrokeQuadCurve::apply(GraphicsContext& context) const
 {
     context.strokePath(path());
-}
-
-std::optional<FloatRect> StrokeBezierCurve::localBounds(const GraphicsContext& context) const
-{
-    // FIXME: Need to take stroke thickness into account correctly, via CGPathByStrokingPath().
-    float strokeThickness = context.strokeThickness();
-
-    auto bounds = path().fastBoundingRect();
-    bounds.expand(strokeThickness, strokeThickness);
-    return bounds;
 }
 
 void StrokeBezierCurve::apply(GraphicsContext& context) const
@@ -559,6 +407,19 @@ void StrokeBezierCurve::apply(GraphicsContext& context) const
 void ClearRect::apply(GraphicsContext& context) const
 {
     context.clearRect(m_rect);
+}
+
+DrawControlPart::DrawControlPart(ControlPart& part, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle& style)
+    : m_part(part)
+    , m_borderRect(borderRect)
+    , m_deviceScaleFactor(deviceScaleFactor)
+    , m_style(style)
+{
+}
+
+void DrawControlPart::apply(GraphicsContext& context)
+{
+    context.drawControlPart(m_part, m_borderRect, m_deviceScaleFactor, m_style);
 }
 
 void BeginTransparencyLayer::apply(GraphicsContext& context) const
@@ -656,6 +517,7 @@ TextStream& operator<<(TextStream& ts, ItemType type)
     case ItemType::StrokePath: ts << "stroke-path"; break;
     case ItemType::StrokeEllipse: ts << "stroke-ellipse"; break;
     case ItemType::ClearRect: ts << "clear-rect"; break;
+    case ItemType::DrawControlPart: ts << "draw-control-part"; break;
     case ItemType::BeginTransparencyLayer: ts << "begin-transparency-layer"; break;
     case ItemType::EndTransparencyLayer: ts << "end-transparency-layer"; break;
 #if USE(CG)
@@ -775,6 +637,7 @@ void dumpItem(TextStream& ts, const DrawGlyphs& item, OptionSet<AsTextFlag>)
     // FIXME: dump more stuff.
     ts.dumpProperty("local-anchor", item.localAnchor());
     ts.dumpProperty("anchor-point", item.anchorPoint());
+    ts.dumpProperty("font-smoothing-mode", item.fontSmoothingMode());
     ts.dumpProperty("length", item.glyphs().size());
 }
 
@@ -861,16 +724,15 @@ void dumpItem(TextStream& ts, const DrawPath& item, OptionSet<AsTextFlag>)
 void dumpItem(TextStream& ts, const DrawFocusRingPath& item, OptionSet<AsTextFlag>)
 {
     ts.dumpProperty("path", item.path());
-    ts.dumpProperty("width", item.width());
-    ts.dumpProperty("offset", item.offset());
+    ts.dumpProperty("outline-width", item.outlineWidth());
     ts.dumpProperty("color", item.color());
 }
 
 void dumpItem(TextStream& ts, const DrawFocusRingRects& item, OptionSet<AsTextFlag>)
 {
     ts.dumpProperty("rects", item.rects());
-    ts.dumpProperty("width", item.width());
-    ts.dumpProperty("offset", item.offset());
+    ts.dumpProperty("outline-offset", item.outlineOffset());
+    ts.dumpProperty("outline-width", item.outlineWidth());
     ts.dumpProperty("color", item.color());
 }
 
@@ -997,6 +859,14 @@ void dumpItem(TextStream& ts, const StrokeLine& item, OptionSet<AsTextFlag>)
 void dumpItem(TextStream& ts, const ClearRect& item, OptionSet<AsTextFlag>)
 {
     ts.dumpProperty("rect", item.rect());
+}
+
+void dumpItem(TextStream& ts, const DrawControlPart& item, OptionSet<AsTextFlag>)
+{
+    ts.dumpProperty("type", item.type());
+    ts.dumpProperty("border-rect", item.borderRect());
+    ts.dumpProperty("device-scale-factor", item.deviceScaleFactor());
+    ts.dumpProperty("style", item.style());
 }
 
 void dumpItem(TextStream& ts, const BeginTransparencyLayer& item, OptionSet<AsTextFlag>)
@@ -1181,6 +1051,9 @@ void dumpItemHandle(TextStream& ts, const ItemHandle& item, OptionSet<AsTextFlag
         break;
     case ItemType::ClearRect:
         dumpItem(ts, item.get<ClearRect>(), flags);
+        break;
+    case ItemType::DrawControlPart:
+        dumpItem(ts, item.get<DrawControlPart>(), flags);
         break;
     case ItemType::BeginTransparencyLayer:
         dumpItem(ts, item.get<BeginTransparencyLayer>(), flags);

@@ -51,9 +51,14 @@ ScrollingTreeFrameScrollingNodeRemoteIOS::~ScrollingTreeFrameScrollingNodeRemote
 {
 }
 
+ScrollingTreeScrollingNodeDelegateIOS* ScrollingTreeFrameScrollingNodeRemoteIOS::delegate() const
+{
+    return static_cast<ScrollingTreeScrollingNodeDelegateIOS*>(m_delegate.get());
+}
+
 UIScrollView *ScrollingTreeFrameScrollingNodeRemoteIOS::scrollView() const
 {
-    return m_scrollingNodeDelegate ? m_scrollingNodeDelegate->scrollView() : nil;
+    return m_delegate ? delegate()->scrollView() : nil;
 }
 
 void ScrollingTreeFrameScrollingNodeRemoteIOS::commitStateBeforeChildren(const ScrollingStateNode& stateNode)
@@ -73,20 +78,20 @@ void ScrollingTreeFrameScrollingNodeRemoteIOS::commitStateBeforeChildren(const S
 
     if (stateNode.hasChangedProperty(ScrollingStateNode::Property::ScrollContainerLayer)) {
         if (scrollContainerLayer())
-            m_scrollingNodeDelegate = makeUnique<ScrollingTreeScrollingNodeDelegateIOS>(*this);
+            m_delegate = makeUnique<ScrollingTreeScrollingNodeDelegateIOS>(*this);
         else
-            m_scrollingNodeDelegate = nullptr;
+            m_delegate = nullptr;
     }
 
-    if (m_scrollingNodeDelegate)
-        m_scrollingNodeDelegate->commitStateBeforeChildren(downcast<ScrollingStateScrollingNode>(stateNode));
+    if (m_delegate)
+        delegate()->commitStateBeforeChildren(downcast<ScrollingStateScrollingNode>(stateNode));
 }
 
 void ScrollingTreeFrameScrollingNodeRemoteIOS::commitStateAfterChildren(const ScrollingStateNode& stateNode)
 {
     const auto& scrollingStateNode = downcast<ScrollingStateFrameScrollingNode>(stateNode);
-    if (m_scrollingNodeDelegate)
-        m_scrollingNodeDelegate->commitStateAfterChildren(scrollingStateNode);
+    if (m_delegate)
+        delegate()->commitStateAfterChildren(scrollingStateNode);
 
     ScrollingTreeFrameScrollingNode::commitStateAfterChildren(stateNode);
 }
@@ -95,7 +100,7 @@ FloatPoint ScrollingTreeFrameScrollingNodeRemoteIOS::minimumScrollPosition() con
 {
     FloatPoint position = ScrollableArea::scrollPositionFromOffset(FloatPoint(), toFloatSize(scrollOrigin()));
     
-    if (isRootNode() && scrollingTree().scrollPinningBehavior() == PinToBottom)
+    if (isRootNode() && scrollingTree().scrollPinningBehavior() == ScrollPinningBehavior::PinToBottom)
         position.setY(maximumScrollPosition().y());
 
     return position;
@@ -106,7 +111,7 @@ FloatPoint ScrollingTreeFrameScrollingNodeRemoteIOS::maximumScrollPosition() con
     FloatPoint position = ScrollableArea::scrollPositionFromOffset(FloatPoint(totalContentsSizeForRubberBand() - scrollableAreaSize()), toFloatSize(scrollOrigin()));
     position = position.expandedTo(FloatPoint());
 
-    if (isRootNode() && scrollingTree().scrollPinningBehavior() == PinToTop)
+    if (isRootNode() && scrollingTree().scrollPinningBehavior() == ScrollPinningBehavior::PinToTop)
         position.setY(minimumScrollPosition().y());
 
     return position;
@@ -114,8 +119,8 @@ FloatPoint ScrollingTreeFrameScrollingNodeRemoteIOS::maximumScrollPosition() con
 
 void ScrollingTreeFrameScrollingNodeRemoteIOS::repositionScrollingLayers()
 {
-    if (m_scrollingNodeDelegate) {
-        m_scrollingNodeDelegate->repositionScrollingLayers();
+    if (m_delegate) {
+        delegate()->repositionScrollingLayers();
         return;
     }
 
@@ -141,27 +146,6 @@ void ScrollingTreeFrameScrollingNodeRemoteIOS::repositionRelatedLayers()
             [m_footerLayer setPosition:FloatPoint(layoutViewport.x(), totalContentsSize().height() - footerHeight())];
     }
     END_BLOCK_OBJC_EXCEPTIONS
-}
-
-bool ScrollingTreeFrameScrollingNodeRemoteIOS::startAnimatedScrollToPosition(FloatPoint destinationPosition)
-{
-    // Main frame animated scrolls are handled via PageClientImpl::requestScroll().
-    if (!m_scrollingNodeDelegate)
-        return false;
-
-    bool started = m_scrollingNodeDelegate->startAnimatedScrollToPosition(destinationPosition);
-    if (started)
-        willStartAnimatedScroll();
-    return started;
-}
-
-void ScrollingTreeFrameScrollingNodeRemoteIOS::stopAnimatedScroll()
-{
-    // Main frame animated scrolls are handled via PageClientImpl::requestScroll().
-    if (!m_scrollingNodeDelegate)
-        return;
-
-    m_scrollingNodeDelegate->stopAnimatedScroll();
 }
 
 }

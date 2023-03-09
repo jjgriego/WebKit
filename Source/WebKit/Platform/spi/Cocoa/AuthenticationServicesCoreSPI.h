@@ -27,13 +27,11 @@
 
 #if HAVE(ASC_AUTH_UI) || HAVE(UNIFIED_ASC_AUTH_UI)
 
-#if USE(APPLE_INTERNAL_SDK) && HAVE(ASC_WEBKIT_SPI)
-#import <AuthenticationServicesCore/ASCWebKitSPISupport.h>
-#else
 @interface ASCWebKitSPISupport : NSObject
 @property (class, nonatomic) BOOL shouldUseAlternateCredentialStore;
++ (BOOL)arePasskeysDisallowedForRelyingParty:(nonnull NSString *)relyingParty;
++ (BOOL)canCurrentProcessAccessPasskeysForRelyingParty:(nonnull NSString *)relyingParty;
 @end
-#endif
 
 // FIXME: Most of the forward declarations below should be behind a non-Apple-internal SDK compile-time flag.
 // When building with an Apple-internal SDK, we should instead import the private headers directly from the
@@ -248,11 +246,15 @@ typedef NS_ENUM(NSInteger, ASCredentialRequestStyle) {
     ASCredentialRequestStyleAutoFill,
 };
 
-@class ASCGlobalFrameIdentifier;
+@class ASGlobalFrameIdentifier;
 
-@interface ASCGlobalFrameIdentifier : NSObject <NSSecureCoding>
-@property (nonatomic, copy) NSNumber *webPageID;
-@property (nonatomic, copy) NSNumber *webFrameID;
+@interface ASGlobalFrameIdentifier : NSObject <NSCopying, NSSecureCoding>
++ (instancetype)new NS_UNAVAILABLE;
+- (instancetype)init NS_UNAVAILABLE;
+
+- (instancetype)initWithPageID:(NSNumber *)webPageID frameID:(NSNumber *)webFrameID;
+@property (nonatomic, readonly) NSNumber *webPageID;
+@property (nonatomic, readonly) NSNumber *webFrameID;
 @end
 
 @interface ASCCredentialRequestContext : NSObject <NSSecureCoding>
@@ -273,7 +275,7 @@ typedef NS_ENUM(NSInteger, ASCredentialRequestStyle) {
 
 @property (nonatomic) ASCredentialRequestStyle requestStyle;
 
-@property (nonatomic, nullable, copy) ASCGlobalFrameIdentifier *globalFrameID;
+@property (nonatomic, nullable, copy) ASGlobalFrameIdentifier *globalFrameID;
 @end
 
 @protocol ASCCredentialProtocol <NSObject, NSSecureCoding>
@@ -294,6 +296,7 @@ typedef NS_ENUM(NSInteger, ASCredentialRequestStyle) {
 @property (nonatomic, copy, readonly) NSData *rawClientDataJSON;
 @property (nonatomic, copy) NSArray<NSNumber *> *transports;
 @property (nonatomic, copy, nullable) NSData *extensionOutputsCBOR;
+@property (nonatomic, copy, readonly) NSString *attachment;
 
 + (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
@@ -310,6 +313,7 @@ typedef NS_ENUM(NSInteger, ASCredentialRequestStyle) {
 @property (nonatomic, copy, readonly) NSData *attestationObject;
 @property (nonatomic, copy) NSArray<NSNumber *> *transports;
 @property (nonatomic, copy, readonly, nullable) NSData *extensionOutputsCBOR;
+@property (nonatomic, copy, readonly) NSString *attachment;
 
 @end
 
@@ -326,6 +330,7 @@ typedef NS_ENUM(NSInteger, ASCredentialRequestStyle) {
 @property (nonatomic, copy, readonly) NSData *signature;
 @property (nonatomic, copy, readonly, nullable) NSData *userHandle;
 @property (nonatomic, copy, readonly, nullable) NSData *extensionOutputsCBOR;
+@property (nonatomic, copy, readonly) NSString *attachment;
 
 @end
 
@@ -340,6 +345,7 @@ typedef NS_ENUM(NSInteger, ASCredentialRequestStyle) {
 @property (nonatomic, copy, readonly, nullable) NSData *userHandle;
 @property (nonatomic, copy, readonly) NSData *rawClientDataJSON;
 @property (nonatomic, copy, readonly, nullable) NSData *extensionOutputsCBOR;
+@property (nonatomic, copy, readonly) NSString *attachment;
 
 @end
 

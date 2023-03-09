@@ -30,6 +30,7 @@
 #include "LegacyWebArchive.h"
 
 #include "CachedResource.h"
+#include "DeprecatedGlobalSettings.h"
 #include "Document.h"
 #include "DocumentLoader.h"
 #include "Editor.h"
@@ -48,7 +49,6 @@
 #include "Logging.h"
 #include "MemoryCache.h"
 #include "Page.h"
-#include "RuntimeEnabledFeatures.h"
 #include "SerializedAttachmentData.h"
 #include "Settings.h"
 #include "SharedBuffer.h"
@@ -446,7 +446,10 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::create(Frame& frame)
 
     Vector<Ref<LegacyWebArchive>> subframeArchives;
     for (unsigned i = 0; i < frame.tree().childCount(); ++i) {
-        if (auto childFrameArchive = create(*frame.tree().child(i)))
+        auto* localChild = dynamicDowncast<LocalFrame>(frame.tree().child(i));
+        if (!localChild)
+            continue;
+        if (auto childFrameArchive = create(*localChild))
             subframeArchives.append(childFrameArchive.releaseNonNull());
     }
 
@@ -470,7 +473,7 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::create(const SimpleRange& range)
 
 static void addSubresourcesForAttachmentElementsIfNecessary(Frame& frame, const Vector<Node*>& nodes, Vector<Ref<ArchiveResource>>& subresources)
 {
-    if (!RuntimeEnabledFeatures::sharedFeatures().attachmentElementEnabled())
+    if (!DeprecatedGlobalSettings::attachmentElementEnabled())
         return;
 
     Vector<String> identifiers;
@@ -524,7 +527,7 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::create(const String& markupString, Fr
         Node& node = *nodePtr;
         Frame* childFrame;
         if ((is<HTMLFrameElementBase>(node) || is<HTMLObjectElement>(node))
-            && (childFrame = downcast<HTMLFrameOwnerElement>(node).contentFrame())) {
+            && (childFrame = dynamicDowncast<LocalFrame>(downcast<HTMLFrameOwnerElement>(node).contentFrame()))) {
             if (frameFilter && !frameFilter(*childFrame))
                 continue;
             if (auto subframeArchive = create(*childFrame->document(), WTFMove(frameFilter)))
@@ -596,7 +599,7 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::createFromSelection(Frame* frame)
     builder.append(documentTypeString(*document));
 
     Vector<Node*> nodeList;
-    builder.append(serializePreservingVisualAppearance(frame->selection().selection(), ResolveURLs::No, SerializeComposedTree::Yes, &nodeList));
+    builder.append(serializePreservingVisualAppearance(frame->selection().selection(), ResolveURLs::No, SerializeComposedTree::Yes, IgnoreUserSelectNone::Yes, &nodeList));
 
     auto archive = create(builder.toString(), *frame, nodeList, nullptr);
     if (!archive)

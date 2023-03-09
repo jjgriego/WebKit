@@ -187,7 +187,7 @@ TEST(MediaLoading, RangeRequestSynthesisWithoutContentLength)
     EXPECT_EQ(totalRequests, 2u);
 }
 
-TEST(MediaLoading, CaptivePortalHLS)
+TEST(MediaLoading, LockdownModeHLS)
 {
     if (!PAL::canLoad_AVFoundation_AVURLAssetAllowableTypeCategoriesKey())
         return;
@@ -238,7 +238,7 @@ TEST(MediaLoading, CaptivePortalHLS)
 
     auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     [configuration setMediaTypesRequiringUserActionForPlayback:WKAudiovisualMediaTypeNone];
-    [[configuration defaultWebpagePreferences] _setCaptivePortalModeEnabled:YES];
+    configuration.get().defaultWebpagePreferences.lockdownModeEnabled = YES;
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 300, 300) configuration:configuration.get() addToWindow:YES]);
     [webView loadRequest:server.request()];
     EXPECT_WK_STREQ([webView _test_waitForAlert], "playing");

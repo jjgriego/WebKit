@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if ENABLE(CSS_TYPED_OM)
-
 #include "CSSMathValue.h"
 
 namespace WebCore {
@@ -38,11 +36,14 @@ public:
     CSSNumericValue& value() { return m_value.get(); }
     const CSSNumericValue& value() const { return m_value.get(); }
 
+    RefPtr<CSSCalcExpressionNode> toCalcExpressionNode() const final;
+
 private:
     CSSMathOperator getOperator() const final { return CSSMathOperator::Invert; }
     CSSStyleValueType getType() const final { return CSSStyleValueType::CSSMathInvert; }
     void serialize(StringBuilder&, OptionSet<SerializationArguments>) const final;
     std::optional<SumValue> toSumValue() const final;
+    bool equals(const CSSNumericValue&) const final;
 
     CSSMathInvert(CSSNumberish&&);
     Ref<CSSNumericValue> m_value;
@@ -55,5 +56,3 @@ static bool isType(const WebCore::CSSStyleValue& styleValue) { return styleValue
 static bool isType(const WebCore::CSSNumericValue& numericValue) { return numericValue.getType() == WebCore::CSSStyleValueType::CSSMathInvert; }
 static bool isType(const WebCore::CSSMathValue& mathValue) { return mathValue.getType() == WebCore::CSSStyleValueType::CSSMathInvert; }
 SPECIALIZE_TYPE_TRAITS_END()
-
-#endif

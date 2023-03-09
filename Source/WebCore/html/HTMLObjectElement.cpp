@@ -28,7 +28,8 @@
 #include "CSSValueKeywords.h"
 #include "CachedImage.h"
 #include "DOMFormData.h"
-#include "ElementIterator.h"
+#include "ElementChildIteratorInlines.h"
+#include "ElementName.h"
 #include "Frame.h"
 #include "FrameLoader.h"
 #include "HTMLDocument.h"
@@ -64,7 +65,7 @@ using namespace HTMLNames;
 
 inline HTMLObjectElement::HTMLObjectElement(const QualifiedName& tagName, Document& document, HTMLFormElement* form)
     : HTMLPlugInImageElement(tagName, document)
-    , FormAssociatedElement(form)
+    , FormListedElement(form)
 {
     ASSERT(hasTagName(objectTag));
 }
@@ -102,28 +103,33 @@ void HTMLObjectElement::collectPresentationalHintsForAttribute(const QualifiedNa
 void HTMLObjectElement::parseAttribute(const QualifiedName& name, const AtomString& value)
 {
     bool invalidateRenderer = false;
+    bool needsWidgetUpdate = false;
 
-    if (name == formAttr)
-        formAttributeChanged();
-    else if (name == typeAttr) {
+    if (name == typeAttr) {
         m_serviceType = value.string().left(value.find(';')).convertToASCIILowercase();
         invalidateRenderer = !hasAttributeWithoutSynchronization(classidAttr);
-        setNeedsWidgetUpdate(true);
+        needsWidgetUpdate = true;
     } else if (name == dataAttr) {
         m_url = stripLeadingAndTrailingHTMLSpaces(value);
         invalidateRenderer = !hasAttributeWithoutSynchronization(classidAttr);
-        setNeedsWidgetUpdate(true);
+        needsWidgetUpdate = true;
         updateImageLoaderWithNewURLSoon();
     } else if (name == classidAttr) {
         invalidateRenderer = true;
-        setNeedsWidgetUpdate(true);
-    } else
+        needsWidgetUpdate = true;
+    } else {
         HTMLPlugInImageElement::parseAttribute(name, value);
+        FormListedElement::parseAttribute(name, value);
+    }
+
+    if (needsWidgetUpdate) {
+        setNeedsWidgetUpdate(true);
+        m_useFallbackContent = false;
+    }
 
     if (!invalidateRenderer || !isConnected() || !renderer())
         return;
 
-    m_useFallbackContent = false;
     scheduleUpdateForAfterStyleResolution();
     invalidateStyleAndRenderersForSubtree();
 }
@@ -289,7 +295,7 @@ void HTMLObjectElement::updateWidget(CreatePlugins createPlugins)
 Node::InsertedIntoAncestorResult HTMLObjectElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
     HTMLPlugInImageElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
-    FormAssociatedElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    FormListedElement::elementInsertedIntoAncestor(*this, insertionType);
     return InsertedIntoAncestorResult::NeedsPostInsertionCallback;
 }
 
@@ -301,7 +307,7 @@ void HTMLObjectElement::didFinishInsertingNode()
 void HTMLObjectElement::removedFromAncestor(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
     HTMLPlugInImageElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
-    FormAssociatedElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
+    FormListedElement::elementRemovedFromAncestor(*this, removalType);
 }
 
 void HTMLObjectElement::childrenChanged(const ChildChange& change)
@@ -455,7 +461,7 @@ void HTMLObjectElement::addSubresourceAttributeURLs(ListHashSet<URL>& urls) cons
 
 void HTMLObjectElement::didMoveToNewDocument(Document& oldDocument, Document& newDocument)
 {
-    FormAssociatedElement::didMoveToNewDocument(oldDocument);
+    FormListedElement::didMoveToNewDocument();
     HTMLPlugInImageElement::didMoveToNewDocument(oldDocument, newDocument);
 }
 

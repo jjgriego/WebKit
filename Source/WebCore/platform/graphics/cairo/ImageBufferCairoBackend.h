@@ -37,12 +37,9 @@ namespace WebCore {
 
 class ImageBufferCairoBackend : public ImageBufferBackend {
 public:
-    void clipToMask(GraphicsContext&, const FloatRect& destRect) override;
+    WEBCORE_EXPORT void clipToMask(GraphicsContext&, const FloatRect& destRect) override;
 
-    void transformToColorSpace(const DestinationColorSpace&) override;
-
-    String toDataURL(const String& mimeType, std::optional<double> quality, PreserveResolution) const override;
-    Vector<uint8_t> toData(const String& mimeType, std::optional<double> quality) const override;
+    WEBCORE_EXPORT void transformToColorSpace(const DestinationColorSpace&) override;
 
 protected:
     using ImageBufferBackend::ImageBufferBackend;

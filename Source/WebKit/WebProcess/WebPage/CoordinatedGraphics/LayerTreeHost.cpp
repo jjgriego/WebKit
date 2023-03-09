@@ -34,12 +34,14 @@
 #include "DrawingArea.h"
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"
+#include <WebCore/AsyncScrollingCoordinator.h>
 #include <WebCore/Chrome.h>
 #include <WebCore/Frame.h>
 #include <WebCore/FrameView.h>
 #include <WebCore/PageOverlayController.h>
 #include <WebCore/RenderLayerBacking.h>
 #include <WebCore/RenderView.h>
+#include <WebCore/ThreadedScrollingTree.h>
 
 #if USE(GLIB_EVENT_LOOP)
 #include <wtf/glib/RunLoopSourcePriority.h>
@@ -50,12 +52,10 @@ using namespace WebCore;
 
 LayerTreeHost::LayerTreeHost(WebPage& webPage)
     : m_webPage(webPage)
-    , m_compositorClient(*this)
     , m_surface(AcceleratedSurface::create(webPage, *this))
     , m_viewportController(webPage.size())
     , m_layerFlushTimer(RunLoop::main(), this, &LayerTreeHost::layerFlushTimerFired)
     , m_coordinator(webPage, *this)
-    , m_displayID(std::numeric_limits<uint32_t>::max() - m_webPage.identifier().toUInt64())
 {
 #if USE(GLIB_EVENT_LOOP)
     m_layerFlushTimer.setPriority(RunLoopSourcePriority::LayerFlushTimer);
@@ -77,7 +77,9 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage)
     if (m_surface->shouldPaintMirrored())
         paintFlags |= TextureMapper::PaintingMirrored;
 
-    m_compositor = ThreadedCompositor::create(m_compositorClient, m_compositorClient, m_displayID, scaledSize, scaleFactor, paintFlags);
+    ASSERT(m_webPage.drawingArea());
+    m_displayID = std::numeric_limits<uint32_t>::max() - m_webPage.drawingArea()->identifier().toUInt64();
+    m_compositor = ThreadedCompositor::create(*this, *this, m_displayID, scaledSize, scaleFactor, paintFlags);
     m_layerTreeContext.contextID = m_surface->surfaceID();
 
     didChangeViewport();
@@ -299,7 +301,10 @@ void LayerTreeHost::didChangeViewport()
     // When using non overlay scrollbars, the contents size doesn't include the scrollbars, but we need to include them
     // in the visible area used by the compositor to ensure that the scrollbar layers are also updated.
     // See https://bugs.webkit.org/show_bug.cgi?id=160450.
-    FrameView* view = m_webPage.corePage()->mainFrame().view();
+    auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(m_webPage.corePage()->mainFrame());
+    FrameView* view = localMainFrame ? localMainFrame->view() : nullptr;
+    if (!view)
+        return;
     Scrollbar* scrollbar = view->verticalScrollbar();
     if (scrollbar && !scrollbar->isOverlayScrollbar())
         visibleRect.expand(scrollbar->width(), 0);
@@ -367,7 +372,8 @@ void LayerTreeHost::deviceOrPageScaleFactorChanged()
 
 RefPtr<DisplayRefreshMonitor> LayerTreeHost::createDisplayRefreshMonitor(PlatformDisplayID displayID)
 {
-    return m_compositor->displayRefreshMonitor(displayID);
+    ASSERT(m_displayID == displayID);
+    return Ref { m_compositor->displayRefreshMonitor() };
 }
 
 void LayerTreeHost::didFlushRootLayer(const FloatRect& visibleContentRect)
@@ -377,7 +383,7 @@ void LayerTreeHost::didFlushRootLayer(const FloatRect& visibleContentRect)
         m_viewOverlayRootLayer->flushCompositingState(visibleContentRect);
 }
 
-void LayerTreeHost::commitSceneState(const CoordinatedGraphicsState& state)
+void LayerTreeHost::commitSceneState(const RefPtr<Nicosia::Scene>& state)
 {
     m_isWaitingForRenderer = true;
     m_compositor->updateSceneState(state);
@@ -404,6 +410,11 @@ void LayerTreeHost::didDestroyGLContext()
     m_surface->finalize();
 }
 
+void LayerTreeHost::resize(const IntSize& size)
+{
+    m_surface->clientResize(size);
+}
+
 void LayerTreeHost::willRenderFrame()
 {
     m_surface->willRenderFrame();
@@ -412,6 +423,18 @@ void LayerTreeHost::willRenderFrame()
 void LayerTreeHost::didRenderFrame()
 {
     m_surface->didRenderFrame();
+}
+
+void LayerTreeHost::displayDidRefresh(PlatformDisplayID displayID)
+{
+#if ENABLE(ASYNC_SCROLLING)
+    if (auto* scrollingCoordinator = m_webPage.scrollingCoordinator()) {
+        if (auto* scrollingTree = downcast<AsyncScrollingCoordinator>(*scrollingCoordinator).scrollingTree())
+            downcast<ThreadedScrollingTree>(*scrollingTree).displayDidRefresh(displayID);
+    }
+#else
+    UNUSED_PARAM(displayID);
+#endif
 }
 
 void LayerTreeHost::requestDisplayRefreshMonitorUpdate()

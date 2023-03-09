@@ -290,9 +290,9 @@ FocusNavigationScope FocusNavigationScope::scopeOwnedByScopeOwner(Element& eleme
 
 FocusNavigationScope FocusNavigationScope::scopeOwnedByIFrame(HTMLFrameOwnerElement& frame)
 {
-    ASSERT(frame.contentFrame());
-    ASSERT(frame.contentFrame()->document());
-    return FocusNavigationScope(*frame.contentFrame()->document());
+    ASSERT(is<LocalFrame>(frame.contentFrame()));
+    ASSERT(downcast<LocalFrame>(frame.contentFrame())->document());
+    return FocusNavigationScope(*downcast<LocalFrame>(frame.contentFrame())->document());
 }
 
 static inline void dispatchEventsOnWindowAndFocusedElement(Document* document, bool focused)
@@ -365,9 +365,10 @@ void FocusController::setFocusedFrame(Frame* frame)
         oldFrame->selection().setFocused(false);
         oldFrame->document()->dispatchWindowEvent(Event::create(eventNames().blurEvent, Event::CanBubble::No, Event::IsCancelable::No));
 #if ENABLE(SERVICE_WORKER)
-        auto* frame = oldFrame.get();
+        AbstractFrame* frame = oldFrame.get();
         do {
-            frame->document()->updateServiceWorkerClientData();
+            if (auto* localFrame = dynamicDowncast<LocalFrame>(frame))
+                localFrame->document()->updateServiceWorkerClientData();
             frame = frame->tree().parent();
         } while (frame);
 #endif
@@ -377,9 +378,10 @@ void FocusController::setFocusedFrame(Frame* frame)
         newFrame->selection().setFocused(true);
         newFrame->document()->dispatchWindowEvent(Event::create(eventNames().focusEvent, Event::CanBubble::No, Event::IsCancelable::No));
 #if ENABLE(SERVICE_WORKER)
-        auto* frame = newFrame.get();
+        AbstractFrame* frame = newFrame.get();
         do {
-            frame->document()->updateServiceWorkerClientData();
+            if (auto* localFrame = dynamicDowncast<LocalFrame>(frame))
+                localFrame->document()->updateServiceWorkerClientData();
             frame = frame->tree().parent();
         } while (frame);
 #endif
@@ -394,7 +396,9 @@ Frame& FocusController::focusedOrMainFrame() const
 {
     if (Frame* frame = focusedFrame())
         return *frame;
-    return m_page.mainFrame();
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
+    ASSERT(localMainFrame);
+    return *localMainFrame;
 }
 
 void FocusController::setFocused(bool focused)
@@ -407,8 +411,10 @@ void FocusController::setFocusedInternal(bool focused)
     if (!isFocused())
         focusedOrMainFrame().eventHandler().stopAutoscrollTimer();
 
-    if (!m_focusedFrame)
-        setFocusedFrame(&m_page.mainFrame());
+    if (!m_focusedFrame) {
+        if (auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame()))
+            setFocusedFrame(localMainFrame);
+    }
 
     if (m_focusedFrame->view()) {
         m_focusedFrame->selection().setFocused(focused);
@@ -423,9 +429,10 @@ Element* FocusController::findFocusableElementDescendingIntoSubframes(FocusDirec
     // 2) the deepest-nested HTMLFrameOwnerElement.
     while (is<HTMLFrameOwnerElement>(element)) {
         HTMLFrameOwnerElement& owner = downcast<HTMLFrameOwnerElement>(*element);
-        if (!owner.contentFrame() || !owner.contentFrame()->document())
+        auto* localContentFrame = dynamicDowncast<LocalFrame>(owner.contentFrame());
+        if (!localContentFrame || !localContentFrame->document())
             break;
-        owner.contentFrame()->document()->updateLayoutIgnorePendingStylesheets();
+        localContentFrame->document()->updateLayoutIgnorePendingStylesheets();
         Element* foundElement = findFocusableElementWithinScope(direction, FocusNavigationScope::scopeOwnedByIFrame(owner), nullptr, event);
         if (!foundElement)
             break;
@@ -505,7 +512,10 @@ bool FocusController::advanceFocusInDocumentOrder(FocusDirection direction, Keyb
         }
 
         // Chrome doesn't want focus, so we should wrap focus.
-        element = findFocusableElementAcrossFocusScope(direction, FocusNavigationScope::scopeOf(*m_page.mainFrame().document()), nullptr, event);
+        auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
+        if (!localMainFrame)
+            return false;
+        element = findFocusableElementAcrossFocusScope(direction, FocusNavigationScope::scopeOf(*localMainFrame->document()), nullptr, event);
 
         if (!element)
             return false;
@@ -526,7 +536,7 @@ bool FocusController::advanceFocusInDocumentOrder(FocusDirection direction, Keyb
             return false;
 
         document->setFocusedElement(nullptr);
-        setFocusedFrame(owner.contentFrame());
+        setFocusedFrame(dynamicDowncast<LocalFrame>(owner.contentFrame()));
         return true;
     }
     
@@ -831,7 +841,10 @@ static bool shouldClearSelectionWhenChangingFocusedElement(const Page& page, Ref
     if (!oldFocusedElement->isRootEditableElement() && !is<HTMLInputElement>(oldFocusedElement) && !is<HTMLTextAreaElement>(oldFocusedElement))
         return true;
 
-    for (auto ancestor = page.mainFrame().eventHandler().draggedElement(); ancestor; ancestor = ancestor->parentOrShadowHostElement()) {
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(page.mainFrame());
+    if (!localMainFrame)
+        return false;
+    for (auto ancestor = localMainFrame->eventHandler().draggedElement(); ancestor; ancestor = ancestor->parentOrShadowHostElement()) {
         if (ancestor == oldFocusedElement)
             return false;
     }
@@ -924,7 +937,10 @@ void FocusController::setActive(bool active)
 
 void FocusController::setActiveInternal(bool active)
 {
-    if (FrameView* view = m_page.mainFrame().view()) {
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
+    if (!localMainFrame)
+        return;
+    if (FrameView* view = localMainFrame->view()) {
         if (!view->platformWidget()) {
             view->updateLayoutAndStyleIfNeededRecursive();
             view->updateControlTints();
@@ -947,27 +963,32 @@ static void contentAreaDidShowOrHide(ScrollableArea* scrollableArea, bool didSho
 
 void FocusController::setIsVisibleAndActiveInternal(bool contentIsVisible)
 {
-    FrameView* view = m_page.mainFrame().view();
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
+    if (!localMainFrame)
+        return;
+
+    FrameView* view = localMainFrame->view();
     if (!view)
         return;
 
     contentAreaDidShowOrHide(view, contentIsVisible);
 
-    for (Frame* frame = &m_page.mainFrame(); frame; frame = frame->tree().traverseNext()) {
-        FrameView* frameView = frame->view();
+    for (AbstractFrame* frame = localMainFrame; frame; frame = frame->tree().traverseNext()) {
+        auto* localFrame = dynamicDowncast<LocalFrame>(frame);
+        if (!localFrame)
+            continue;
+        FrameView* frameView = localFrame->view();
         if (!frameView)
             continue;
 
-        const HashSet<ScrollableArea*>* scrollableAreas = frameView->scrollableAreas();
+        auto scrollableAreas = frameView->scrollableAreas();
         if (!scrollableAreas)
             continue;
 
-        for (auto& scrollableArea : *scrollableAreas) {
-            if (!scrollableArea->scrollbarsCanBeActive())
-                continue;
-            ASSERT(m_page.shouldSuppressScrollbarAnimations());
-
-            contentAreaDidShowOrHide(scrollableArea, contentIsVisible);
+        for (auto& area : *scrollableAreas) {
+            CheckedPtr<ScrollableArea> scrollableArea(area);
+            ASSERT(scrollableArea->scrollbarsCanBeActive() || m_page.shouldSuppressScrollbarAnimations());
+            contentAreaDidShowOrHide(scrollableArea.get(), contentIsVisible);
         }
     }
 }
@@ -1002,7 +1023,10 @@ static void updateFocusCandidateIfNeeded(FocusDirection direction, const FocusCa
         // If 2 nodes are intersecting, do hit test to find which node in on top.
         auto center = flooredIntPoint(intersectionRect.center()); // FIXME: Would roundedIntPoint be better?
         constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::IgnoreClipping, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowChildFrameContent };
-        HitTestResult result = candidate.visibleNode->document().page()->mainFrame().eventHandler().hitTestResultAtPoint(center, hitType);
+        auto* localMainFrame = dynamicDowncast<LocalFrame>(candidate.visibleNode->document().page()->mainFrame());
+        if (!localMainFrame)
+            return;
+        HitTestResult result = localMainFrame->eventHandler().hitTestResultAtPoint(center, hitType);
         if (candidate.visibleNode->contains(result.innerNode())) {
             closest = candidate;
             return;
@@ -1086,7 +1110,7 @@ bool FocusController::advanceFocusDirectionallyInContainer(Node* container, cons
         // If we have an iframe without the src attribute, it will not have a contentFrame().
         // We ASSERT here to make sure that
         // updateFocusCandidateIfNeeded() will never consider such an iframe as a candidate.
-        ASSERT(frameElement->contentFrame());
+        ASSERT(is<LocalFrame>(frameElement->contentFrame()));
 
         if (focusCandidate.isOffscreenAfterScrolling) {
             scrollInDirection(&focusCandidate.visibleNode->document(), direction);
@@ -1097,8 +1121,8 @@ bool FocusController::advanceFocusDirectionallyInContainer(Node* container, cons
         Element* focusedElement = focusedOrMainFrame().document()->focusedElement();
         if (focusedElement && !hasOffscreenRect(focusedElement))
             rect = nodeRectInAbsoluteCoordinates(focusedElement, true /* ignore border */);
-        frameElement->contentFrame()->document()->updateLayoutIgnorePendingStylesheets();
-        if (!advanceFocusDirectionallyInContainer(frameElement->contentFrame()->document(), rect, direction, event)) {
+        dynamicDowncast<LocalFrame>(frameElement->contentFrame())->document()->updateLayoutIgnorePendingStylesheets();
+        if (!advanceFocusDirectionallyInContainer(dynamicDowncast<LocalFrame>(frameElement->contentFrame())->document(), rect, direction, event)) {
             // The new frame had nothing interesting, need to find another candidate.
             return advanceFocusDirectionallyInContainer(container, nodeRectInAbsoluteCoordinates(focusCandidate.visibleNode, true), direction, event);
         }

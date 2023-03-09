@@ -120,16 +120,20 @@ static bool defaultShouldDecidePolicyBeforeLoadingQuickLookPreview()
     LazyInitialized<RetainPtr<WKProcessPool>> _processPool;
     LazyInitialized<RetainPtr<WKPreferences>> _preferences;
     LazyInitialized<RetainPtr<WKUserContentController>> _userContentController;
+#if ENABLE(WK_WEB_EXTENSIONS)
+    RetainPtr<_WKWebExtensionController> _webExtensionController;
+    WeakObjCPtr<_WKWebExtensionController> _weakWebExtensionController;
+#endif
     LazyInitialized<RetainPtr<_WKVisitedLinkStore>> _visitedLinkStore;
     LazyInitialized<RetainPtr<WKWebsiteDataStore>> _websiteDataStore;
     LazyInitialized<RetainPtr<WKWebpagePreferences>> _defaultWebpagePreferences;
     WeakObjCPtr<WKWebView> _relatedWebView;
+    WeakObjCPtr<WKWebView> _webViewToCloneSessionStorageFrom;
     WeakObjCPtr<WKWebView> _alternateWebViewForNavigationGestures;
     RetainPtr<NSString> _groupIdentifier;
     std::optional<RetainPtr<NSString>> _applicationNameForUserAgent;
     NSTimeInterval _incrementalRenderingSuppressionTimeout;
     BOOL _respectsImageOrientation;
-    BOOL _printsBackgrounds;
     BOOL _allowsJavaScriptMarkup;
     BOOL _convertsPositionStyleOnCopy;
     BOOL _allowsMetaRefresh;
@@ -151,6 +155,7 @@ static bool defaultShouldDecidePolicyBeforeLoadingQuickLookPreview()
     BOOL _invisibleAutoplayNotPermitted;
     BOOL _mediaDataLoadsAutomatically;
     BOOL _attachmentElementEnabled;
+    BOOL _attachmentWideLayoutEnabled;
     Class _attachmentFileWrapperClass;
     BOOL _mainContentUserGestureOverrideEnabled;
 
@@ -159,6 +164,7 @@ static bool defaultShouldDecidePolicyBeforeLoadingQuickLookPreview()
     BOOL _showsURLsInToolTips;
     BOOL _serviceControlsEnabled;
     BOOL _imageControlsEnabled;
+    BOOL _contextMenuQRCodeDetectionEnabled;
 #endif
     BOOL _waitsForPaintAfterViewDidMoveToWindow;
     BOOL _controlledByAutomation;
@@ -179,6 +185,7 @@ static bool defaultShouldDecidePolicyBeforeLoadingQuickLookPreview()
 #endif
     double _sampledPageTopColorMaxDifference;
     double _sampledPageTopColorMinHeight;
+    BOOL _markedTextInputEnabled;
 
     RetainPtr<NSString> _mediaContentTypesRequiringHardwareSupport;
     RetainPtr<NSArray<NSString *>> _additionalSupportedImageTypes;
@@ -218,18 +225,18 @@ static bool defaultShouldDecidePolicyBeforeLoadingQuickLookPreview()
     _mainContentUserGestureOverrideEnabled = NO;
     _invisibleAutoplayNotPermitted = NO;
     _attachmentElementEnabled = NO;
+    _attachmentWideLayoutEnabled = NO;
 
 #if PLATFORM(IOS_FAMILY)
     _respectsImageOrientation = YES;
-    _printsBackgrounds = YES;
 #endif
 
 #if PLATFORM(MAC)
-    _printsBackgrounds = NO;
     _respectsImageOrientation = NO;
     _showsURLsInToolTips = NO;
     _serviceControlsEnabled = NO;
     _imageControlsEnabled = NO;
+    _contextMenuQRCodeDetectionEnabled = NO;
 #endif
     _waitsForPaintAfterViewDidMoveToWindow = YES;
 
@@ -279,6 +286,8 @@ static bool defaultShouldDecidePolicyBeforeLoadingQuickLookPreview()
 
     _sampledPageTopColorMaxDifference = DEFAULT_VALUE_FOR_SampledPageTopColorMaxDifference;
     _sampledPageTopColorMinHeight = DEFAULT_VALUE_FOR_SampledPageTopColorMinHeight;
+
+    _markedTextInputEnabled = NO;
 
     return self;
 }
@@ -386,16 +395,24 @@ static bool defaultShouldDecidePolicyBeforeLoadingQuickLookPreview()
     configuration.defaultWebpagePreferences = self.defaultWebpagePreferences;
     configuration._visitedLinkStore = self._visitedLinkStore;
     configuration._relatedWebView = _relatedWebView.get().get();
+    configuration._webViewToCloneSessionStorageFrom = _webViewToCloneSessionStorageFrom.get().get();
     configuration._alternateWebViewForNavigationGestures = _alternateWebViewForNavigationGestures.get().get();
 #if PLATFORM(IOS_FAMILY)
     configuration._contentProviderRegistry = self._contentProviderRegistry;
+#endif
+
+#if ENABLE(WK_WEB_EXTENSIONS)
+    if (auto *controller = self->_webExtensionController.get())
+        configuration._webExtensionController = controller;
+
+    if (auto controller = self->_weakWebExtensionController.get())
+        configuration->_weakWebExtensionController = controller.get();
 #endif
 
     configuration->_suppressesIncrementalRendering = self->_suppressesIncrementalRendering;
     configuration->_applicationNameForUserAgent = self->_applicationNameForUserAgent;
 
     configuration->_respectsImageOrientation = self->_respectsImageOrientation;
-    configuration->_printsBackgrounds = self->_printsBackgrounds;
     configuration->_incrementalRenderingSuppressionTimeout = self->_incrementalRenderingSuppressionTimeout;
     configuration->_allowsJavaScriptMarkup = self->_allowsJavaScriptMarkup;
     configuration->_convertsPositionStyleOnCopy = self->_convertsPositionStyleOnCopy;
@@ -406,6 +423,7 @@ static bool defaultShouldDecidePolicyBeforeLoadingQuickLookPreview()
     configuration->_invisibleAutoplayNotPermitted = self->_invisibleAutoplayNotPermitted;
     configuration->_mediaDataLoadsAutomatically = self->_mediaDataLoadsAutomatically;
     configuration->_attachmentElementEnabled = self->_attachmentElementEnabled;
+    configuration->_attachmentWideLayoutEnabled = self->_attachmentWideLayoutEnabled;
     configuration->_attachmentFileWrapperClass = self->_attachmentFileWrapperClass;
     configuration->_mediaTypesRequiringUserActionForPlayback = self->_mediaTypesRequiringUserActionForPlayback;
     configuration->_mainContentUserGestureOverrideEnabled = self->_mainContentUserGestureOverrideEnabled;
@@ -430,6 +448,7 @@ static bool defaultShouldDecidePolicyBeforeLoadingQuickLookPreview()
     configuration->_showsURLsInToolTips = self->_showsURLsInToolTips;
     configuration->_serviceControlsEnabled = self->_serviceControlsEnabled;
     configuration->_imageControlsEnabled = self->_imageControlsEnabled;
+    configuration->_contextMenuQRCodeDetectionEnabled = self->_contextMenuQRCodeDetectionEnabled;
     configuration->_pageGroup = self._pageGroup;
 #endif
 #if ENABLE(DATA_DETECTION) && PLATFORM(IOS_FAMILY)
@@ -462,6 +481,8 @@ static bool defaultShouldDecidePolicyBeforeLoadingQuickLookPreview()
     configuration->_sampledPageTopColorMaxDifference = self->_sampledPageTopColorMaxDifference;
     configuration->_sampledPageTopColorMinHeight = self->_sampledPageTopColorMinHeight;
 
+    configuration->_markedTextInputEnabled = self->_markedTextInputEnabled;
+
     return configuration;
 }
 
@@ -493,6 +514,47 @@ static bool defaultShouldDecidePolicyBeforeLoadingQuickLookPreview()
 - (void)setUserContentController:(WKUserContentController *)userContentController
 {
     _userContentController.set(userContentController);
+}
+
+- (_WKWebExtensionController *)_strongWebExtensionController
+{
+#if ENABLE(WK_WEB_EXTENSIONS)
+    return _webExtensionController.get();
+#else
+    return nil;
+#endif
+}
+
+- (_WKWebExtensionController *)_webExtensionController
+{
+#if ENABLE(WK_WEB_EXTENSIONS)
+    return self._weakWebExtensionController ?: _webExtensionController.get();
+#else
+    return nil;
+#endif
+}
+
+- (void)_setWebExtensionController:(_WKWebExtensionController *)webExtensionController
+{
+#if ENABLE(WK_WEB_EXTENSIONS)
+    _webExtensionController = webExtensionController;
+#endif
+}
+
+- (_WKWebExtensionController *)_weakWebExtensionController
+{
+#if ENABLE(WK_WEB_EXTENSIONS)
+    return _weakWebExtensionController.getAutoreleased();
+#else
+    return nil;
+#endif
+}
+
+- (void)_setWeakWebExtensionController:(_WKWebExtensionController *)webExtensionController
+{
+#if ENABLE(WK_WEB_EXTENSIONS)
+    _weakWebExtensionController = webExtensionController;
+#endif
 }
 
 - (BOOL)upgradeKnownHostsToHTTPS
@@ -583,7 +645,10 @@ static NSString *defaultApplicationNameForUserAgent()
         return nil;
 
     auto handler = _pageConfiguration->urlSchemeHandlerForURLScheme(*canonicalScheme);
-    return handler ? static_cast<WebKit::WebURLSchemeHandlerCocoa*>(handler.get())->apiHandler() : nil;
+    if (!handler || !handler->isAPIHandler())
+        return nil;
+
+    return static_cast<WebKit::WebURLSchemeHandlerCocoa*>(handler.get())->apiHandler();
 }
 
 #if PLATFORM(IOS_FAMILY)
@@ -627,6 +692,16 @@ static NSString *defaultApplicationNameForUserAgent()
     _relatedWebView = relatedWebView;
 }
 
+- (WKWebView *)_webViewToCloneSessionStorageFrom
+{
+    return _webViewToCloneSessionStorageFrom.getAutoreleased();
+}
+
+- (void)_setWebViewToCloneSessionStorageFrom:(WKWebView *)webViewToCloneSessionStorageFrom
+{
+    _webViewToCloneSessionStorageFrom = webViewToCloneSessionStorageFrom;
+}
+
 - (WKWebView *)_alternateWebViewForNavigationGestures
 {
     return _alternateWebViewForNavigationGestures.getAutoreleased();
@@ -659,12 +734,12 @@ static NSString *defaultApplicationNameForUserAgent()
 
 - (BOOL)_printsBackgrounds
 {
-    return _printsBackgrounds;
+    return self.preferences.shouldPrintBackgrounds;
 }
 
 - (void)_setPrintsBackgrounds:(BOOL)printsBackgrounds
 {
-    _printsBackgrounds = printsBackgrounds;
+    self.preferences.shouldPrintBackgrounds = printsBackgrounds;
 }
 
 - (NSTimeInterval)_incrementalRenderingSuppressionTimeout
@@ -904,6 +979,16 @@ static WebKit::AttributionOverrideTesting toAttributionOverrideTesting(_WKAttrib
     _attachmentElementEnabled = attachmentElementEnabled;
 }
 
+- (BOOL)_attachmentWideLayoutEnabled
+{
+    return _attachmentWideLayoutEnabled;
+}
+
+- (void)_setAttachmentWideLayoutEnabled:(BOOL)attachmentWideLayoutEnabled
+{
+    _attachmentWideLayoutEnabled = attachmentWideLayoutEnabled;
+}
+
 - (Class)_attachmentFileWrapperClass
 {
     return _attachmentFileWrapperClass;
@@ -960,6 +1045,23 @@ static WebKit::AttributionOverrideTesting toAttributionOverrideTesting(_WKAttrib
 - (void)_setCORSDisablingPatterns:(NSArray<NSString *> *)patterns
 {
     _pageConfiguration->setCORSDisablingPatterns(makeVector<String>(patterns));
+}
+
+- (NSSet<NSString *> *)_maskedURLSchemes
+{
+    const auto& schemes = _pageConfiguration->maskedURLSchemes();
+    NSMutableSet<NSString *> *set = [NSMutableSet setWithCapacity:schemes.size()];
+    for (const auto& scheme : schemes)
+        [set addObject:scheme];
+    return set;
+}
+
+- (void)_setMaskedURLSchemes:(NSSet<NSString *> *)schemes
+{
+    HashSet<String> set;
+    for (NSString *scheme in schemes)
+        set.add(scheme);
+    _pageConfiguration->setMaskedURLSchemes(WTFMove(set));
 }
 
 - (void)_setLoadsFromNetwork:(BOOL)loads
@@ -1140,6 +1242,16 @@ static WebKit::AttributionOverrideTesting toAttributionOverrideTesting(_WKAttrib
     _imageControlsEnabled = imageControlsEnabled;
 }
 
+- (BOOL)_contextMenuQRCodeDetectionEnabled
+{
+    return _contextMenuQRCodeDetectionEnabled;
+}
+
+- (void)_setContextMenuQRCodeDetectionEnabled:(BOOL)contextMenuQRCodeDetectionEnabled
+{
+    _contextMenuQRCodeDetectionEnabled = contextMenuQRCodeDetectionEnabled;
+}
+
 - (BOOL)_requiresUserActionForEditingControlsManager
 {
     return _pageConfiguration->requiresUserActionForEditingControlsManager();
@@ -1284,6 +1396,16 @@ static WebKit::AttributionOverrideTesting toAttributionOverrideTesting(_WKAttrib
 #endif
 }
 
+- (BOOL)_allowTestOnlyIPC
+{
+    return _pageConfiguration->allowTestOnlyIPC();
+}
+
+- (void)_setAllowTestOnlyIPC:(BOOL)allowTestOnlyIPC
+{
+    _pageConfiguration->setAllowTestOnlyIPC(allowTestOnlyIPC);
+}
+
 - (BOOL)_shouldRelaxThirdPartyCookieBlocking
 {
     return _pageConfiguration->shouldRelaxThirdPartyCookieBlocking() == WebCore::ShouldRelaxThirdPartyCookieBlocking::Yes;
@@ -1354,6 +1476,16 @@ static WebKit::AttributionOverrideTesting toAttributionOverrideTesting(_WKAttrib
 - (_WKContentSecurityPolicyModeForExtension)_contentSecurityPolicyModeForExtension
 {
     return WebKit::toWKContentSecurityPolicyModeForExtension(_pageConfiguration->contentSecurityPolicyModeForExtension());
+}
+
+- (void)_setMarkedTextInputEnabled:(BOOL)enabled
+{
+    _markedTextInputEnabled = enabled;
+}
+
+- (BOOL)_markedTextInputEnabled
+{
+    return _markedTextInputEnabled;
 }
 
 @end

@@ -126,7 +126,7 @@ void JSCallbackObject<Parent>::init(JSGlobalObject* globalObject)
 
     if (hasConvertToType) {
         this->putDirect(vm, vm.propertyNames->toPrimitiveSymbol,
-            JSFunction::create(vm, globalObject, 1, "[Symbol.toPrimitive]"_s, customToPrimitive),
+            JSFunction::create(vm, globalObject, 1, "[Symbol.toPrimitive]"_s, customToPrimitive, ImplementationVisibility::Public),
             static_cast<unsigned>(PropertyAttribute::DontEnum));
     }
     
@@ -459,6 +459,7 @@ CallData JSCallbackObject<Parent>::getConstructData(JSCell* cell)
         if (jsClass->callAsConstructor) {
             constructData.type = CallData::Type::Native;
             constructData.native.function = getConstructFunction();
+            constructData.native.isBoundFunction = false;
             break;
         }
     }
@@ -536,6 +537,7 @@ CallData JSCallbackObject<Parent>::getCallData(JSCell* cell)
         if (jsClass->callAsFunction) {
             callData.type = CallData::Type::Native;
             callData.native.function = getCallFunction();
+            callData.native.isBoundFunction = false;
             break;
         }
     }

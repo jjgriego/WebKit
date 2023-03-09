@@ -172,7 +172,7 @@ function runSilently(testFuncString)
     if (printFullTestDetails)
         consoleWrite("RUN(" + testFuncString + ")");
     try {
-        eval(testFuncString);
+        return eval(testFuncString);
     } catch (ex) {
         if (!printFullTestDetails) {
             // No details were printed previous, give some now.
@@ -187,7 +187,7 @@ function run(testFuncString)
 {
     consoleWrite("RUN(" + testFuncString + ")");
     try {
-        eval(testFuncString);
+        return eval(testFuncString);
     } catch (ex) {
         consoleWrite(ex);
     }
@@ -283,7 +283,17 @@ function waitForEventAndFail(eventName)
     waitForEventAndTest(eventName, "false", true);
 }
 
+function waitForEventAndFailFor(element, eventName)
+{
+    waitForEventAndTest(element, eventName, "false", true);
+}
+
 function waitForEventAndTest(eventName, testFuncString, endit)
+{
+    waitForEventAndTestFor(mediaElement, eventName, testFuncString, endit)
+}
+
+function waitForEventAndTestFor(element, eventName, testFuncString, endit)
 {
     function _eventCallback(event)
     {
@@ -292,7 +302,7 @@ function waitForEventAndTest(eventName, testFuncString, endit)
             endTest();
     }
 
-    mediaElement.addEventListener(eventName, _eventCallback, true);
+    element.addEventListener(eventName, _eventCallback, true);
 }
 
 function waitForEventOnceOn(element, eventName, func, endit)

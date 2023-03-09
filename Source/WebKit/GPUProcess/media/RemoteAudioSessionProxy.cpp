@@ -30,10 +30,13 @@
 
 #include "GPUConnectionToWebProcess.h"
 #include "GPUProcess.h"
+#include "Logging.h"
 #include "RemoteAudioSessionMessages.h"
 #include "RemoteAudioSessionProxyManager.h"
 #include "RemoteAudioSessionProxyMessages.h"
 #include <WebCore/AudioSession.h>
+
+#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, (&connection()))
 
 namespace WebKit {
 
@@ -90,8 +93,15 @@ void RemoteAudioSessionProxy::setPreferredBufferSize(uint64_t size)
 
 void RemoteAudioSessionProxy::tryToSetActive(bool active, SetActiveCompletion&& completion)
 {
-    m_active = audioSessionManager().tryToSetActiveForProcess(*this, active);
-    completion(m_active);
+    auto success = audioSessionManager().tryToSetActiveForProcess(*this, active);
+    bool hasActiveChanged = success && m_active != active;
+    if (success)
+        m_active = active;
+
+    completion(success);
+
+    if (hasActiveChanged)
+        configurationChanged();
 
     audioSessionManager().updatePresentingProcesses();
 }
@@ -125,6 +135,18 @@ RemoteAudioSessionProxyManager& RemoteAudioSessionProxy::audioSessionManager()
 IPC::Connection& RemoteAudioSessionProxy::connection()
 {
     return m_gpuConnection.connection();
+}
+
+void RemoteAudioSessionProxy::triggerBeginInterruptionForTesting()
+{
+    MESSAGE_CHECK(m_gpuConnection.allowTestOnlyIPC());
+    AudioSession::sharedSession().beginInterruptionForTesting();
+}
+
+void RemoteAudioSessionProxy::triggerEndInterruptionForTesting()
+{
+    MESSAGE_CHECK(m_gpuConnection.allowTestOnlyIPC());
+    AudioSession::sharedSession().endInterruptionForTesting();
 }
 
 }

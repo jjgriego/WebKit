@@ -26,6 +26,7 @@
 #import "config.h"
 #import "TestNavigationDelegate.h"
 
+#import "PlatformUtilities.h"
 #import "Utilities.h"
 #import <WebKit/WKWebViewPrivateForTesting.h>
 #import <wtf/RetainPtr.h>
@@ -66,6 +67,12 @@
         _didCommitNavigation(webView, navigation);
 }
 
+- (void)_webView:(WKWebView *)webView didCommitLoadWithRequest:(NSURLRequest *)request inFrame:(WKFrameInfo *)frame
+{
+    if (_didCommitLoadWithRequestInFrame)
+        _didCommitLoadWithRequestInFrame(webView, request, frame);
+}
+
 - (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error
 {
     if (_didFailProvisionalNavigation)
@@ -96,6 +103,15 @@
         _didReceiveAuthenticationChallenge(webView, challenge, completionHandler);
     else
         completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, nil);
+}
+
+- (void)allowAnyTLSCertificate
+{
+    EXPECT_FALSE(self.didReceiveAuthenticationChallenge);
+    self.didReceiveAuthenticationChallenge = ^(WKWebView *, NSURLAuthenticationChallenge *challenge, void (^callback)(NSURLSessionAuthChallengeDisposition, NSURLCredential *)) {
+        EXPECT_WK_STREQ(challenge.protectionSpace.authenticationMethod, NSURLAuthenticationMethodServerTrust);
+        callback(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
+    };
 }
 
 - (void)waitForDidStartProvisionalNavigation
@@ -228,6 +244,28 @@
     EXPECT_FALSE(self.navigationDelegate);
 
     auto navigationDelegate = adoptNS([[TestNavigationDelegate alloc] init]);
+    self.navigationDelegate = navigationDelegate.get();
+    [navigationDelegate waitForDidFinishNavigation];
+
+    self.navigationDelegate = nil;
+
+#if PLATFORM(IOS_FAMILY)
+    __block bool presentationUpdateHappened = false;
+    [self _doAfterNextPresentationUpdateWithoutWaitingForAnimatedResizeForTesting:^{
+        presentationUpdateHappened = true;
+    }];
+    TestWebKitAPI::Util::run(&presentationUpdateHappened);
+#endif
+}
+
+- (void)_test_waitForDidFinishNavigationWhileIgnoringSSLErrors
+{
+    EXPECT_FALSE(self.navigationDelegate);
+
+    auto navigationDelegate = adoptNS([[TestNavigationDelegate alloc] init]);
+    navigationDelegate.get().didReceiveAuthenticationChallenge = ^(WKWebView *, NSURLAuthenticationChallenge *challenge, void (^completionHandler)(NSURLSessionAuthChallengeDisposition, NSURLCredential *)) {
+        completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
+    };
     self.navigationDelegate = navigationDelegate.get();
     [navigationDelegate waitForDidFinishNavigation];
 

@@ -5,7 +5,7 @@
     background-color: rgba(0, 0, 0, 0.55);
 }
 
-.media-controls.inline.ios:not(.audio):is(:empty, .faded) {
+.media-controls.inline.ios:not(.audio):is(:empty, .shows-start-button, .faded) {
     background-color: transparent;
 }
 

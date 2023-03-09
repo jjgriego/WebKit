@@ -36,7 +36,6 @@ inline bool operator!=(const AudioStreamBasicDescription& a, const AudioStreamBa
 class WEBCORE_EXPORT CAAudioStreamDescription final : public AudioStreamDescription {
     WTF_MAKE_FAST_ALLOCATED;
 public:
-    CAAudioStreamDescription();
     CAAudioStreamDescription(const AudioStreamBasicDescription&);
     CAAudioStreamDescription(double, uint32_t, PCMFormat, bool);
     ~CAAudioStreamDescription();
@@ -70,7 +69,7 @@ public:
     AudioStreamBasicDescription& streamDescription();
 
     template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static WARN_UNUSED_RETURN bool decode(Decoder&, CAAudioStreamDescription&);
+    template<class Decoder> static std::optional<CAAudioStreamDescription> decode(Decoder&);
 
 private:
     AudioStreamBasicDescription m_streamDescription;
@@ -81,13 +80,16 @@ private:
 template<class Encoder>
 void CAAudioStreamDescription::encode(Encoder& encoder) const
 {
-    encoder.encodeFixedLengthData(reinterpret_cast<const uint8_t*>(&m_streamDescription), sizeof(m_streamDescription), 1);
+    encoder.encodeObject(m_streamDescription);
 }
 
 template<class Decoder>
-bool CAAudioStreamDescription::decode(Decoder& decoder, CAAudioStreamDescription& description)
+std::optional<CAAudioStreamDescription> CAAudioStreamDescription::decode(Decoder& decoder)
 {
-    return decoder.decodeFixedLengthData(reinterpret_cast<uint8_t*>(&description.m_streamDescription), sizeof(description.m_streamDescription), 1);
+    auto asbd = decoder.template decodeObject<AudioStreamBasicDescription>();
+    if (!asbd)
+        return std::nullopt;
+    return CAAudioStreamDescription { *asbd };
 }
 
 inline CAAudioStreamDescription toCAAudioStreamDescription(const AudioStreamDescription& description)

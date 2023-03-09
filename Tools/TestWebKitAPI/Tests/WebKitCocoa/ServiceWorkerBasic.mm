@@ -45,18 +45,19 @@
 #import <WebKit/WKWebsiteDataStorePrivate.h>
 #import <WebKit/WKWebsiteDataStoreRef.h>
 #import <WebKit/WebKit.h>
-#import <WebKit/_WKExperimentalFeature.h>
-#import <WebKit/_WKInternalDebugFeature.h>
+#import <WebKit/_WKFeature.h>
 #import <WebKit/_WKProcessPoolConfiguration.h>
 #import <WebKit/_WKRemoteObjectInterface.h>
 #import <WebKit/_WKRemoteObjectRegistry.h>
 #import <WebKit/_WKWebsiteDataStoreConfiguration.h>
 #import <WebKit/_WKWebsiteDataStoreDelegate.h>
 #import <wtf/Deque.h>
+#import <wtf/FileSystem.h>
 #import <wtf/HashMap.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/URL.h>
 #import <wtf/Vector.h>
+#import <wtf/text/StringConcatenateNumbers.h>
 #import <wtf/text/StringHash.h>
 #import <wtf/text/WTFString.h>
 
@@ -1414,8 +1415,9 @@ TEST(ServiceWorkers, ServiceWorkerAndCacheStorageSpecificDirectories)
     auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     setConfigurationInjectedBundlePath(configuration.get());
     auto dataStoreConfiguration = adoptNS([_WKWebsiteDataStoreConfiguration new]);
-    [dataStoreConfiguration _setServiceWorkerRegistrationDirectory:[NSURL fileURLWithPath:@"/var/tmp"]];
-    [dataStoreConfiguration _setCacheStorageDirectory:[NSURL fileURLWithPath:@"/var/tmp"]];
+    NSString* tempDirectory = @"/var/tmp";
+    [dataStoreConfiguration _setServiceWorkerRegistrationDirectory:[NSURL fileURLWithPath:tempDirectory]];
+    [dataStoreConfiguration _setCacheStorageDirectory:[NSURL fileURLWithPath:tempDirectory]];
     auto websiteDataStore = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:dataStoreConfiguration.get()]);
     [configuration setWebsiteDataStore:websiteDataStore.get()];
 
@@ -1441,7 +1443,9 @@ TEST(ServiceWorkers, ServiceWorkerAndCacheStorageSpecificDirectories)
     [webView loadRequest:server.request("/second.html"_s)];
     TestWebKitAPI::Util::run(&done);
     done = false;
-    EXPECT_TRUE(retrievedString.contains("\"path\": \"/var/tmp\""_s));
+    NSString* tempDirectoryInUse = FileSystem::realPath(tempDirectory);
+    String expectedString = [NSString stringWithFormat:@"\"path\": \"%@\"", tempDirectoryInUse];
+    EXPECT_TRUE(retrievedString.contains(expectedString));
 
     [[configuration websiteDataStore] removeDataOfTypes:[WKWebsiteDataStore allWebsiteDataTypes] modifiedSince:[NSDate distantPast] completionHandler:^() {
         done = true;
@@ -1508,7 +1512,7 @@ static bool waitUntilEvaluatesToTrue(const Function<bool()>& f)
     do {
         if (f())
             return true;
-        TestWebKitAPI::Util::sleep(0.1);
+        TestWebKitAPI::Util::runFor(0.1_s);
     } while (++timeout < 100);
     return false;
 }
@@ -1738,42 +1742,51 @@ void testSuspendServiceWorkerProcessBasedOnClientProcesses(UseSeparateServiceWor
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
 
     [webView loadRequest:server.request()];
+    [webView _test_waitForDidFinishNavigation];
 
     EXPECT_TRUE(waitUntilEvaluatesToTrue([&] { return [processPool _serviceWorkerProcessCount] == 1; }));
 
     auto webView2 = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
     [webView2 loadRequest:server.request()];
+    [webView2 _test_waitForDidFinishNavigation];
 
     auto webViewToUpdate = useSeparateServiceWorkerProcess == UseSeparateServiceWorkerProcess::Yes ? webView : webView2;
-    [webViewToUpdate _setAssertionTypeForTesting: 1];
-    EXPECT_TRUE(waitUntilEvaluatesToTrue([&] { return ![webViewToUpdate _hasServiceWorkerForegroundActivityForTesting]; }));
-    EXPECT_TRUE(waitUntilEvaluatesToTrue([&] { return [webViewToUpdate _hasServiceWorkerBackgroundActivityForTesting]; }));
 
-    [webViewToUpdate _setAssertionTypeForTesting: 3];
-    EXPECT_TRUE(waitUntilEvaluatesToTrue([&] { return [webViewToUpdate _hasServiceWorkerForegroundActivityForTesting]; }));
-    EXPECT_TRUE(waitUntilEvaluatesToTrue([&] { return ![webViewToUpdate _hasServiceWorkerBackgroundActivityForTesting]; }));
+    if (useSeparateServiceWorkerProcess == UseSeparateServiceWorkerProcess::Yes)
+        [webView2 _setThrottleStateForTesting:0];
 
-    [webViewToUpdate _setAssertionTypeForTesting: 0];
-    EXPECT_TRUE(waitUntilEvaluatesToTrue([&] { return ![webViewToUpdate _hasServiceWorkerForegroundActivityForTesting]; }));
-    EXPECT_TRUE(waitUntilEvaluatesToTrue([&] { return ![webViewToUpdate _hasServiceWorkerBackgroundActivityForTesting]; }));
+    [webViewToUpdate _setThrottleStateForTesting:1];
+    EXPECT_TRUE(waitUntilEvaluatesToTrue([&] {
+        return ![webViewToUpdate _hasServiceWorkerForegroundActivityForTesting] && [webViewToUpdate _hasServiceWorkerBackgroundActivityForTesting];
+    }));
+
+    [webViewToUpdate _setThrottleStateForTesting:2];
+    EXPECT_TRUE(waitUntilEvaluatesToTrue([&] {
+        return [webViewToUpdate _hasServiceWorkerForegroundActivityForTesting] && ![webViewToUpdate _hasServiceWorkerBackgroundActivityForTesting];
+    }));
+
+    [webViewToUpdate _setThrottleStateForTesting:0];
+    EXPECT_TRUE(waitUntilEvaluatesToTrue([&] {
+        return ![webViewToUpdate _hasServiceWorkerForegroundActivityForTesting] && ![webViewToUpdate _hasServiceWorkerBackgroundActivityForTesting];
+    }));
 
     [webView _close];
     webView = nullptr;
 
     // The service worker process should take activity based on webView2 process.
-    [webView2 _setAssertionTypeForTesting: 1];
+    [webView2 _setThrottleStateForTesting: 1];
     EXPECT_TRUE(waitUntilEvaluatesToTrue([&] {
-        [webView2 _setAssertionTypeForTesting:1];
+        [webView2 _setThrottleStateForTesting:1];
         return ![webView2 _hasServiceWorkerForegroundActivityForTesting] && [webView2 _hasServiceWorkerBackgroundActivityForTesting];
     }));
 
     EXPECT_TRUE(waitUntilEvaluatesToTrue([&] {
-        [webView2 _setAssertionTypeForTesting:3];
+        [webView2 _setThrottleStateForTesting:2];
         return [webView2 _hasServiceWorkerForegroundActivityForTesting] && ![webView2 _hasServiceWorkerBackgroundActivityForTesting];
     }));
 
     EXPECT_TRUE(waitUntilEvaluatesToTrue([&] {
-        [webView2 _setAssertionTypeForTesting:0];
+        [webView2 _setThrottleStateForTesting:0];
         return ![webView2 _hasServiceWorkerForegroundActivityForTesting] && ![webView2 _hasServiceWorkerBackgroundActivityForTesting];
     }));
 }
@@ -2003,7 +2016,7 @@ TEST(ServiceWorkers, SuspendNetworkProcess)
 
     unsigned timeout = 0;
     while (![[NSFileManager defaultManager] fileExistsAtPath:swDBPath.path] && ++timeout < 100)
-        TestWebKitAPI::Util::sleep(0.1);
+        TestWebKitAPI::Util::runFor(0.1_s);
 
     EXPECT_TRUE([[NSFileManager defaultManager] fileExistsAtPath:swDBPath.path]);
 
@@ -2433,7 +2446,7 @@ TEST(ServiceWorkers, CustomDataStorePathsVersusCompletionHandlers)
 
     unsigned timeout = 0;
     while (![[NSFileManager defaultManager] fileExistsAtPath:[swPath URLByAppendingPathComponent:serviceWorkerRegistrationFilename].path] && ++timeout < 20)
-        TestWebKitAPI::Util::sleep(0.1);
+        TestWebKitAPI::Util::runFor(0.1_s);
     EXPECT_TRUE([[NSFileManager defaultManager] fileExistsAtPath:[swPath URLByAppendingPathComponent:serviceWorkerRegistrationFilename].path]);
 
     // Fetch SW records
@@ -2551,6 +2564,8 @@ TEST(ServiceWorkers, WebProcessCache)
 }
 
 static bool didStartURLSchemeTask = false;
+static bool didStartURLSchemeTaskForXMLFile = false;
+static bool didStartURLSchemeTaskForImportedScript = false;
 
 @interface ServiceWorkerSchemeHandler : NSObject <WKURLSchemeHandler> {
     const char* _bytes;
@@ -2571,7 +2586,7 @@ static bool didStartURLSchemeTask = false;
 
 - (void)addMappingFromURLString:(NSString *)urlString toData:(const char*)data
 {
-    _dataMappings.set(urlString, [NSData dataWithBytesNoCopy:(void*)data length:strlen(data) freeWhenDone:NO]);
+    _dataMappings.set(urlString, [NSData dataWithBytes:(void*)data length:strlen(data)]);
 }
 
 - (void)webView:(WKWebView *)webView startURLSchemeTask:(id <WKURLSchemeTask>)task
@@ -2582,6 +2597,12 @@ static bool didStartURLSchemeTask = false;
     }
 
     NSURL *finalURL = task.request.URL;
+
+    if (URL(finalURL).string().endsWith("importedScript.js"_s))
+        didStartURLSchemeTaskForImportedScript = true;
+
+    if (URL(finalURL).string().endsWith(".xml"_s))
+        didStartURLSchemeTaskForXMLFile = true;
 
     NSMutableDictionary* headerDictionary = [NSMutableDictionary dictionary];
     if (URL(finalURL).string().endsWith(".js"_s))
@@ -2636,7 +2657,9 @@ TEST(ServiceWorker, ExtensionServiceWorker)
 
     auto schemeHandler = adoptNS([ServiceWorkerSchemeHandler new]);
     [schemeHandler addMappingFromURLString:@"sw-ext://ABC/other.html" toData:"foo"];
-    [schemeHandler addMappingFromURLString:@"sw-ext://ABC/sw.js" toData:""];
+    [schemeHandler addMappingFromURLString:@"sw-ext://ABC/sw.js" toData:"importScripts('sw-ext://ABC/importedScript.js');"];
+    [schemeHandler addMappingFromURLString:@"sw-ext://ABC/bar.xml" toData:"bar"];
+    [schemeHandler addMappingFromURLString:@"sw-ext://ABC/importedScript.js" toData:"fetch('sw-ext://ABC/bar.xml');"];
 
     WKWebViewConfiguration *webViewConfiguration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"ServiceWorkerPagePlugIn"];
 
@@ -2661,7 +2684,9 @@ TEST(ServiceWorker, ExtensionServiceWorker)
     // The service worker script should get loaded over the custom scheme handler.
     done = false;
     didStartURLSchemeTask = false;
-    [webView _loadServiceWorker:[NSURL URLWithString:@"sw-ext://ABC/sw.js"] completionHandler:^(BOOL success) {
+    didStartURLSchemeTaskForXMLFile = false;
+    didStartURLSchemeTaskForImportedScript = false;
+    [webView _loadServiceWorker:[NSURL URLWithString:@"sw-ext://ABC/sw.js"] usingModules:NO completionHandler:^(BOOL success) {
         EXPECT_TRUE(success);
         EXPECT_TRUE(didStartURLSchemeTask);
         done = true;
@@ -2679,18 +2704,122 @@ TEST(ServiceWorker, ExtensionServiceWorker)
     EXPECT_EQ(webViewConfiguration.processPool._serviceWorkerProcessCount, 1U);
     EXPECT_EQ(webViewConfiguration.processPool._webProcessCountIgnoringPrewarmedAndCached, 1U);
 
-    TestWebKitAPI::Util::sleep(0.5);
+    TestWebKitAPI::Util::runFor(0.5_s);
 
     EXPECT_EQ(webViewConfiguration.processPool._serviceWorkerProcessCount, 1U);
     EXPECT_EQ(webViewConfiguration.processPool._webProcessCountIgnoringPrewarmedAndCached, 1U);
 
     EXPECT_WK_STREQ([webView URL].absoluteString, @"sw-ext://ABC");
 
+    TestWebKitAPI::Util::run(&didStartURLSchemeTaskForImportedScript);
+    TestWebKitAPI::Util::run(&didStartURLSchemeTaskForXMLFile);
+
     // The service worker should exit if we close/deallocate the view we used to launch it.
     [webView _close];
     webView = nil;
     while (webViewConfiguration.processPool._serviceWorkerProcessCount)
         TestWebKitAPI::Util::spinRunLoop(10);
+}
+
+TEST(ServiceWorker, ExtensionServiceWorkerDisableCORS)
+{
+    using namespace TestWebKitAPI;
+
+    [WKWebsiteDataStore _allowWebsiteDataRecordsForAllOrigins];
+
+    // Start with a clean slate data store
+    [[WKWebsiteDataStore defaultDataStore] removeDataOfTypes:[WKWebsiteDataStore allWebsiteDataTypes] modifiedSince:[NSDate distantPast] completionHandler:^() {
+        done = true;
+    }];
+    Util::run(&done);
+    done = false;
+
+    bool madeHTTPGetRequest = false;
+    bool madeHTTPOptionsRequest = false;
+    String filenameRequestedOverHTTP;
+    HTTPServer server([&] (Connection connection) {
+        connection.receiveHTTPRequest([&, connection](Vector<char>&& bytes) mutable {
+            String requestString(bytes.data(), bytes.size());
+            if (requestString.startsWithIgnoringASCIICase("OPTIONS"_s)) {
+                madeHTTPOptionsRequest = true;
+                connection.send(
+                    "HTTP/1.1 204 No Content\r\n"
+                    "Allow: OPTIONS, GET, HEAD, POST\r\n\r\n"_s
+                );
+                return;
+            }
+            if (requestString.startsWithIgnoringASCIICase("GET"_s)) {
+                auto requestParts = requestString.split(' ');
+                if (requestParts.size() > 2)
+                    filenameRequestedOverHTTP = requestParts[1];
+                madeHTTPGetRequest = true;
+                done = true;
+            }
+        });
+    });
+
+    auto testJS = makeString("fetch('http://127.0.0.1:"_s, server.port(), "/bar.xml', { headers: { 'Custom-Header': 'CustomHeaderValue' } });"_s);
+
+    auto schemeHandler = adoptNS([ServiceWorkerSchemeHandler new]);
+    [schemeHandler addMappingFromURLString:@"sw-ext://ABC/sw.js" toData:testJS.utf8().data()];
+
+    WKWebViewConfiguration *webViewConfiguration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"ServiceWorkerPagePlugIn"];
+    [webViewConfiguration setURLSchemeHandler:schemeHandler.get() forURLScheme:@"sw-ext"];
+    webViewConfiguration._corsDisablingPatterns = @[@"*://*/*"];
+
+    auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration]);
+    // The service worker script should get loaded over the custom scheme handler.
+    done = false;
+    didStartURLSchemeTask = false;
+    [webView _loadServiceWorker:[NSURL URLWithString:@"sw-ext://ABC/sw.js"] usingModules:NO completionHandler:^(BOOL success) {
+        EXPECT_TRUE(success);
+        EXPECT_TRUE(didStartURLSchemeTask);
+        done = true;
+    }];
+    Util::run(&done);
+
+    // It should load bar.xml.
+    Util::run(&madeHTTPGetRequest);
+    EXPECT_STREQ(filenameRequestedOverHTTP.utf8().data(), "/bar.xml");
+
+    // It shouldn't have done a CORS preflight.
+    EXPECT_FALSE(madeHTTPOptionsRequest);
+}
+
+TEST(ServiceWorker, ExtensionServiceWorkerWithModules)
+{
+    [WKWebsiteDataStore _allowWebsiteDataRecordsForAllOrigins];
+
+    // Start with a clean slate data store
+    [[WKWebsiteDataStore defaultDataStore] removeDataOfTypes:[WKWebsiteDataStore allWebsiteDataTypes] modifiedSince:[NSDate distantPast] completionHandler:^() {
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+    done = false;
+
+    auto schemeHandler = adoptNS([ServiceWorkerSchemeHandler new]);
+
+    [schemeHandler addMappingFromURLString:@"sw-ext://ABC/exports.js" toData:"const x = 805; export { x };"];
+    [schemeHandler addMappingFromURLString:@"sw-ext://ABC/sw.js" toData:"import { x } from './exports.js'; x;"];
+
+    WKWebViewConfiguration *webViewConfiguration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"ServiceWorkerPagePlugIn"];
+    webViewConfiguration.websiteDataStore = [adoptNS([WKWebViewConfiguration new]) websiteDataStore];
+    [webViewConfiguration setURLSchemeHandler:schemeHandler.get() forURLScheme:@"sw-ext"];
+    auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration]);
+
+    auto object = adoptNS([[ServiceWorkerPageRemoteObject alloc] init]);
+    _WKRemoteObjectInterface *interface = [_WKRemoteObjectInterface remoteObjectInterfaceWithProtocol:@protocol(ServiceWorkerPageProtocol)];
+    [[webView _remoteObjectRegistry] registerExportedObject:object.get() interface:interface];
+
+    // The service worker script should get loaded over the custom scheme handler.
+    done = false;
+    didStartURLSchemeTask = false;
+    [webView _loadServiceWorker:[NSURL URLWithString:@"sw-ext://ABC/sw.js"] usingModules:YES completionHandler:^(BOOL success) {
+        EXPECT_TRUE(success);
+        EXPECT_TRUE(didStartURLSchemeTask);
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
 }
 
 TEST(ServiceWorker, ExtensionServiceWorkerFailureBadScript)
@@ -2718,7 +2847,7 @@ TEST(ServiceWorker, ExtensionServiceWorkerFailureBadScript)
     // The service worker script should get loaded over the custom scheme handler.
     done = false;
     didStartURLSchemeTask = false;
-    [webView _loadServiceWorker:[NSURL URLWithString:@"sw-ext://ABC/bad-sw.js"] completionHandler:^(BOOL success) {
+    [webView _loadServiceWorker:[NSURL URLWithString:@"sw-ext://ABC/bad-sw.js"] usingModules:NO completionHandler:^(BOOL success) {
         EXPECT_FALSE(success);
         EXPECT_TRUE(didStartURLSchemeTask);
         done = true;
@@ -2745,7 +2874,7 @@ TEST(ServiceWorker, ExtensionServiceWorkerFailureBadURL)
     [[webView _remoteObjectRegistry] registerExportedObject:object.get() interface:interface];
 
     done = false;
-    [webView _loadServiceWorker:[NSURL URLWithString:@"https://ABC/does-not-exist.js"] completionHandler:^(BOOL success) {
+    [webView _loadServiceWorker:[NSURL URLWithString:@"https://ABC/does-not-exist.js"] usingModules:NO completionHandler:^(BOOL success) {
         EXPECT_FALSE(success);
         done = true;
     }];
@@ -2770,7 +2899,7 @@ TEST(ServiceWorker, ExtensionServiceWorkerFailureViewClosed)
     _WKRemoteObjectInterface *interface = [_WKRemoteObjectInterface remoteObjectInterfaceWithProtocol:@protocol(ServiceWorkerPageProtocol)];
     [[webView _remoteObjectRegistry] registerExportedObject:object.get() interface:interface];
 
-    [webView _loadServiceWorker:[NSURL URLWithString:@"https://ABC/does-not-exist.js"] completionHandler:^(BOOL success) {
+    [webView _loadServiceWorker:[NSURL URLWithString:@"https://ABC/does-not-exist.js"] usingModules:NO completionHandler:^(BOOL success) {
         EXPECT_FALSE(success);
         done = true;
     }];
@@ -2797,7 +2926,7 @@ TEST(ServiceWorker, ExtensionServiceWorkerFailureViewDestroyed)
         _WKRemoteObjectInterface *interface = [_WKRemoteObjectInterface remoteObjectInterfaceWithProtocol:@protocol(ServiceWorkerPageProtocol)];
         [[webView _remoteObjectRegistry] registerExportedObject:object.get() interface:interface];
 
-        [webView _loadServiceWorker:[NSURL URLWithString:@"https://ABC/does-not-exist.js"] completionHandler:^(BOOL success) {
+        [webView _loadServiceWorker:[NSURL URLWithString:@"https://ABC/does-not-exist.js"] usingModules:NO completionHandler:^(BOOL success) {
             EXPECT_FALSE(success);
             done = true;
         }];
@@ -2848,6 +2977,17 @@ static constexpr auto ServiceWorkerWindowClientFocusJS =
 "   });"
 "});"_s;
 
+#if PLATFORM(MAC)
+void miniaturizeWebView(TestWKWebView* webView)
+{
+    [[webView hostWindow] miniaturize:[webView hostWindow]];
+
+    int cptr = 0;
+    while ([webView hostWindow].isVisible && ++cptr < 1000)
+        TestWebKitAPI::Util::spinRunLoop(10);
+}
+#endif // PLATFORM(MAC)
+
 TEST(ServiceWorker, ServiceWorkerWindowClientFocus)
 {
     [WKWebsiteDataStore _allowWebsiteDataRecordsForAllOrigins];
@@ -2862,9 +3002,9 @@ TEST(ServiceWorker, ServiceWorkerWindowClientFocus)
     auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     auto preferences = [configuration preferences];
 
-    for (_WKInternalDebugFeature *feature in [WKPreferences _internalDebugFeatures]) {
+    for (_WKFeature *feature in [WKPreferences _features]) {
         if ([feature.key isEqualToString:@"ServiceWorkersUserGestureEnabled"])
-            [preferences _setEnabled:NO forInternalDebugFeature:feature];
+            [preferences _setEnabled:NO forFeature:feature];
     }
 
     auto messageHandler = adoptNS([[SWMessageHandlerWithExpectedMessage alloc] init]);
@@ -2885,9 +3025,10 @@ TEST(ServiceWorker, ServiceWorkerWindowClientFocus)
     EXPECT_WK_STREQ([webView2 _test_waitForAlert], "already active");
 
 #if PLATFORM(MAC)
-    [[webView1 hostWindow] miniaturize:[webView1 hostWindow]];
-    [[webView2 hostWindow] miniaturize:[webView2 hostWindow]];
+    miniaturizeWebView(webView1.get());
     EXPECT_FALSE([webView1 hostWindow].isVisible);
+
+    miniaturizeWebView(webView2.get());
     EXPECT_FALSE([webView2 hostWindow].isVisible);
 #endif
 
@@ -2944,9 +3085,9 @@ TEST(ServiceWorker, ServiceWorkerWindowClientFocusRequiresUserGesture)
     auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     auto preferences = [configuration preferences];
 
-    for (_WKInternalDebugFeature *feature in [WKPreferences _internalDebugFeatures]) {
+    for (_WKFeature *feature in [WKPreferences _features]) {
         if ([feature.key isEqualToString:@"ServiceWorkersUserGestureEnabled"])
-            [preferences _setEnabled:YES forInternalDebugFeature:feature];
+            [preferences _setEnabled:YES forFeature:feature];
     }
 
     auto messageHandler = adoptNS([[SWMessageHandlerWithExpectedMessage alloc] init]);
@@ -3025,9 +3166,9 @@ TEST(ServiceWorker, openWindowWithoutDelegate)
     auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     auto preferences = [configuration preferences];
 
-    for (_WKInternalDebugFeature *feature in [WKPreferences _internalDebugFeatures]) {
+    for (_WKFeature *feature in [WKPreferences _features]) {
         if ([feature.key isEqualToString:@"ServiceWorkersUserGestureEnabled"])
-            [preferences _setEnabled:NO forInternalDebugFeature:feature];
+            [preferences _setEnabled:NO forFeature:feature];
     }
 
     auto messageHandler = adoptNS([[SWMessageHandlerWithExpectedMessage alloc] init]);
@@ -3170,11 +3311,11 @@ TEST(ServiceWorker, WindowClientNavigate)
     done = false;
 
     auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
-    for (_WKExperimentalFeature *feature in [WKPreferences _experimentalFeatures]) {
+    for (_WKFeature *feature in [WKPreferences _features]) {
         if ([feature.key isEqualToString:@"CrossOriginOpenerPolicyEnabled"])
-            [[configuration preferences] _setEnabled:YES forExperimentalFeature:feature];
+            [[configuration preferences] _setEnabled:YES forFeature:feature];
         else if ([feature.key isEqualToString:@"CrossOriginEmbedderPolicyEnabled"])
-            [[configuration preferences] _setEnabled:YES forExperimentalFeature:feature];
+            [[configuration preferences] _setEnabled:YES forFeature:feature];
     }
 
     auto webView1 = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 300, 300) configuration:configuration.get() addToWindow:YES]);
@@ -3306,9 +3447,9 @@ TEST(ServiceWorker, OpenWindowWebsiteDataStoreDelegate)
     auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
 
     auto preferences = [configuration preferences];
-    for (_WKInternalDebugFeature *feature in [WKPreferences _internalDebugFeatures]) {
+    for (_WKFeature *feature in [WKPreferences _features]) {
         if ([feature.key isEqualToString:@"ServiceWorkersUserGestureEnabled"])
-            [preferences _setEnabled:NO forInternalDebugFeature:feature];
+            [preferences _setEnabled:NO forFeature:feature];
     }
 
     auto dataStoreDelegate = adoptNS([[ServiceWorkerOpenWindowWebsiteDataStoreDelegate alloc] initWithConfiguration:configuration.get()]);
@@ -3357,9 +3498,9 @@ TEST(ServiceWorker, OpenWindowCOOP)
     auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
 
     auto preferences = [configuration preferences];
-    for (_WKInternalDebugFeature *feature in [WKPreferences _internalDebugFeatures]) {
+    for (_WKFeature *feature in [WKPreferences _features]) {
         if ([feature.key isEqualToString:@"ServiceWorkersUserGestureEnabled"])
-            [preferences _setEnabled:NO forInternalDebugFeature:feature];
+            [preferences _setEnabled:NO forFeature:feature];
     }
 
     auto dataStoreDelegate = adoptNS([[ServiceWorkerOpenWindowWebsiteDataStoreDelegate alloc] initWithConfiguration:configuration.get()]);

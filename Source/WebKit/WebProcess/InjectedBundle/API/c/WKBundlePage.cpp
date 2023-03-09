@@ -108,9 +108,8 @@ void WKBundlePageSetResourceLoadClient(WKBundlePageRef pageRef, WKBundlePageReso
     WebKit::toImpl(pageRef)->setInjectedBundleResourceLoadClient(makeUnique<WebKit::InjectedBundlePageResourceLoadClient>(wkClient));
 }
 
-void WKBundlePageSetPolicyClient(WKBundlePageRef pageRef, WKBundlePagePolicyClientBase* wkClient)
+void WKBundlePageSetPolicyClient(WKBundlePageRef, WKBundlePagePolicyClientBase*)
 {
-    WebKit::toImpl(pageRef)->initializeInjectedBundlePolicyClient(wkClient);
 }
 
 void WKBundlePageSetUIClient(WKBundlePageRef pageRef, WKBundlePageUIClientBase* wkClient)
@@ -245,8 +244,12 @@ void* WKAccessibilityRootObject(WKBundlePageRef pageRef)
     WebCore::Page* page = WebKit::toImpl(pageRef)->corePage();
     if (!page)
         return 0;
+
+    auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(page->mainFrame());
+    if (!localMainFrame)
+        return 0;
     
-    WebCore::Frame& core = page->mainFrame();
+    WebCore::Frame& core = *localMainFrame;
     if (!core.document())
         return 0;
     
@@ -300,8 +303,12 @@ bool WKAccessibilityCanUseSecondaryAXThread(WKBundlePageRef pageRef)
     WebCore::Page* page = WebKit::toImpl(pageRef)->corePage();
     if (!page)
         return false;
+    
+    auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(page->mainFrame());
+    if (!localMainFrame)
+        return false;
 
-    WebCore::Frame& core = page->mainFrame();
+    WebCore::Frame& core = *localMainFrame;
     if (!core.document())
         return false;
 
@@ -618,10 +625,21 @@ void WKBundlePageSetComposition(WKBundlePageRef pageRef, WKStringRef text, int f
         highlights.reserveInitialCapacity(highlightDataArray->size());
         for (auto dictionary : highlightDataArray->elementsOfType<API::Dictionary>()) {
             auto startOffset = static_cast<API::UInt64*>(dictionary->get("from"_s))->value();
+
+            std::optional<WebCore::Color> backgroundHighlightColor;
+            std::optional<WebCore::Color> foregroundHighlightColor;
+
+            if (auto backgroundColor = dictionary->get("color"_s))
+                backgroundHighlightColor = WebCore::CSSParser::parseColorWithoutContext(static_cast<API::String*>(backgroundColor)->string());
+
+            if (auto foregroundColor = dictionary->get("foregroundColor"_s))
+                foregroundHighlightColor = WebCore::CSSParser::parseColorWithoutContext(static_cast<API::String*>(foregroundColor)->string());
+
             highlights.uncheckedAppend({
                 static_cast<unsigned>(startOffset),
                 static_cast<unsigned>(startOffset + static_cast<API::UInt64*>(dictionary->get("length"_s))->value()),
-                WebCore::CSSParser::parseColorWithoutContext(static_cast<API::String*>(dictionary->get("color"_s))->string())
+                backgroundHighlightColor,
+                foregroundHighlightColor
             });
         }
     }
@@ -728,8 +746,12 @@ void WKBundlePageCallAfterTasksAndTimers(WKBundlePageRef pageRef, WKBundlePageTe
     WebCore::Page* page = webPage ? webPage->corePage() : nullptr;
     if (!page)
         return;
+    
+    auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(page->mainFrame());
+    if (!localMainFrame)
+        return;
 
-    WebCore::Document* document = page->mainFrame().document();
+    WebCore::Document* document = localMainFrame->document();
     if (!document)
         return;
 
@@ -866,4 +888,9 @@ void WKBundlePageSetEventThrottlingBehaviorOverride(WKBundlePageRef page, WKEven
 void WKBundlePageLayoutIfNeeded(WKBundlePageRef page)
 {
     WebKit::toImpl(page)->layoutIfNeeded();
+}
+
+void WKBundlePageSetSkipDecidePolicyForResponseIfPossible(WKBundlePageRef page, bool skip)
+{
+    WebKit::toImpl(page)->setSkipDecidePolicyForResponseIfPossible(skip);
 }

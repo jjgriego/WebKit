@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2022 Apple Inc. All rights reserved.
  *           (C) 2007 Graham Dennis (graham.dennis@gmail.com)
  *
  * Redistribution and use in source and binary forms, with or without
@@ -274,6 +274,7 @@ static int printTestCount;
 static int checkForWorldLeaks;
 static BOOL printSeparators;
 static std::set<std::string> allowedHosts;
+static std::set<std::string> localhostAliases;
 static std::string webCoreLogging;
 
 static RetainPtr<CFStringRef>& persistentUserStyleSheetLocation()
@@ -865,10 +866,19 @@ static void setWebPreferencesForTestOptions(WebPreferences *preferences, const W
         [preferences _resetForTesting];
 
         if (enableAllExperimentalFeatures) {
-            for (WebFeature *feature in [WebPreferences _experimentalFeatures])
-                [preferences _setEnabled:YES forFeature:feature];
+            for (WebFeature *feature in [WebPreferences _experimentalFeatures]) {
+                // FIXME: ShowModalDialogEnabled and NeedsSiteSpecificQuirks are `developer` settings which should not be enabled by default, but are currently lumped in with the other user-visible features. rdar://103648153
+                // FIXME: BeaconAPIEnabled and LocalFileContentSniffingEnabled These are `stable` settings but should be turned off in WebKitLegacy.
+                if (![feature.key isEqualToString:@"ShowModalDialogEnabled"]
+                    && ![feature.key isEqualToString:@"NeedsSiteSpecificQuirks"]
+                    && ![feature.key isEqualToString:@"BeaconAPIEnabled"]
+                    && ![feature.key isEqualToString:@"LocalFileContentSniffingEnabled"]) {
+                    [preferences _setEnabled:YES forFeature:feature];
+                }
+            }
         }
 
+        
         if (persistentUserStyleSheetLocation()) {
             preferences.userStyleSheetLocation = [NSURL URLWithString:(__bridge NSString *)persistentUserStyleSheetLocation().get()];
             preferences.userStyleSheetEnabled = YES;
@@ -898,7 +908,7 @@ static void setWebPreferencesForTestOptions(WebPreferences *preferences, const W
         [preferences _setBoolPreferenceForTestingWithValue:NO forKey:@"WebKitLayoutFormattingContextEnabled"];
     }];
 
-    [WebPreferences _clearNetworkLoaderSession];
+    [WebPreferences _clearNetworkLoaderSession:^{ }];
     [WebPreferences _setCurrentNetworkLoaderSessionCookieAcceptPolicy:NSHTTPCookieAcceptPolicyOnlyFromMainDocumentDomain];
 }
 
@@ -939,6 +949,7 @@ static void setDefaultsToConsistentValuesForTesting()
 #if !PLATFORM(IOS_FAMILY)
         @"NSScrollAnimationEnabled": @NO,
 #endif
+        @"NSScrollViewUseLegacyScrolling": @YES,
         @"NSOverlayScrollersEnabled": @NO,
         @"AppleShowScrollBars": @"Always",
         @"NSButtonAnimationsEnabled": @NO, // Ideally, we should find a way to test animations, but for now, make sure that the dumped snapshot matches actual state.
@@ -1008,6 +1019,7 @@ static void initializeGlobalsFromCommandLineOptions(int argc, const char *argv[]
         {"print-test-count", no_argument, &printTestCount, YES},
         {"world-leaks", no_argument, &checkForWorldLeaks, NO},
         {"webcore-logging", required_argument, nullptr, 'w'},
+        {"localhost-alias", required_argument, nullptr, 'l'},
         {nullptr, 0, nullptr, 0}
     };
 
@@ -1020,6 +1032,10 @@ static void initializeGlobalsFromCommandLineOptions(int argc, const char *argv[]
                 break;
             case 'a': // "allowed-host"
                 allowedHosts.insert(optarg);
+                break;
+            case 'l': // "localhost-alias"
+                localhostAliases.insert(optarg);
+                allowedHosts.insert(optarg); // localhost is implicitly allowed and so should aliases to it.
                 break;
             case 'w': // "webcore-logging"
                 webCoreLogging = optarg;
@@ -1183,6 +1199,9 @@ void dumpRenderTree(int argc, const char *argv[])
 
     [NSURLRequest setAllowsAnyHTTPSCertificate:YES forHost:@"localhost"];
     [NSURLRequest setAllowsAnyHTTPSCertificate:YES forHost:@"127.0.0.1"];
+    for (auto& localhostAlias : localhostAliases)
+        [NSURLRequest setAllowsAnyHTTPSCertificate:YES forHost:[NSString stringWithUTF8String:localhostAlias.c_str()]];
+
     if (allowAnyHTTPSCertificateForAllowedHosts) {
         for (auto& host : allowedHosts)
             [NSURLRequest setAllowsAnyHTTPSCertificate:YES forHost:[NSString stringWithUTF8String:host.c_str()]];
@@ -1295,7 +1314,9 @@ int DumpRenderTreeMain(int argc, const char *argv[])
     WebCoreTestSupport::setLinkedOnOrAfterEverythingForTesting();
 
 #if PLATFORM(IOS_FAMILY)
+IGNORE_WARNINGS_BEGIN("deprecated-implementations")
     _UIApplicationLoadWebKit();
+IGNORE_WARNINGS_END
 #endif
 
     @autoreleasepool {
@@ -1403,12 +1424,12 @@ static RetainPtr<NSString> dumpFramesAsText(WebFrame *frame)
 
     NSString *innerText = [documentElement innerText];
 
-    // We use WTF::String::tryGetUtf8 to convert innerText to a UTF8 buffer since
+    // We use WTF::String::tryGetUTF8 to convert innerText to a UTF8 buffer since
     // it can handle dangling surrogates and the NSString
     // conversion methods cannot. After the conversion to a buffer, we turn that buffer into
     // a CFString via fromUTF8WithLatin1Fallback().createCFString() which can be appended to
     // the result without any conversion.
-    if (auto utf8Result = WTF::String(innerText).tryGetUtf8()) {
+    if (auto utf8Result = WTF::String(innerText).tryGetUTF8()) {
         auto string = WTFMove(utf8Result.value());
         [result appendFormat:@"%@\n", String::fromUTF8WithLatin1Fallback(string.data(), string.length()).createCFString().get()];
     } else
@@ -1620,7 +1641,7 @@ void dump()
         if (gTestRunner->dumpAsAudio()) {
             resultData = dumpAudio();
             resultMimeType = @"audio/wav";
-        } else if (gTestRunner->dumpAsText()) {
+        } else if (gTestRunner->dumpAsText() || gTestRunner->dumpChildFramesAsText()) {
             resultString = dumpFramesAsText(mainFrame);
         } else if (gTestRunner->dumpAsPDF()) {
             resultData = dumpFrameAsPDF(mainFrame);
@@ -1843,8 +1864,10 @@ static NSURL *computeTestURL(NSString *pathOrURLString, NSString **relativeTestP
 {
     *relativeTestPath = nil;
 
-    if ([pathOrURLString hasPrefix:@"http://"] || [pathOrURLString hasPrefix:@"https://"] || [pathOrURLString hasPrefix:@"file://"])
-        return [NSURL URLWithString:pathOrURLString];
+    if ([pathOrURLString hasPrefix:@"http://"] || [pathOrURLString hasPrefix:@"https://"] || [pathOrURLString hasPrefix:@"file://"]) {
+        // Use this instead of [NSURL URLWithString:] to properly handle special characters in the input string.
+        return [NSURL URLWithDataRepresentation:[pathOrURLString dataUsingEncoding:NSUTF8StringEncoding] relativeToURL:nil];
+    }
 
     NSString *absolutePath = [[[NSURL fileURLWithPath:pathOrURLString] absoluteURL] path];
 
@@ -1900,7 +1923,9 @@ static void runTest(const std::string& inputLine)
 
     const char* testURL([[url absoluteString] UTF8String]);
     gTestRunner = TestRunner::create(testURL, command.expectedPixelHash);
+    gTestRunner->setAllowAnyHTTPSCertificateForAllowedHosts(allowAnyHTTPSCertificateForAllowedHosts);
     gTestRunner->setAllowedHosts(allowedHosts);
+    gTestRunner->setLocalhostAliases(localhostAliases);
     gTestRunner->setCustomTimeout(command.timeout.milliseconds());
     gTestRunner->setDumpJSConsoleLogInStdErr(command.dumpJSConsoleLogInStdErr || options.dumpJSConsoleLogInStdErr());
 
@@ -1922,6 +1947,7 @@ static void runTest(const std::string& inputLine)
     gTestRunner->clearAllApplicationCaches();
 
     gTestRunner->clearAllDatabases();
+    gTestRunner->clearNotificationPermissionState();
 
     if (disallowedURLs)
         CFSetRemoveAllValues(disallowedURLs.get());

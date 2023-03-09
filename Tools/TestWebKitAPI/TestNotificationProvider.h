@@ -45,18 +45,24 @@ public:
 
     WKDictionaryRef notificationPermissions() const;
     void showWebNotification(WKPageRef, WKNotificationRef);
-    void simulateNotificationClick();
+    void closeWebNotification(WKNotificationRef);
+    bool simulateNotificationClick();
+    bool simulateNotificationClose();
+    WKStringRef lastNotificationDataStoreIdentifier() const { return m_lastNotificationDataStoreIdentifier.get(); };
 
-    bool hasReceivedNotification() const { return m_hasReceivedNotification; }
-    void resetHasReceivedNotification() { m_hasReceivedNotification = false; }
+    bool hasReceivedShowNotification() const { return m_hasReceivedShowNotification; }
+    bool hasReceivedCloseNotification() const { return m_hasReceivedCloseNotification; }
+    void resetHasReceivedNotification();
 
 private:
     Vector<WKNotificationManagerRef> m_managers;
     HashMap<String, bool> m_permissions;
     WKNotificationProviderV0 m_provider;
 
-    bool m_hasReceivedNotification { false };
+    bool m_hasReceivedShowNotification { false };
+    bool m_hasReceivedCloseNotification { false };
     std::pair<WKNotificationManagerRef, uint64_t> m_pendingNotification;
+    WKRetainPtr<WKStringRef> m_lastNotificationDataStoreIdentifier;
 };
 
 }

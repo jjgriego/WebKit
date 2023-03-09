@@ -55,6 +55,11 @@ ImageBufferBackend::ImageBufferBackend(const Parameters& parameters)
 
 ImageBufferBackend::~ImageBufferBackend() = default;
 
+RefPtr<NativeImage> ImageBufferBackend::copyNativeImageForDrawing(BackingStoreCopy copyBehavior) const
+{
+    return copyNativeImage(copyBehavior);
+}
+
 RefPtr<NativeImage> ImageBufferBackend::sinkIntoNativeImage()
 {
     return copyNativeImage(DontCopyBackingStore);
@@ -167,13 +172,6 @@ AffineTransform ImageBufferBackend::calculateBaseTransform(const Parameters& par
     baseTransform.scale(parameters.resolutionScale);
 
     return baseTransform;
-}
-
-void ImageBufferBackend::applyBaseTransformToContext() const
-{
-    auto& context = this->context();
-    context.applyDeviceScaleFactor(m_parameters.resolutionScale);
-    context.setCTM(calculateBaseTransform(m_parameters, originAtBottomLeftCorner()));
 }
 
 } // namespace WebCore

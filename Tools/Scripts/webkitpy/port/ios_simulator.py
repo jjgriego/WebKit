@@ -1,4 +1,4 @@
-# Copyright (C) 2014-2018 Apple Inc. All rights reserved.
+# Copyright (C) 2014-2022 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -45,7 +45,7 @@ class IOSSimulatorPort(IOSPort):
 
     DEFAULT_DEVICE_TYPES = [
         DeviceType(hardware_family='iPhone', hardware_type='12'),
-        DeviceType(hardware_family='iPad', hardware_type='(5th generation)'),
+        DeviceType(hardware_family='iPad', hardware_type='(9th generation)'),
         DeviceType(hardware_family='iPhone', hardware_type='7'),
     ]
     SDK = apple_additions().get_sdk('iphonesimulator') if apple_additions() else 'iphonesimulator'
@@ -107,12 +107,6 @@ class IOSSimulatorPort(IOSPort):
     def developer_dir(self):
         return self._executive.run_command(['xcode-select', '--print-path']).rstrip()
 
-    def logging_patterns_to_strip(self):
-        return []
-
-    def stderr_patterns_to_strip(self):
-        return []
-
 
 class IPhoneSimulatorPort(IOSSimulatorPort):
     port_name = 'iphone-simulator'
@@ -132,7 +126,7 @@ class IPadSimulatorPort(IOSSimulatorPort):
     port_name = 'ipad-simulator'
 
     DEVICE_TYPE = DeviceType(hardware_family='iPad')
-    DEFAULT_DEVICE_TYPES = [DeviceType(hardware_family='iPad', hardware_type='(5th generation)')]
+    DEFAULT_DEVICE_TYPES = [DeviceType(hardware_family='iPad', hardware_type='(9th generation)')]
 
     def __init__(self, *args, **kwargs):
         super(IPadSimulatorPort, self).__init__(*args, **kwargs)

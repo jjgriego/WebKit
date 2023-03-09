@@ -36,7 +36,7 @@ class WebDriverWPE(WebDriver):
 
     def browser_path(self):
         if self._port.browser_name() == "cog":
-            return self._port.cog_path_to('cog')
+            return self._port.cog_path_to('launcher', 'cog')
         return self._port._build_path('bin', 'MiniBrowser')
 
     def browser_args(self):
@@ -51,7 +51,7 @@ class WebDriverWPE(WebDriver):
         return args
 
     def browser_env(self):
-        return self._port.browser_env()
+        return self._port.setup_environ_for_minibrowser()
 
     def capabilities(self):
         return {'wpe:browserOptions': {

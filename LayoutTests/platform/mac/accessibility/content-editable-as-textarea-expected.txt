@@ -1,8 +1,4 @@
-
 This tests that a contenteditable region behaves as a proper AXTextArea.
-
-On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
-
 
 Role: AXRole: AXTextArea
 Value: AXValue: hello
@@ -12,23 +8,24 @@ String with range: ello
 worl
 Attributed string with range: ello
 {
-    AXBackgroundColor = " [ (kCGColorSpaceICCBased; kCGColorSpaceModelRGB; sRGB IEC61966-2.1)] ( 0 0 0 0 )";
+    AXBackgroundColor = "sRGB IEC61966-2.1 colorspace 0 0 0 0";
     AXFont =     {
         AXFontFamily = Times;
         AXFontName = "Times-Roman";
         AXFontSize = 16;
         AXVisibleName = "Times Roman";
     };
-    AXForegroundColor = " [ (kCGColorSpaceICCBased; kCGColorSpaceModelRGB; sRGB IEC61966-2.1)] ( 0 0 0 1 )";
+    AXForegroundColor = "sRGB IEC61966-2.1 colorspace 0 0 0 1";
 }worl{
-    AXBackgroundColor = " [ (kCGColorSpaceICCBased; kCGColorSpaceModelRGB; sRGB IEC61966-2.1)] ( 0 0 0 0 )";
+    AXBackgroundColor = "sRGB IEC61966-2.1 colorspace 0 0 0 0";
     AXFont =     {
+        AXFontBold = 1;
         AXFontFamily = Times;
         AXFontName = "Times-Bold";
         AXFontSize = 16;
         AXVisibleName = "Times Bold";
     };
-    AXForegroundColor = " [ (kCGColorSpaceICCBased; kCGColorSpaceModelRGB; sRGB IEC61966-2.1)] ( 0 0 0 1 )";
+    AXForegroundColor = "sRGB IEC61966-2.1 colorspace 0 0 0 1";
     AXMarkedMisspelled = 1;
     AXMisspelled = 1;
 }
@@ -44,4 +41,5 @@ world
 PASS successfullyParsed is true
 
 TEST COMPLETE
+
 

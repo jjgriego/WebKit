@@ -26,6 +26,7 @@
 #pragma once
 
 #include "CanvasBase.h"
+#include "CanvasObserver.h"
 #include "InspectorCanvas.h"
 #include "InspectorCanvasCallTracer.h"
 #include "InspectorWebAgentBase.h"
@@ -54,7 +55,7 @@ class WebGLProgram;
 class WebGLRenderingContextBase;
 #endif // ENABLE(WEBGL)
 
-class InspectorCanvasAgent final : public InspectorAgentBase, public Inspector::CanvasBackendDispatcherHandler, public CanvasObserver, public CanMakeWeakPtr<InspectorCanvasAgent> {
+class InspectorCanvasAgent final : public InspectorAgentBase, public Inspector::CanvasBackendDispatcherHandler, public CanvasObserver {
     WTF_MAKE_NONCOPYABLE(InspectorCanvasAgent);
     WTF_MAKE_FAST_ALLOCATED;
 public:

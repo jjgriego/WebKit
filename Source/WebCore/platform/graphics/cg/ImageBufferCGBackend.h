@@ -28,33 +28,29 @@
 #if USE(CG)
 
 #include "ImageBufferBackend.h"
+#include <memory>
 #include <wtf/Forward.h>
-
-typedef struct CGImage* CGImageRef;
 
 namespace WebCore {
 
+class GraphicsContextCG;
+
 class WEBCORE_EXPORT ImageBufferCGBackend : public ImageBufferBackend {
 public:
+    ~ImageBufferCGBackend() override;
     static unsigned calculateBytesPerRow(const IntSize& backendSize);
-
     static constexpr bool isOriginAtBottomLeftCorner = true;
 
 protected:
     using ImageBufferBackend::ImageBufferBackend;
+    void applyBaseTransform(GraphicsContextCG&) const;
 
     void clipToMask(GraphicsContext&, const FloatRect& destRect) override;
-
-    String toDataURL(const String& mimeType, std::optional<double> quality, PreserveResolution) const override;
-    Vector<uint8_t> toData(const String& mimeType, std::optional<double> quality) const override;
 
     std::unique_ptr<ThreadSafeImageBufferFlusher> createFlusher() override;
 
     bool originAtBottomLeftCorner() const override;
-
-    static RetainPtr<CGColorSpaceRef> contextColorSpace(const GraphicsContext&);
-
-    virtual RetainPtr<CGImageRef> copyCGImageForEncoding(CFStringRef destinationUTI, PreserveResolution) const;
+    mutable std::unique_ptr<GraphicsContextCG> m_context;
 };
 
 } // namespace WebCore

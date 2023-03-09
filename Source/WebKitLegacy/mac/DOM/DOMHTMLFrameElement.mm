@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2004-2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,6 +31,7 @@
 #import <WebCore/DOMWindow.h>
 #import <WebCore/Document.h>
 #import "ExceptionHandlers.h"
+#import <WebCore/ElementInlines.h>
 #import <WebCore/HTMLFrameElement.h>
 #import <WebCore/HTMLNames.h>
 #import <WebCore/JSExecState.h>
@@ -153,26 +154,12 @@
 
 - (NSString *)location
 {
-    WebCore::JSMainThreadNullState state;
-    return IMPL->location().string();
+    return nullptr;
 }
 
 - (void)setLocation:(NSString *)newLocation
 {
-    WebCore::JSMainThreadNullState state;
-    IMPL->setLocation(newLocation);
-}
-
-- (int)width
-{
-    WebCore::JSMainThreadNullState state;
-    return IMPL->width();
-}
-
-- (int)height
-{
-    WebCore::JSMainThreadNullState state;
-    return IMPL->height();
+    return;
 }
 
 @end

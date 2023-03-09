@@ -41,12 +41,20 @@
 #define NSAccessibilityChildrenInNavigationOrderAttribute @"AXChildrenInNavigationOrder"
 #endif
 
+// NSAttributedString support.
+
+#ifndef NSAccessibilityBlockQuoteLevelAttribute
+#define NSAccessibilityBlockQuoteLevelAttribute @"AXBlockQuoteLevel"
+#endif
+
+#ifndef NSAccessibilityExpandedTextValueAttribute
+#define NSAccessibilityExpandedTextValueAttribute @"AXExpandedTextValue"
+#endif
+
+extern "C" AXUIElementRef NSAccessibilityCreateAXUIElementRef(id element);
+
 @interface WebAccessibilityObjectWrapper : WebAccessibilityObjectWrapperBase
 
-// FIXME: Remove these methods since clients should not need to call them and hence should not be exposed in the public interface.
-// Inside WebCore, use the WebCore homonymous declared below instead.
-- (id)textMarkerRangeFromVisiblePositions:(const WebCore::VisiblePosition&)startPosition endPosition:(const WebCore::VisiblePosition&)endPosition;
-- (id)textMarkerForVisiblePosition:(const WebCore::VisiblePosition&)visiblePos;
 - (RetainPtr<AXTextMarkerRef>)textMarkerForFirstPositionInTextControl:(WebCore::HTMLTextFormControlElement&)textControl;
 
 // When a plugin uses a WebKit control to act as a surrogate view (e.g. PDF use WebKit to create text fields).
@@ -89,4 +97,4 @@ AXTextMarkerRef startOrEndTextMarkerForRange(AXObjectCache*, const std::optional
 AXTextMarkerRangeRef textMarkerRangeFromRange(AXObjectCache*, const std::optional<SimpleRange>&);
 std::optional<SimpleRange> rangeForTextMarkerRange(AXObjectCache*, AXTextMarkerRangeRef);
 
-}
+} // namespace WebCore

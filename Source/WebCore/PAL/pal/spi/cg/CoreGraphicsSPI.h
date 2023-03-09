@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,7 +29,7 @@
 #include <CoreGraphics/CoreGraphics.h>
 
 #if HAVE(IOSURFACE)
-#include <pal/spi/cocoa/IOSurfaceSPI.h>
+#include <wtf/spi/cocoa/IOSurfaceSPI.h>
 #endif
 
 #if PLATFORM(MAC)
@@ -190,9 +190,29 @@ struct CGShadowStyle {
 };
 typedef struct CGShadowStyle CGShadowStyle;
 
+#if HAVE(CGSTYLE_COLORMATRIX_BLUR)
+struct CGGaussianBlurStyle {
+    unsigned version;
+    CGFloat radius;
+};
+typedef struct CGGaussianBlurStyle CGGaussianBlurStyle;
+
+struct CGColorMatrixStyle {
+    unsigned version;
+    CGFloat matrix[20];
+};
+typedef struct CGColorMatrixStyle CGColorMatrixStyle;
+#endif
+
 typedef CF_ENUM (int32_t, CGStyleType)
 {
+    kCGStyleUnknown = 0,
     kCGStyleShadow = 1,
+    kCGStyleFocusRing = 2,
+#if HAVE(CGSTYLE_COLORMATRIX_BLUR)
+    kCGStyleGaussianBlur = 3,
+    kCGStyleColorMatrix = 4,
+#endif
 };
 
 #if PLATFORM(MAC)
@@ -206,6 +226,11 @@ static const CGSNotificationType kCGSConnectionWindowModificationsStarted = (CGS
 static const CGSNotificationType kCGSConnectionWindowModificationsStopped = (CGSNotificationType)(kCGSFirstConnectionNotification + 7);
 static const CGSNotificationType kCGSessionConsoleConnect = kCGSFirstSessionNotification;
 static const CGSNotificationType kCGSessionConsoleDisconnect = (CGSNotificationType)(kCGSessionConsoleConnect + 1);
+static const CGSNotificationType kCGSessionRemoteConnect = (CGSNotificationType)(kCGSessionConsoleDisconnect + 1);
+static const CGSNotificationType kCGSessionRemoteDisconnect = (CGSNotificationType)(kCGSessionRemoteConnect + 1);
+static const CGSNotificationType kCGSessionLoggedOn = (CGSNotificationType)(kCGSessionRemoteDisconnect + 1);
+static const CGSNotificationType kCGSessionLoggedOff = (CGSNotificationType)(kCGSessionLoggedOn + 1);
+static const CGSNotificationType kCGSessionConsoleWillDisconnect = (CGSNotificationType)(kCGSessionLoggedOff + 1);
 
 #endif // PLATFORM(MAC)
 
@@ -265,6 +290,7 @@ void CGFontSetShouldUseMulticache(bool);
 
 void CGImageSetCachingFlags(CGImageRef, CGImageCachingFlags);
 CGImageCachingFlags CGImageGetCachingFlags(CGImageRef);
+void CGImageSetProperty(CGImageRef, CFStringRef, CFTypeRef);
 
 CGDataProviderRef CGPDFDocumentGetDataProvider(CGPDFDocumentRef);
 
@@ -302,6 +328,7 @@ CGImageRef CGIOSurfaceContextCreateImage(CGContextRef);
 CGImageRef CGIOSurfaceContextCreateImageReference(CGContextRef);
 CGColorSpaceRef CGIOSurfaceContextGetColorSpace(CGContextRef);
 void CGIOSurfaceContextSetDisplayMask(CGContextRef, uint32_t mask);
+IOSurfaceRef CGIOSurfaceContextGetSurface(CGContextRef);
 #endif // HAVE(IOSURFACE)
 
 #if PLATFORM(COCOA)
@@ -340,18 +367,15 @@ CGGradientRef CGGradientCreateWithColorsAndOptions(CGColorSpaceRef, CFArrayRef, 
 extern const CFStringRef kCGGradientInterpolatesPremultiplied;
 #endif
 
-#endif // PLATFORM(COCOA)
+#if HAVE(CGSTYLE_CREATE_SHADOW2)
+CGStyleRef CGStyleCreateShadow2(CGSize offset, CGFloat radius, CGColorRef);
+#endif
+#if HAVE(CGSTYLE_COLORMATRIX_BLUR)
+CGStyleRef CGStyleCreateGaussianBlur(const CGGaussianBlurStyle*);
+CGStyleRef CGStyleCreateColorMatrix(const CGColorMatrixStyle*);
+#endif
 
-#if PLATFORM(WIN)
-CGFontCache* CGFontCacheGetLocalCache();
-void CGFontCacheSetShouldAutoExpire(CGFontCache*, bool);
-void CGFontCacheSetMaxSize(CGFontCache*, size_t);
-void CGContextSetFontSmoothingContrast(CGContextRef, CGFloat);
-void CGContextSetFontSmoothingStyle(CGContextRef, uint32_t);
-uint32_t CGContextGetFontSmoothingStyle(CGContextRef);
-void CGContextSetShouldUsePlatformNativeGlyphs(CGContextRef, bool);
-void CGContextSetFocusRingWithColor(CGContextRef, CGFloat blur, CGColorRef, const CGRect *clipRect, CFDictionaryRef options);
-#endif // PLATFORM(WIN)
+#endif // PLATFORM(COCOA)
 
 #if PLATFORM(MAC)
 
@@ -400,5 +424,11 @@ extern CGDataProviderRef CGDataProviderCreateMultiRangeDirectAccess(
     const CGDataProviderDirectAccessRangesCallbacks *);
 
 #endif // ENABLE(PDFKIT_PLUGIN) && !USE(APPLE_INTERNAL_SDK)
+
+#if HAVE(LOCKDOWN_MODE_PDF_ADDITIONS)
+CG_EXTERN void CGEnterLockdownModeForPDF();
+CG_LOCAL bool CGIsInLockdownModeForPDF();
+CG_EXTERN void CGEnterLockdownModeForFonts();
+#endif
 
 WTF_EXTERN_C_END

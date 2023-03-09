@@ -65,9 +65,11 @@ class Checkout(object):
         return cls(**data, primary=False)
 
     @staticmethod
-    def clone(url, path, remotes, credentials, sentinal_file=None):
+    def clone(url, path, remotes, credentials, sentinal_file=None, checkout_data=None, disable_origin=True):
         run([local.Git.executable(), 'clone', url, path], cwd=os.path.dirname(path))
         run([local.Git.executable(), 'config', 'pull.ff', 'only'], cwd=path)
+        if disable_origin:
+            run([local.Git.executable(), 'remote', 'set-url', '--push', 'origin', 'INVALID'], cwd=os.path.dirname(path))
 
         Checkout.add_remotes(local.Git(path), remotes)
         Checkout.add_credentials(local.Git(path), credentials)
@@ -75,6 +77,10 @@ class Checkout(object):
         if sentinal_file:
             with open(sentinal_file, 'w') as cloned:
                 cloned.write('yes\n')
+
+        if checkout_data:
+            Checkout.from_json(checkout_data).update_all(remote=key)
+
         return 0
 
     @staticmethod
@@ -109,7 +115,7 @@ class Checkout(object):
         self, path, url=None, http_proxy=None,
         sentinal=True, fallback_url=None, primary=True,
         remotes=None, credentials=None,
-        forwarding=None,
+        forwarding=None, disable_origin=True,
     ):
         self.sentinal = sentinal
         self.path = path
@@ -161,14 +167,15 @@ class Checkout(object):
         if os.path.isdir(path):
             shutil.rmtree(path, ignore_errors=True)
 
+        checkout_data = Checkout.Encoder().default(self)
         if self.sentinal:
             self._child_process = multiprocessing.Process(
                 target=self.clone,
-                args=(self.url, path, self.remotes, self.credentials, self.sentinal_file),
+                args=(self.url, path, self.remotes, self.credentials, self.sentinal_file, checkout_data, disable_origin),
             )
             self._child_process.start()
         else:
-            self.clone(self.url, path, self.remotes, self.credentials)
+            self.clone(self.url, path, self.remotes, self.credentials, checkout_data=checkout_data, disable_origin=disable_origin)
 
     @property
     def sentinal_file(self):
@@ -248,7 +255,7 @@ class Checkout(object):
 
     def fetch(self, remote=REMOTE):
         return not run(
-            [self.repository.executable(), 'fetch', remote],
+            [self.repository.executable(), 'fetch', remote, '--prune'],
             cwd=self.repository.root_path,
         ).returncode
 
@@ -259,13 +266,14 @@ class Checkout(object):
 
         branch = branch or self.repository.default_branch
         if branch == self.repository.default_branch:
-            self.repository.pull(remote=remote)
+            if self.repository.pull(remote=remote):
+                return False
             self.repository.cache.populate(branch=branch)
             return True
         elif not self.repository.prod_branches.match(branch):
             return False
         elif track and branch not in self.repository.branches_for(remote=remote):
-            run([self.repository.executable(), 'fetch'], cwd=self.repository.root_path)
+            run([self.repository.executable(), 'fetch', '--prune'], cwd=self.repository.root_path)
             run(
                 [self.repository.executable(), 'branch', '--track', branch, 'remotes/{}/{}'.format(remote, branch)],
                 cwd=self.repository.root_path,
@@ -281,21 +289,38 @@ class Checkout(object):
         self.repository.cache.populate(branch=branch)
         return True
 
-    def update_all(self, remote=REMOTE):
+    def update_all(self, remote=None):
         if not self.repository:
             sys.stderr.write("Cannot update checkout, clone still pending...\n")
             return None
 
-        self.repository.pull(remote=remote)
-        self.repository.cache.populate(branch=self.repository.default_branch)
+        if remote is None:
+            updated = set()
+            for key, _ in reversed(self.forwarding):
+                key = key.split(':')[0]
+                if key in updated:
+                    continue
+                self.update_all(remote=key)
+                updated.add(key)
+            return
+
+        print('Forwarding updates from {}'.format(remote))
+
+        self.fetch(remote)
+        if self.repository.pull(remote=remote):
+            print("    Failed to pull from '{}'".format(remote))
+        else:
+            self.repository.cache.populate(branch=self.repository.default_branch)
 
         # First, update all branches we're already tracking
         print('Updating branches...')
         all_branches = set(self.repository.branches_for(remote=remote))
         for branch in self.repository.branches_for(remote=False):
-            if branch in all_branches:
-                all_branches.remove(branch)
-            self.update_for(branch=branch, remote=remote)
+            if branch not in all_branches:
+                continue
+            all_branches.remove(branch)
+            if not self.update_for(branch=branch, remote=remote):
+                print("    Failed to update '{}' from '{}'".format(branch, remote or self.repository.default_remote))
             self.forward_update(branch=branch, remote=remote)
 
         # Then, track all untracked branches

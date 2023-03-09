@@ -17,9 +17,72 @@
 #include <algorithm>
 #include <array>
 #include <initializer_list>
+#include <iterator>
 
 namespace angle
 {
+
+template <class Iter>
+class WrapIter
+{
+  public:
+    typedef Iter iterator_type;
+    typedef typename std::iterator_traits<iterator_type>::value_type value_type;
+    typedef typename std::iterator_traits<iterator_type>::difference_type difference_type;
+    typedef typename std::iterator_traits<iterator_type>::pointer pointer;
+    typedef typename std::iterator_traits<iterator_type>::reference reference;
+    typedef typename std::iterator_traits<iterator_type>::iterator_category iterator_category;
+
+    WrapIter() : mIter() {}
+    WrapIter(const WrapIter &x)            = default;
+    WrapIter &operator=(const WrapIter &x) = default;
+    WrapIter(const Iter &iter) : mIter(iter) {}
+    ~WrapIter() = default;
+
+    bool operator==(const WrapIter &x) const { return mIter == x.mIter; }
+    bool operator!=(const WrapIter &x) const { return mIter != x.mIter; }
+    bool operator<(const WrapIter &x) const { return mIter < x.mIter; }
+    bool operator<=(const WrapIter &x) const { return mIter <= x.mIter; }
+    bool operator>(const WrapIter &x) const { return mIter > x.mIter; }
+    bool operator>=(const WrapIter &x) const { return mIter >= x.mIter; }
+
+    WrapIter &operator++()
+    {
+        mIter++;
+        return *this;
+    }
+
+    WrapIter operator++(int)
+    {
+        WrapIter tmp(mIter);
+        mIter++;
+        return tmp;
+    }
+
+    WrapIter operator+(difference_type n)
+    {
+        WrapIter tmp(mIter);
+        tmp.mIter += n;
+        return tmp;
+    }
+
+    WrapIter operator-(difference_type n)
+    {
+        WrapIter tmp(mIter);
+        tmp.mIter -= n;
+        return tmp;
+    }
+
+    difference_type operator-(const WrapIter &x) const { return mIter - x.mIter; }
+
+    iterator_type operator->() const { return mIter; }
+
+    reference operator*() const { return *mIter; }
+
+  private:
+    iterator_type mIter;
+};
+
 template <class T, size_t N, class Storage = std::array<T, N>>
 class FastVector final
 {
@@ -30,8 +93,8 @@ class FastVector final
     using const_reference = typename Storage::const_reference;
     using pointer         = typename Storage::pointer;
     using const_pointer   = typename Storage::const_pointer;
-    using iterator        = T *;
-    using const_iterator  = const T *;
+    using iterator        = WrapIter<T *>;
+    using const_iterator  = WrapIter<const T *>;
 
     FastVector();
     FastVector(size_type count, const value_type &value);
@@ -89,13 +152,32 @@ class FastVector final
     void resize(size_type count);
     void resize(size_type count, const value_type &value);
 
+    void reserve(size_type count);
+
     // Specialty function that removes a known element and might shuffle the list.
     void remove_and_permute(const value_type &element);
+    void remove_and_permute(iterator pos);
 
   private:
     void assign_from_initializer_list(std::initializer_list<value_type> init);
     void ensure_capacity(size_t capacity);
     bool uses_fixed_storage() const;
+
+    // Not "trivially_constructible" must be reset to default state before reuse.
+    // (Assuming, that the original intent for the "FastVector" was to have uninitialized values.
+    // Otherwise, it is a bug and "trivially_constructible" must be also explicitly initialized.)
+    // Not "trivially_destructible" must be reset to free resources.
+    template <class T2,
+              std::enable_if_t<!std::is_trivially_constructible<T2>::value ||
+                                   !std::is_trivially_destructible<T2>::value,
+                               bool> = true>
+    void reset_items(T2 *first, T2 *last);
+    template <class T2,
+              std::enable_if_t<std::is_trivially_constructible<T2>::value &&
+                                   std::is_trivially_destructible<T2>::value,
+                               bool> = true>
+    void reset_items(T2 *first, T2 *last)
+    {}
 
     Storage mFixedStorage;
     pointer mData           = mFixedStorage.data();
@@ -119,6 +201,20 @@ template <class T, size_t N, class Storage>
 ANGLE_INLINE bool FastVector<T, N, Storage>::uses_fixed_storage() const
 {
     return mData == mFixedStorage.data();
+}
+
+template <class T, size_t N, class Storage>
+template <class T2,
+          std::enable_if_t<!std::is_trivially_constructible<T2>::value ||
+                               !std::is_trivially_destructible<T2>::value,
+                           bool>>
+ANGLE_INLINE void FastVector<T, N, Storage>::reset_items(T2 *first, T2 *last)
+{
+    for (; first != last; ++first)
+    {
+        first->~value_type();
+        new (first) value_type();
+    }
 }
 
 template <class T, size_t N, class Storage>
@@ -172,6 +268,10 @@ FastVector<T, N, Storage> &FastVector<T, N, Storage>::operator=(
     const FastVector<T, N, Storage> &other)
 {
     ensure_capacity(other.mSize);
+    if (other.mSize < mSize)
+    {
+        reset_items(mData + other.mSize, mData + mSize);
+    }
     mSize = other.mSize;
     std::copy(other.begin(), other.end(), begin());
     return *this;
@@ -195,7 +295,6 @@ FastVector<T, N, Storage> &FastVector<T, N, Storage>::operator=(
 template <class T, size_t N, class Storage>
 FastVector<T, N, Storage>::~FastVector()
 {
-    clear();
     if (!uses_fixed_storage())
     {
         delete[] mData;
@@ -317,6 +416,7 @@ template <class T, size_t N, class Storage>
 ANGLE_INLINE void FastVector<T, N, Storage>::pop_back()
 {
     ASSERT(mSize > 0);
+    reset_items(mData + mSize - 1, mData + mSize);
     mSize--;
 }
 
@@ -377,6 +477,10 @@ void FastVector<T, N, Storage>::resize(size_type count)
     {
         ensure_capacity(count);
     }
+    else if (count < mSize)
+    {
+        reset_items(mData + count, mData + mSize);
+    }
     mSize = count;
 }
 
@@ -388,13 +492,27 @@ void FastVector<T, N, Storage>::resize(size_type count, const value_type &value)
         ensure_capacity(count);
         std::fill(mData + mSize, mData + count, value);
     }
+    else if (count < mSize)
+    {
+        reset_items(mData + count, mData + mSize);
+    }
     mSize = count;
+}
+
+template <class T, size_t N, class Storage>
+void FastVector<T, N, Storage>::reserve(size_type count)
+{
+    ensure_capacity(count);
 }
 
 template <class T, size_t N, class Storage>
 void FastVector<T, N, Storage>::assign_from_initializer_list(std::initializer_list<value_type> init)
 {
     ensure_capacity(init.size());
+    if (init.size() < mSize)
+    {
+        reset_items(mData + init.size(), mData + mSize);
+    }
     mSize        = init.size();
     size_t index = 0;
     for (auto &value : init)
@@ -415,6 +533,16 @@ ANGLE_INLINE void FastVector<T, N, Storage>::remove_and_permute(const value_type
             break;
         }
     }
+    pop_back();
+}
+
+template <class T, size_t N, class Storage>
+ANGLE_INLINE void FastVector<T, N, Storage>::remove_and_permute(iterator pos)
+{
+    ASSERT(pos >= begin());
+    ASSERT(pos < end());
+    size_t len = mSize - 1;
+    *pos       = std::move(mData[len]);
     pop_back();
 }
 
@@ -491,39 +619,76 @@ template <class Key, class Value, size_t N>
 class FlatUnorderedMap final
 {
   public:
-    using Pair = std::pair<Key, Value>;
+    using Pair           = std::pair<Key, Value>;
+    using Storage        = FastVector<Pair, N>;
+    using iterator       = typename Storage::iterator;
+    using const_iterator = typename Storage::const_iterator;
 
-    FlatUnorderedMap() {}
-    ~FlatUnorderedMap() {}
+    FlatUnorderedMap()  = default;
+    ~FlatUnorderedMap() = default;
 
-    void insert(Key key, Value value)
+    iterator begin() { return mData.begin(); }
+    const_iterator begin() const { return mData.begin(); }
+    iterator end() { return mData.end(); }
+    const_iterator end() const { return mData.end(); }
+
+    iterator find(const Key &key)
     {
-        ASSERT(!contains(key));
-        mData.push_back(Pair(key, value));
-    }
-
-    bool contains(Key key) const
-    {
-        for (size_t index = 0; index < mData.size(); ++index)
+        for (auto it = mData.begin(); it != mData.end(); ++it)
         {
-            if (mData[index].first == key)
-                return true;
+            if (it->first == key)
+            {
+                return it;
+            }
         }
-        return false;
+        return mData.end();
     }
+
+    const_iterator find(const Key &key) const
+    {
+        for (auto it = mData.begin(); it != mData.end(); ++it)
+        {
+            if (it->first == key)
+            {
+                return it;
+            }
+        }
+        return mData.end();
+    }
+
+    Value &operator[](const Key &key)
+    {
+        iterator it = find(key);
+        if (it != end())
+        {
+            return it->second;
+        }
+
+        mData.push_back(Pair(key, {}));
+        return mData.back().second;
+    }
+
+    void insert(Pair pair)
+    {
+        ASSERT(!contains(pair.first));
+        mData.push_back(std::move(pair));
+    }
+
+    void insert(const Key &key, Value value) { insert(Pair(key, value)); }
+
+    void erase(iterator pos) { mData.remove_and_permute(pos); }
+
+    bool contains(const Key &key) const { return find(key) != end(); }
 
     void clear() { mData.clear(); }
 
-    bool get(Key key, Value *value) const
+    bool get(const Key &key, Value *value) const
     {
-        for (size_t index = 0; index < mData.size(); ++index)
+        auto it = find(key);
+        if (it != end())
         {
-            const Pair &item = mData[index];
-            if (item.first == key)
-            {
-                *value = item.second;
-                return true;
-            }
+            *value = it->second;
+            return true;
         }
         return false;
     }
@@ -539,33 +704,66 @@ template <class T, size_t N>
 class FlatUnorderedSet final
 {
   public:
-    FlatUnorderedSet() {}
-    ~FlatUnorderedSet() {}
+    using Storage        = FastVector<T, N>;
+    using iterator       = typename Storage::iterator;
+    using const_iterator = typename Storage::const_iterator;
+
+    FlatUnorderedSet()  = default;
+    ~FlatUnorderedSet() = default;
+
+    iterator begin() { return mData.begin(); }
+    const_iterator begin() const { return mData.begin(); }
+    iterator end() { return mData.end(); }
+    const_iterator end() const { return mData.end(); }
+
+    iterator find(const T &value)
+    {
+        for (auto it = mData.begin(); it != mData.end(); ++it)
+        {
+            if (*it == value)
+            {
+                return it;
+            }
+        }
+        return mData.end();
+    }
+
+    const_iterator find(const T &value) const
+    {
+        for (auto it = mData.begin(); it != mData.end(); ++it)
+        {
+            if (*it == value)
+            {
+                return it;
+            }
+        }
+        return mData.end();
+    }
 
     bool empty() const { return mData.empty(); }
 
-    void insert(T value)
+    void insert(const T &value)
     {
         ASSERT(!contains(value));
         mData.push_back(value);
     }
 
-    bool contains(T needle) const
+    void erase(const T &value)
     {
-        for (T value : mData)
-        {
-            if (value == needle)
-                return true;
-        }
-        return false;
+        ASSERT(contains(value));
+        mData.remove_and_permute(value);
     }
+
+    void remove(const T &value) { erase(value); }
+
+    bool contains(const T &value) const { return find(value) != end(); }
 
     void clear() { mData.clear(); }
 
     bool operator==(const FlatUnorderedSet<T, N> &other) const { return mData == other.mData; }
 
   private:
-    FastVector<T, N> mData;
+    Storage mData;
 };
 
 class FastIntegerSet final

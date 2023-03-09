@@ -53,7 +53,11 @@ JSClassRef AccessibilityUIElement::wrapperClass()
 
 bool AccessibilityUIElement::isValid() const
 {
-    return m_element;            
+#if PLATFORM(COCOA)
+    return m_element.getAutoreleased();
+#else
+    return m_element;
+#endif
 }
 
 #if !ENABLE(ACCESSIBILITY_ISOLATED_TREE)
@@ -70,7 +74,6 @@ JSRetainPtr<JSStringRef> AccessibilityUIElement::traits() { return nullptr; }
 int AccessibilityUIElement::elementTextPosition() { return 0; }
 int AccessibilityUIElement::elementTextLength() { return 0; }
 JSRetainPtr<JSStringRef> AccessibilityUIElement::stringForSelection() { return nullptr; }
-JSValueRef AccessibilityUIElement::elementsForRange(unsigned, unsigned) { return nullptr; }
 void AccessibilityUIElement::increaseTextSelection() { }
 void AccessibilityUIElement::decreaseTextSelection() { }
 RefPtr<AccessibilityUIElement> AccessibilityUIElement::linkedElement() { return nullptr; }
@@ -89,6 +92,7 @@ JSRetainPtr<JSStringRef> AccessibilityUIElement::attributedStringForElement() { 
 bool AccessibilityUIElement::isInTable() const { return false; }
 bool AccessibilityUIElement::isInLandmark() const { return false; }
 bool AccessibilityUIElement::isInList() const { return false; }
+bool AccessibilityUIElement::isMarkAnnotation() const { return false; }
 #endif
     
 // Unsupported methods on various platforms. As they're implemented on other platforms this list should be modified.
@@ -100,6 +104,7 @@ JSRetainPtr<JSStringRef> AccessibilityUIElement::sentenceAtOffset(int) { return 
 #endif
 
 #if !PLATFORM(MAC) || !ENABLE(ACCESSIBILITY)
+bool AccessibilityUIElement::isTextMarkerNull(AccessibilityTextMarker* marker) { return !isTextMarkerValid(marker); }
 int AccessibilityUIElement::lineIndexForTextMarker(AccessibilityTextMarker*) const { return -1; }
 RefPtr<AccessibilityTextMarkerRange> AccessibilityUIElement::textMarkerRangeForRange(unsigned, unsigned) { return nullptr; }
 RefPtr<AccessibilityTextMarkerRange> AccessibilityUIElement::selectedTextMarkerRange() { return nullptr; }
@@ -113,6 +118,7 @@ JSValueRef AccessibilityUIElement::mathRootRadicand() const { return { }; }
 
 #if !PLATFORM(COCOA) || !ENABLE(ACCESSIBILITY)
 RefPtr<AccessibilityUIElement> AccessibilityUIElement::focusedElement() const { return nullptr; }
+JSRetainPtr<JSStringRef> AccessibilityUIElement::customContent() const { return nullptr; }
 
 bool AccessibilityUIElement::hasDocumentRoleAncestor() const { return false; }
 bool AccessibilityUIElement::hasWebApplicationAncestor() const { return false; }
@@ -120,7 +126,6 @@ bool AccessibilityUIElement::isInDescriptionListDetail() const { return false; }
 bool AccessibilityUIElement::isInDescriptionListTerm() const { return false; }
 bool AccessibilityUIElement::isInCell() const { return false; }
 
-JSRetainPtr<JSStringRef> AccessibilityUIElement::sortDirection() const { return nullptr; }
 JSRetainPtr<JSStringRef> AccessibilityUIElement::lineRectsAndText() const { return { }; }
 RefPtr<AccessibilityTextMarkerRange> AccessibilityUIElement::leftWordTextMarkerRangeForTextMarker(AccessibilityTextMarker*) { return nullptr; }
 RefPtr<AccessibilityTextMarkerRange> AccessibilityUIElement::rightWordTextMarkerRangeForTextMarker(AccessibilityTextMarker*) { return nullptr; }
@@ -135,8 +140,6 @@ RefPtr<AccessibilityTextMarker> AccessibilityUIElement::previousSentenceStartTex
 RefPtr<AccessibilityTextMarkerRange> AccessibilityUIElement::misspellingTextMarkerRange(AccessibilityTextMarkerRange*, bool) { return nullptr; }
 void AccessibilityUIElement::dismiss() { }
 JSValueRef AccessibilityUIElement::children() const { return { }; }
-JSValueRef AccessibilityUIElement::detailsElements() const { return { }; }
-JSValueRef AccessibilityUIElement::errorMessageElements() const { return { }; }
 JSValueRef AccessibilityUIElement::imageOverlayElements() const { return { }; }
 JSRetainPtr<JSStringRef> AccessibilityUIElement::embeddedImageDescription() const { return nullptr; }
 #endif // !PLATFORM(COCOA) || !ENABLE(ACCESSIBILITY)

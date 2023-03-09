@@ -34,6 +34,7 @@
 #import "UIKitSPI.h"
 #import <MobileCoreServices/MobileCoreServices.h>
 #import <UIKit/UIPasteboard.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <WebKit/WKPreferencesPrivate.h>
 #import <WebKit/WKWebViewPrivate.h>
 #import <pal/ios/ManagedConfigurationSoftLink.h>
@@ -49,8 +50,6 @@ static void checkJSONWithLogging(NSString *jsonString, NSDictionary *expected)
     if (!success)
         NSLog(@"Expected JSON: %@ to match values: %@", jsonString, expected);
 }
-
-#if HAVE(PASTEBOARD_DATA_OWNER)
 
 static _UIDataOwner gLastKnownDataOwner = _UIDataOwnerUndefined;
 
@@ -79,8 +78,6 @@ static _UIDataOwner gLastKnownDataOwner = _UIDataOwnerUndefined;
 }
 
 @end
-
-#endif // HAVE(PASTEBOARD_DATA_OWNER)
 
 #endif // PLATFORM(IOS)
 
@@ -336,6 +333,30 @@ TEST(UIPasteboardTests, DataTransferURIListContainsMultipleURLs)
     EXPECT_WK_STREQ("https://www.apple.com/", [webView stringByEvaluatingJavaScript:@"textData.textContent"]);
 }
 
+TEST(UIPasteboardTests, PasteDataBackedURL)
+{
+    auto webView = setUpWebViewForPasteboardTests(@"dump-datatransfer-types");
+    auto *urlToCopy = [NSURL URLWithString:@"https://webkit.org/"];
+    auto *pasteboard = UIPasteboard.generalPasteboard;
+
+    auto checkPastedURL = [&] {
+        [webView stringByEvaluatingJavaScript:@"destination.focus()"];
+        [webView stringByEvaluatingJavaScript:@"document.execCommand('paste')"];
+        checkJSONWithLogging([webView stringByEvaluatingJavaScript:@"output.value"], @{
+            @"paste" : @{ @"text/uri-list" : urlToCopy.absoluteString }
+        });
+    };
+
+    [pasteboard setData:urlToCopy.dataRepresentation forPasteboardType:UTTypeURL.identifier];
+    checkPastedURL();
+
+    [webView stringByEvaluatingJavaScript:@"clearOutput()"];
+
+    [pasteboard setValue:urlToCopy.absoluteString forPasteboardType:UTTypeURL.identifier];
+    checkPastedURL();
+}
+
+
 TEST(UIPasteboardTests, ValidPreferredPresentationSizeForImage)
 {
     auto webView = setUpWebViewForPasteboardTests(@"autofocus-contenteditable");
@@ -382,8 +403,6 @@ TEST(UIPasteboardTests, MissingPreferredPresentationSizeForImage)
     EXPECT_WK_STREQ("0", [webView stringByEvaluatingJavaScript:@"document.querySelector('img').width"]);
     EXPECT_WK_STREQ("174", [webView stringByEvaluatingJavaScript:@"document.querySelector('img').height"]);
 }
-
-#if HAVE(PASTEBOARD_DATA_OWNER)
 
 TEST(UIPasteboardTests, PerformAsDataOwnerWhenCopying)
 {
@@ -453,8 +472,6 @@ TEST(UIPasteboardTests, PerformAsDataOwnerWithManagedURL)
         EXPECT_EQ(gLastKnownDataOwner, _UIDataOwnerUser);
     }
 }
-
-#endif // HAVE(PASTEBOARD_DATA_OWNER)
 
 #endif // PLATFORM(IOS)
 

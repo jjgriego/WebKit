@@ -42,7 +42,7 @@ WI.SpreadsheetRulesStyleDetailsPanel = class SpreadsheetRulesStyleDetailsPanel e
         this._propertyToSelectAndHighlight = null;
         this._filterText = null;
         this._shouldRefreshSubviews = false;
-        this._suppressLayoutAfterSelectorChange = false;
+        this._suppressLayoutAfterSelectorOrGroupChange = false;
 
         this._emptyFilterResultsElement = WI.createMessageTextView(WI.UIString("No Results Found"));
     }
@@ -52,6 +52,21 @@ WI.SpreadsheetRulesStyleDetailsPanel = class SpreadsheetRulesStyleDetailsPanel e
     get supportsNewRule()
     {
         return this.nodeStyles && !this.nodeStyles.node.isInUserAgentShadowTree() && InspectorBackend.hasCommand("CSS.addRule");
+    }
+
+    get supportsToggleCSSClassList()
+    {
+        return true;
+    }
+
+    get supportsToggleCSSForcedPseudoClass()
+    {
+        return true;
+    }
+
+    get initialToggleCSSForcedPseudoClassState()
+    {
+        return true;
     }
 
     refresh(significantChange)
@@ -168,14 +183,9 @@ WI.SpreadsheetRulesStyleDetailsPanel = class SpreadsheetRulesStyleDetailsPanel e
         index += delta;
 
         while (this._sections[index] !== currentSection) {
-            if (index < 0) {
-                if (this._delegate && this._delegate.styleDetailsPanelFocusLastPseudoClassCheckbox) {
-                    this._delegate.styleDetailsPanelFocusLastPseudoClassCheckbox(this);
-                    break;
-                }
-
+            if (index < 0)
                 index = this._sections.length - 1;
-            } else if (index >= this._sections.length) {
+            else if (index >= this._sections.length) {
                 if (this._delegate && this._delegate.styleDetailsPanelFocusFilterBar) {
                     this._delegate.styleDetailsPanelFocusFilterBar(this);
                     break;
@@ -218,8 +228,8 @@ WI.SpreadsheetRulesStyleDetailsPanel = class SpreadsheetRulesStyleDetailsPanel e
 
         this._shouldRefreshSubviews = false;
 
-        if (this._suppressLayoutAfterSelectorChange) {
-            this._suppressLayoutAfterSelectorChange = false;
+        if (this._suppressLayoutAfterSelectorOrGroupChange) {
+            this._suppressLayoutAfterSelectorOrGroupChange = false;
             return;
         }
 
@@ -266,7 +276,7 @@ WI.SpreadsheetRulesStyleDetailsPanel = class SpreadsheetRulesStyleDetailsPanel e
             if (!section) {
                 section = new WI.SpreadsheetCSSStyleDeclarationSection(this, style);
                 section.addEventListener(WI.SpreadsheetCSSStyleDeclarationSection.Event.FilterApplied, this._handleSectionFilterApplied, this);
-                section.addEventListener(WI.SpreadsheetCSSStyleDeclarationSection.Event.SelectorWillChange, this._handleSectionSelectorWillChange, this);
+                section.addEventListener(WI.SpreadsheetCSSStyleDeclarationSection.Event.SelectorOrGroupingWillChange, this._handleSectionSelectorOrGroupingWillChange, this);
                 style[SpreadsheetRulesStyleDetailsPanel.StyleSectionSymbol] = section;
             }
 
@@ -352,9 +362,9 @@ WI.SpreadsheetRulesStyleDetailsPanel = class SpreadsheetRulesStyleDetailsPanel e
         this.nodeStyles.addRule(this._newRuleSelector, text, stylesheetId);
     }
 
-    _handleSectionSelectorWillChange(event)
+    _handleSectionSelectorOrGroupingWillChange(event)
     {
-        this._suppressLayoutAfterSelectorChange = true;
+        this._suppressLayoutAfterSelectorOrGroupChange = true;
     }
 };
 

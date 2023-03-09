@@ -35,6 +35,7 @@
 #import <WebKit/WKWebsiteDataRecordPrivate.h>
 #import <WebKit/WKWebsiteDataStorePrivate.h>
 #import <WebKit/WebKit.h>
+#import <WebKit/_WKWebsiteDataSize.h>
 #import <WebKit/_WKWebsiteDataStoreConfiguration.h>
 #import <wtf/WeakObjCPtr.h>
 #import <wtf/text/WTFString.h>
@@ -268,6 +269,34 @@ TEST(WebKit, SettingNonPersistentDataStorePathsThrowsException)
     [configuration setSourceApplicationSecondaryIdentifier:@"com.apple.Safari"];
 }
 
+TEST(WKWebsiteDataStore, FetchPersistentWebStorage)
+{
+    auto dataTypes = [NSSet setWithObjects:WKWebsiteDataTypeLocalStorage, WKWebsiteDataTypeSessionStorage, nil];
+    auto localStorageType = [NSSet setWithObjects:WKWebsiteDataTypeLocalStorage, nil];
+
+    readyToContinue = false;
+    [[WKWebsiteDataStore defaultDataStore] removeDataOfTypes:[WKWebsiteDataStore allWebsiteDataTypes] modifiedSince:[NSDate distantPast] completionHandler:^{
+        readyToContinue = true;
+    }];
+    TestWebKitAPI::Util::run(&readyToContinue);
+
+    @autoreleasepool {
+        auto webView = adoptNS([[WKWebView alloc] init]);
+        auto navigationDelegate = adoptNS([[NavigationTestDelegate alloc] init]);
+        [webView setNavigationDelegate:navigationDelegate.get()];
+        [webView loadHTMLString:@"<script>sessionStorage.setItem('session', 'storage'); localStorage.setItem('local', 'storage');</script>" baseURL:[NSURL URLWithString:@"http://localhost"]];
+        [navigationDelegate waitForDidFinishNavigation];
+    }
+
+    readyToContinue = false;
+    [[WKWebsiteDataStore defaultDataStore] fetchDataRecordsOfTypes:dataTypes completionHandler:^(NSArray<WKWebsiteDataRecord *> * records) {
+        EXPECT_EQ([records count], 1u);
+        EXPECT_TRUE([[[records firstObject] dataTypes] isEqualToSet:localStorageType]);
+        readyToContinue = true;
+    }];
+    TestWebKitAPI::Util::run(&readyToContinue);
+}
+
 TEST(WKWebsiteDataStore, FetchNonPersistentWebStorage)
 {
     auto nonPersistentDataStore = [WKWebsiteDataStore nonPersistentDataStore];
@@ -354,7 +383,7 @@ TEST(WKWebsiteDataStore, ReferenceCycle)
         TestWebKitAPI::Util::spinRunLoop();
 }
 
-TEST(WebKit, ClearCustomDataStoreNoWebViews)
+TEST(WKWebsiteDataStore, ClearCustomDataStoreNoWebViews)
 {
     HTTPServer server([connectionCount = 0] (Connection connection) mutable {
         ++connectionCount;
@@ -370,7 +399,7 @@ TEST(WebKit, ClearCustomDataStoreNoWebViews)
                     "Hello"_s);
                 break;
             case 2:
-                EXPECT_FALSE(strstr(request.data(), "Cookie: a=b\r\n"));
+                EXPECT_FALSE(strnstr(request.data(), "Cookie: a=b\r\n", request.size()));
                 connection.send(
                     "HTTP/1.1 200 OK\r\n"
                     "Content-Length: 5\r\n"
@@ -418,6 +447,149 @@ TEST(WKWebsiteDataStore, DoNotCreateDefaultDataStore)
     auto configuration = adoptNS([WKWebViewConfiguration new]);
     [configuration.get() copy];
     EXPECT_FALSE([WKWebsiteDataStore _defaultDataStoreExists]);
+}
+
+TEST(WKWebsiteDataStore, DefaultHSTSStorageDirectory)
+{
+    auto configuration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] init]);
+    EXPECT_NOT_NULL(configuration.get().hstsStorageDirectory);
+}
+
+static RetainPtr<WKWebsiteDataStore> createWebsiteDataStoreAndPrepare(NSUUID *uuid, NSString *pushPartition)
+{
+    auto websiteDataStoreConfiguration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] initWithIdentifier:uuid]);
+    websiteDataStoreConfiguration.get().webPushPartitionString = pushPartition;
+    auto websiteDataStore = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:websiteDataStoreConfiguration.get()]);
+    EXPECT_TRUE([websiteDataStoreConfiguration.get().identifier isEqual:uuid]);
+    EXPECT_TRUE([websiteDataStore.get()._identifier isEqual:uuid]);
+    EXPECT_TRUE([websiteDataStoreConfiguration.get().webPushPartitionString isEqual:pushPartition]);
+    EXPECT_TRUE([websiteDataStore.get()._webPushPartition isEqual:pushPartition]);
+
+    pid_t webprocessIdentifier;
+    @autoreleasepool {
+        auto handler = adoptNS([[TestMessageHandler alloc] init]);
+        [handler addMessage:@"continue" withHandler:^{
+            receivedScriptMessage = true;
+        }];
+        auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+        [[configuration userContentController] addScriptMessageHandler:handler.get() name:@"testHandler"];
+        [configuration setWebsiteDataStore:websiteDataStore.get()];
+        auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
+        NSString *htmlString = @"<script> \
+            indexedDB.open('testDB').onsuccess = function(event) { \
+                window.webkit.messageHandlers.testHandler.postMessage('continue'); \
+            } \
+        </script>";
+        receivedScriptMessage = false;
+        [webView loadHTMLString:htmlString baseURL:[NSURL URLWithString:@"https://webkit.org/"]];
+        TestWebKitAPI::Util::run(&receivedScriptMessage);
+        webprocessIdentifier = [webView _webProcessIdentifier];
+        EXPECT_NE(webprocessIdentifier, 0);
+    }
+
+    // Running web process may hold WebsiteDataStore alive, so make ensure it exits before return.
+    while (!kill(webprocessIdentifier, 0))
+        TestWebKitAPI::Util::spinRunLoop();
+
+    return websiteDataStore;
+}
+
+TEST(WKWebsiteDataStore, DataStoreWithIdentifierAndPushPartition)
+{
+    __block auto uuid = [NSUUID UUID];
+    @autoreleasepool {
+        // Make sure WKWebsiteDataStore with identifier does not exist so it can be deleted.
+        createWebsiteDataStoreAndPrepare(uuid, @"partition");
+    }
+}
+
+TEST(WKWebsiteDataStore, RemoveDataStoreWithIdentifier)
+{
+    NSString *uuidString = @"68753a44-4d6f-1226-9c60-0050e4c00067";
+    auto uuid = adoptNS([[NSUUID alloc] initWithUUIDString:uuidString]);
+    RetainPtr<NSURL> generalStorageDirectory;
+    @autoreleasepool {
+        // Make sure WKWebsiteDataStore with identifier does not exist.
+        auto websiteDataStore = createWebsiteDataStoreAndPrepare(uuid.get(), @"");
+        generalStorageDirectory = websiteDataStore.get()._configuration.generalStorageDirectory;
+    }
+
+    EXPECT_NOT_NULL(generalStorageDirectory.get());
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    EXPECT_TRUE([fileManager fileExistsAtPath:generalStorageDirectory.get().path]);
+
+    __block bool done = false;
+    [WKWebsiteDataStore _removeDataStoreWithIdentifier:uuid.get() completionHandler:^(NSError *error) {
+        done = true;
+        EXPECT_NULL(error);
+    }];
+    TestWebKitAPI::Util::run(&done);
+    EXPECT_FALSE([fileManager fileExistsAtPath:generalStorageDirectory.get().path]);
+}
+
+TEST(WKWebsiteDataStore, ListIdentifiers)
+{
+    __block auto uuid = [NSUUID UUID];
+    @autoreleasepool {
+        // Make sure WKWebsiteDataStore with identifier does not exist so it can be deleted.
+        createWebsiteDataStoreAndPrepare(uuid, @"");
+    }
+
+    __block bool done = false;
+    [WKWebsiteDataStore _fetchAllIdentifiers:^(NSArray<NSUUID *> * identifiers) {
+        done = true;
+        EXPECT_TRUE([identifiers containsObject:uuid]);
+    }];
+    TestWebKitAPI::Util::run(&done);
+
+    // Clean up to not leave data on disk.
+    done = false;
+    [WKWebsiteDataStore _removeDataStoreWithIdentifier:uuid completionHandler:^(NSError *error) {
+        done = true;
+        EXPECT_NULL(error);
+    }];
+    TestWebKitAPI::Util::run(&done);
+}
+
+TEST(WKWebsiteDataStorePrivate, FetchWithSize)
+{
+    readyToContinue = false;
+    [[WKWebsiteDataStore defaultDataStore] removeDataOfTypes:[WKWebsiteDataStore allWebsiteDataTypes] modifiedSince:[NSDate distantPast] completionHandler:^{
+        readyToContinue = true;
+    }];
+    TestWebKitAPI::Util::run(&readyToContinue);
+
+    auto handler = adoptNS([[TestMessageHandler alloc] init]);
+    [handler addMessage:@"continue" withHandler:^{
+        receivedScriptMessage = true;
+    }];
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    [[configuration userContentController] addScriptMessageHandler:handler.get() name:@"testHandler"];
+    auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
+    NSString *htmlString = @"<script> \
+        localStorage.setItem('key', 'value'); \
+        indexedDB.open('testDB').onsuccess = function(event) { \
+            window.webkit.messageHandlers.testHandler.postMessage('continue'); \
+        } \
+    </script>";
+    receivedScriptMessage = false;
+    [webView loadHTMLString:htmlString baseURL:[NSURL URLWithString:@"https://webkit.org/"]];
+    TestWebKitAPI::Util::run(&receivedScriptMessage);
+
+    readyToContinue = false;
+    [[WKWebsiteDataStore defaultDataStore] _fetchDataRecordsOfTypes:[WKWebsiteDataStore allWebsiteDataTypes] withOptions:_WKWebsiteDataStoreFetchOptionComputeSizes completionHandler:^(NSArray<WKWebsiteDataRecord *> * records) {
+        EXPECT_EQ([records count], 1u);
+        WKWebsiteDataRecord *record = [records firstObject];
+        EXPECT_TRUE([[record displayName] isEqualToString:@"webkit.org"]);
+        _WKWebsiteDataSize *dataSize = [record _dataSize];
+        EXPECT_GT([dataSize totalSize], 0u);
+        NSSet *localStorageType = [NSSet setWithObjects:WKWebsiteDataTypeLocalStorage, nil];
+        EXPECT_GT([dataSize sizeOfDataTypes:localStorageType], 0u);
+        NSSet *indexedDBType = [NSSet setWithObjects:WKWebsiteDataTypeIndexedDBDatabases, nil];
+        EXPECT_GT([dataSize sizeOfDataTypes:indexedDBType], 0u);
+        readyToContinue = true;
+    }];
+    TestWebKitAPI::Util::run(&readyToContinue);
 }
 
 } // namespace TestWebKitAPI

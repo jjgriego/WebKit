@@ -47,6 +47,7 @@
 #import "HTMLNames.h"
 #import "LegacyNSPasteboardTypes.h"
 #import "LegacyWebArchive.h"
+#import "MutableStyleProperties.h"
 #import "PagePasteboardContext.h"
 #import "Pasteboard.h"
 #import "PasteboardStrategy.h"
@@ -54,9 +55,7 @@
 #import "RenderBlock.h"
 #import "RenderImage.h"
 #import "RuntimeApplicationChecks.h"
-#import "RuntimeEnabledFeatures.h"
 #import "SharedBuffer.h"
-#import "StyleProperties.h"
 #import "WebContentReader.h"
 #import "WebNSAttributedStringExtras.h"
 #import "markup.h"
@@ -66,33 +65,12 @@
 
 namespace WebCore {
 
-void Editor::showFontPanel()
-{
-    auto* client = this->client();
-    if (!client || !client->canShowFontPanel())
-        return;
-
-    [[NSFontManager sharedFontManager] orderFrontFontPanel:nil];
-}
-
-void Editor::showStylesPanel()
-{
-    [[NSFontManager sharedFontManager] orderFrontStylesPanel:nil];
-}
-
-void Editor::showColorPanel()
-{
-    [[NSApplication sharedApplication] orderFrontColorPanel:nil];
-}
-
 void Editor::pasteWithPasteboard(Pasteboard* pasteboard, OptionSet<PasteOption> options)
 {
     auto range = selectedRange();
 
-    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     // FIXME: How can this hard-coded pasteboard name be right, given that the passed-in pasteboard has a name?
-    client()->setInsertionPasteboard(NSGeneralPboard);
-    ALLOW_DEPRECATED_DECLARATIONS_END
+    client()->setInsertionPasteboard(NSPasteboardNameGeneral);
 
     bool chosePlainText;
     RefPtr<DocumentFragment> fragment = webContentFromPasteboard(*pasteboard, *range, options.contains(PasteOption::AllowPlainText), chosePlainText);
@@ -140,7 +118,7 @@ void Editor::platformPasteFont()
         backgroundColor = colorFromCocoaColor(nsBackgroundColor);
     if (!backgroundColor.isValid())
         backgroundColor = Color::transparentBlack;
-    style->setProperty(CSSPropertyBackgroundColor, CSSPrimitiveValue::create(backgroundColor));
+    style->setProperty(CSSPropertyBackgroundColor, CSSValuePool::singleton().createColorValue(backgroundColor));
 
     if (NSFont *font = dynamic_objc_cast<NSFont>([fontAttributes objectForKey:NSFontAttributeName])) {
         // FIXME: Need more sophisticated escaping code if we want to handle family names
@@ -164,7 +142,7 @@ void Editor::platformPasteFont()
             foregroundColor = Color::transparentBlack;
     } else
         foregroundColor = Color::black;
-    style->setProperty(CSSPropertyColor, CSSPrimitiveValue::create(foregroundColor));
+    style->setProperty(CSSPropertyColor, CSSValuePool::singleton().createColorValue(foregroundColor));
 
     FontShadow fontShadow;
     if (NSShadow *nsFontShadow = dynamic_objc_cast<NSShadow>([fontAttributes objectForKey:NSShadowAttributeName]))
@@ -272,7 +250,7 @@ void Editor::writeImageToPasteboard(Pasteboard& pasteboard, Element& imageElemen
         pasteboardImage.dataInWebArchiveFormat = imageInWebArchiveFormat(imageElement);
 
     if (auto imageRange = makeRangeSelectingNode(imageElement))
-        pasteboardImage.dataInHTMLFormat = serializePreservingVisualAppearance(VisibleSelection { *imageRange }, ResolveURLs::YesExcludingLocalFileURLsForPrivacy, SerializeComposedTree::Yes);
+        pasteboardImage.dataInHTMLFormat = serializePreservingVisualAppearance(VisibleSelection { *imageRange }, ResolveURLs::YesExcludingURLsForPrivacy, SerializeComposedTree::Yes, IgnoreUserSelectNone::Yes);
 
     pasteboardImage.url.url = url;
     pasteboardImage.url.title = title;

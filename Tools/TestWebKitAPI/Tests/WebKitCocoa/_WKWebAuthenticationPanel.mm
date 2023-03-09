@@ -24,12 +24,12 @@
  */
 
 #import "config.h"
-#import "Test.h"
 
 #if ENABLE(WEB_AUTHN)
 
 #import "HTTPServer.h"
 #import "PlatformUtilities.h"
+#import "Test.h"
 #import "TestWKWebView.h"
 #import "WKWebViewConfigurationExtras.h"
 #import <LocalAuthentication/LocalAuthentication.h>
@@ -45,7 +45,7 @@
 #import <WebKit/_WKAuthenticatorAssertionResponse.h>
 #import <WebKit/_WKAuthenticatorAttestationResponse.h>
 #import <WebKit/_WKAuthenticatorSelectionCriteria.h>
-#import <WebKit/_WKExperimentalFeature.h>
+#import <WebKit/_WKFeature.h>
 #import <WebKit/_WKPublicKeyCredentialCreationOptions.h>
 #import <WebKit/_WKPublicKeyCredentialDescriptor.h>
 #import <WebKit/_WKPublicKeyCredentialParameters.h>
@@ -56,7 +56,7 @@
 #import <WebKit/_WKWebAuthenticationPanel.h>
 #import <WebKit/_WKWebAuthenticationPanelForTesting.h>
 #import <wtf/BlockPtr.h>
-#import <wtf/RandomNumber.h>
+#import <wtf/WeakRandomNumber.h>
 #import <wtf/spi/cocoa/SecuritySPI.h>
 #import <wtf/text/StringConcatenateNumbers.h>
 
@@ -80,6 +80,7 @@ static String testES256PrivateKeyBase64 =
     "BDj/zxSkzKgaBuS3cdWDF558of8AaIpgFpsjF/Qm1749VBJPgqUIwfhWHJ91nb7U"
     "PH76c0+WFOzZKslPyyFse4goGIW2R7k9VHLPEZl5nfnBgEVFh5zev+/xpHQIvuq6"
     "RQ=="_s;
+static String testES256PrivateKeyBase64Alternate = "BBRoi2JbR0IXTeJmvXUp1YIuM4sph/Lu3eGf75F7n+HojHKG70a4R0rB2PQce5/SJle6T7OO5Cqet/LJZVM6NQ8yDDxWvayf71GTDp2yUtuIbqJLFVbpWymlj9WRizgX3A=="_s;
 static String testUserEntityBundleBase64 = "omJpZEoAAQIDBAUGBwgJZG5hbWVkSm9obg=="_s; // { "id": h'00010203040506070809', "name": "John" }
 static String testUserEntityBundleNoUserHandleBase64 = "oWRuYW1lbE1DIE5vLUhhbmRsZQ=="_s; // {"name": "MC No-Handle"}
 static String webAuthenticationPanelSelectedCredentialName;
@@ -189,7 +190,7 @@ static bool laContextRequested = false;
         EXPECT_TRUE([[response.userHandle base64EncodedStringWithOptions:0] isEqual:@"MIIBkzCCATigAwIBAjCCAZMwggE4oAMCAQIwggGTMII="] || !response.userHandle);
     }
 
-    auto index = weakRandomUint32() % 2;
+    auto index = weakRandomNumber<uint32_t>() % 2;
     webAuthenticationPanelNullUserHandle = responses[index].userHandle ? NO : YES;
     completionHandler(responses[index]);
 }
@@ -720,8 +721,12 @@ TEST(WebAuthenticationPanel, PanelHidCancel)
 
     [webView loadRequest:[NSURLRequest requestWithURL:testURL.get()]];
     Util::run(&webAuthenticationPanelRan);
+    __block bool done = false;
+    [webView performAfterReceivingMessage:@"This request has been cancelled by the user." action:^{
+        done = true;
+    }];
     [[delegate panel] cancel];
-    [webView waitForMessage:@"This request has been cancelled by the user."];
+    Util::run(&done);
     EXPECT_TRUE(webAuthenticationPanelFailed);
 }
 
@@ -1410,7 +1415,7 @@ TEST(WebAuthenticationPanel, LAGetAssertionMultipleCredentialStore)
     [webView focus];
 
     ASSERT_TRUE(addKeyToKeychain(testES256PrivateKeyBase64, emptyString(), testUserEntityBundleBase64));
-    ASSERT_TRUE(addKeyToKeychain("BBRoi2JbR0IXTeJmvXUp1YIuM4sph/Lu3eGf75F7n+HojHKG70a4R0rB2PQce5/SJle6T7OO5Cqet/LJZVM6NQ8yDDxWvayf71GTDp2yUtuIbqJLFVbpWymlj9WRizgX3A=="_s, emptyString(), "o2JpZEoAAQIDBAUGBwgJZG5hbWVkSmFuZWtkaXNwbGF5TmFtZWpKYW5lIFNtaXRo"_s/* { "id": h'00010203040506070809', "name": "Jane", "displayName": "Jane Smith" } */, true /* synchronizable */));
+    ASSERT_TRUE(addKeyToKeychain(testES256PrivateKeyBase64Alternate, emptyString(), "o2JpZEoAAQIDBAUGBwgJZG5hbWVkSmFuZWtkaXNwbGF5TmFtZWpKYW5lIFNtaXRo"_s/* { "id": h'00010203040506070809', "name": "Jane", "displayName": "Jane Smith" } */, true /* synchronizable */));
 
     [webView loadRequest:[NSURLRequest requestWithURL:testURL.get()]];
     [webView waitForMessage:@"Succeeded!"];
@@ -1458,7 +1463,7 @@ TEST(WebAuthenticationPanel, LAGetAssertionMultipleOrder)
     [webView focus];
 
     ASSERT_TRUE(addKeyToKeychain(testES256PrivateKeyBase64, emptyString(), testUserEntityBundleBase64));
-    ASSERT_TRUE(addKeyToKeychain("BBRoi2JbR0IXTeJmvXUp1YIuM4sph/Lu3eGf75F7n+HojHKG70a4R0rB2PQce5/SJle6T7OO5Cqet/LJZVM6NQ8yDDxWvayf71GTDp2yUtuIbqJLFVbpWymlj9WRizgX3A=="_s, emptyString(), "omJpZEoAAQIDBAUGBwgJZG5hbWVkSmFuZQ=="_s/* { "id": h'00010203040506070809', "name": "Jane" } */));
+    ASSERT_TRUE(addKeyToKeychain(testES256PrivateKeyBase64Alternate, emptyString(), "omJpZEoAAQIDBAUGBwgJZG5hbWVkSmFuZQ=="_s/* { "id": h'00010203040506070809', "name": "Jane" } */));
 
     [webView loadRequest:[NSURLRequest requestWithURL:testURL.get()]];
     [webView waitForMessage:@"Succeeded!"];
@@ -1475,7 +1480,7 @@ TEST(WebAuthenticationPanel, LAGetAssertionMultipleOrder)
 
 #endif // USE(APPLE_INTERNAL_SDK) || PLATFORM(IOS)
 
-TEST(WebAuthenticationPanel, PublicKeyCredentialCreationOptionsMinimun)
+TEST(WebAuthenticationPanel, PublicKeyCredentialCreationOptionsMinimum)
 {
     uint8_t identifier[] = { 0x01, 0x02, 0x03, 0x04 };
     NSData *nsIdentifier = [NSData dataWithBytes:identifier length:sizeof(identifier)];
@@ -1490,7 +1495,7 @@ TEST(WebAuthenticationPanel, PublicKeyCredentialCreationOptionsMinimun)
 
     EXPECT_WK_STREQ(result.rp.name, "example.com");
     EXPECT_TRUE(result.rp.icon.isNull());
-    EXPECT_TRUE(result.rp.id.isNull());
+    EXPECT_TRUE(result.rp.id && result.rp.id->isNull());
 
     EXPECT_WK_STREQ(result.user.name, "jappleseed@example.com");
     EXPECT_TRUE(result.user.icon.isNull());
@@ -1534,7 +1539,7 @@ TEST(WebAuthenticationPanel, PublicKeyCredentialCreationOptionsMaximumDefault)
 
     EXPECT_WK_STREQ(result.rp.name, "example.com");
     EXPECT_TRUE(result.rp.icon.isNull());
-    EXPECT_TRUE(result.rp.id.isNull());
+    EXPECT_TRUE(result.rp.id && result.rp.id->isNull());
 
     EXPECT_WK_STREQ(result.user.name, "jappleseed@example.com");
     EXPECT_TRUE(result.user.icon.isNull());
@@ -1585,8 +1590,9 @@ TEST(WebAuthenticationPanel, PublicKeyCredentialCreationOptionsMaximum1)
     auto usb = adoptNS([NSNumber numberWithInt:_WKWebAuthenticationTransportUSB]);
     auto nfc = adoptNS([NSNumber numberWithInt:_WKWebAuthenticationTransportNFC]);
     auto internal = adoptNS([NSNumber numberWithInt:_WKWebAuthenticationTransportInternal]);
+    auto hybrid = adoptNS([NSNumber numberWithInt:_WKWebAuthenticationTransportHybrid]);
     auto credential = adoptNS([[_WKPublicKeyCredentialDescriptor alloc] initWithIdentifier:nsIdentifier]);
-    [credential setTransports:@[ usb.get(), nfc.get(), internal.get() ]];
+    [credential setTransports:@[ usb.get(), nfc.get(), internal.get(), hybrid.get() ]];
     [options setExcludeCredentials:@[ credential.get(), credential.get() ]];
 
     auto authenticatorSelection = adoptNS([[_WKAuthenticatorSelectionCriteria alloc] init]);
@@ -1601,7 +1607,7 @@ TEST(WebAuthenticationPanel, PublicKeyCredentialCreationOptionsMaximum1)
 
     EXPECT_WK_STREQ(result.rp.name, "example.com");
     EXPECT_WK_STREQ(result.rp.icon, @"https//www.example.com/icon.jpg");
-    EXPECT_WK_STREQ(result.rp.id, "example.com");
+    EXPECT_WK_STREQ(*result.rp.id, "example.com");
 
     EXPECT_WK_STREQ(result.user.name, "jappleseed@example.com");
     EXPECT_WK_STREQ(result.user.icon, @"https//www.example.com/icon.jpg");
@@ -1621,10 +1627,11 @@ TEST(WebAuthenticationPanel, PublicKeyCredentialCreationOptionsMaximum1)
     EXPECT_EQ(result.excludeCredentials[0].type, WebCore::PublicKeyCredentialType::PublicKey);
     EXPECT_EQ(result.excludeCredentials[0].id.length(), sizeof(identifier));
     EXPECT_EQ(memcmp(result.excludeCredentials[0].id.data(), identifier, sizeof(identifier)), 0);
-    EXPECT_EQ(result.excludeCredentials[0].transports.size(), 3lu);
+    EXPECT_EQ(result.excludeCredentials[0].transports.size(), 4lu);
     EXPECT_EQ(result.excludeCredentials[0].transports[0], AuthenticatorTransport::Usb);
     EXPECT_EQ(result.excludeCredentials[0].transports[1], AuthenticatorTransport::Nfc);
     EXPECT_EQ(result.excludeCredentials[0].transports[2], AuthenticatorTransport::Internal);
+    EXPECT_EQ(result.excludeCredentials[0].transports[3], AuthenticatorTransport::Hybrid);
 
     EXPECT_EQ(result.authenticatorSelection->authenticatorAttachment, AuthenticatorAttachment::Platform);
     EXPECT_EQ(result.authenticatorSelection->requireResidentKey, true);
@@ -1671,7 +1678,7 @@ TEST(WebAuthenticationPanel, PublicKeyCredentialCreationOptionsMaximum2)
 
     EXPECT_WK_STREQ(result.rp.name, "example.com");
     EXPECT_WK_STREQ(result.rp.icon, @"https//www.example.com/icon.jpg");
-    EXPECT_WK_STREQ(result.rp.id, "example.com");
+    EXPECT_WK_STREQ(*result.rp.id, "example.com");
 
     EXPECT_WK_STREQ(result.user.name, "jappleseed@example.com");
     EXPECT_WK_STREQ(result.user.icon, @"https//www.example.com/icon.jpg");
@@ -1934,7 +1941,7 @@ TEST(WebAuthenticationPanel, GetAssertionSPITimeout)
 
         EXPECT_NULL(response);
         EXPECT_EQ(error.domain, WKErrorDomain);
-        EXPECT_EQ(error.code, WKErrorUnknown);
+        EXPECT_EQ(error.code, NotAllowedError);
     }];
     Util::run(&webAuthenticationPanelRan);
 }
@@ -1954,7 +1961,6 @@ TEST(WebAuthenticationPanel, GetAssertionLA)
     EXPECT_EQ([credentialsBefore count], 1lu);
     EXPECT_NOT_NULL([credentialsBefore firstObject]);
     EXPECT_EQ([[credentialsBefore firstObject][_WKLocalAuthenticatorCredentialLastModificationDateKey] compare:[credentialsBefore firstObject][_WKLocalAuthenticatorCredentialCreationDateKey]], 0);
-    EXPECT_EQ([[credentialsBefore firstObject][_WKLocalAuthenticatorCredentialLastModificationDateKey] compare:[credentialsBefore firstObject][_WKLocalAuthenticatorCredentialLastUsedDateKey]], 0);
     EXPECT_GE([[credentialsBefore firstObject][_WKLocalAuthenticatorCredentialLastModificationDateKey] compare:beforeTime.get()], 0);
 
     uint8_t hash[] = { 0x01, 0x02, 0x03, 0x04, 0x01, 0x02, 0x03, 0x04, 0x01, 0x02, 0x03, 0x04, 0x01, 0x02, 0x03, 0x04, 0x01, 0x02, 0x03, 0x04, 0x01, 0x02, 0x03, 0x04, 0x01, 0x02, 0x03, 0x04, 0x01, 0x02, 0x03, 0x04 };
@@ -1975,9 +1981,7 @@ TEST(WebAuthenticationPanel, GetAssertionLA)
         EXPECT_NOT_NULL(credentialsAfter);
         EXPECT_EQ([credentialsAfter count], 1lu);
         EXPECT_NOT_NULL([credentialsAfter firstObject]);
-        EXPECT_EQ([[credentialsAfter firstObject][_WKLocalAuthenticatorCredentialLastModificationDateKey] compare:[credentialsAfter firstObject][_WKLocalAuthenticatorCredentialCreationDateKey]], 0);
-        EXPECT_LE([[credentialsAfter firstObject][_WKLocalAuthenticatorCredentialLastModificationDateKey] compare:[credentialsAfter firstObject][_WKLocalAuthenticatorCredentialLastUsedDateKey]], 0);
-        EXPECT_GE([[credentialsBefore firstObject][_WKLocalAuthenticatorCredentialLastUsedDateKey] compare:beforeTime.get()], 0);
+        EXPECT_GE([[credentialsAfter firstObject][_WKLocalAuthenticatorCredentialLastModificationDateKey] compare:[credentialsAfter firstObject][_WKLocalAuthenticatorCredentialCreationDateKey]], 0);
         cleanUpKeychain("example.com"_s);
 
         EXPECT_NULL(error);
@@ -2111,7 +2115,7 @@ TEST(WebAuthenticationPanel, GetAssertionCrossPlatform)
 
         EXPECT_NULL(response);
         EXPECT_EQ(error.domain, WKErrorDomain);
-        EXPECT_EQ(error.code, WKErrorUnknown);
+        EXPECT_EQ(error.code, NotAllowedError);
     }];
     Util::run(&webAuthenticationPanelRan);
 }
@@ -2177,6 +2181,60 @@ TEST(WebAuthenticationPanel, GetAllCredentialWithDisplayName)
     EXPECT_NOT_NULL([credentials firstObject]);
     EXPECT_WK_STREQ([credentials firstObject][_WKLocalAuthenticatorCredentialNameKey], "John");
     EXPECT_WK_STREQ([credentials firstObject][_WKLocalAuthenticatorCredentialDisplayNameKey], "Johnny");
+
+    cleanUpKeychain("example.com"_s);
+}
+
+TEST(WebAuthenticationPanel, GetAllCredentialByRPID)
+{
+    reset();
+
+    // {"id": h'00010203040506070809', "name": "John", "displayName": "Johnny"}
+    ASSERT_TRUE(addKeyToKeychain(testES256PrivateKeyBase64, "example.com"_s, "o2JpZEoAAQIDBAUGBwgJZG5hbWVkSm9obmtkaXNwbGF5TmFtZWZKb2hubnk="_s));
+
+    auto *credentials = [_WKWebAuthenticationPanel getAllLocalAuthenticatorCredentialsWithAccessGroup:@"com.apple.TestWebKitAPI"];
+    EXPECT_NOT_NULL(credentials);
+    EXPECT_EQ([credentials count], 1lu);
+
+    ASSERT_TRUE(addKeyToKeychain(testES256PrivateKeyBase64Alternate, "example2.com"_s, "o2JpZEoAAQIDBAUGBwgJZG5hbWVkSm9obmtkaXNwbGF5TmFtZWZKb2hubnk="_s));
+
+    credentials = [_WKWebAuthenticationPanel getAllLocalAuthenticatorCredentialsWithRPIDAndAccessGroup:@"com.apple.TestWebKitAPI" rpID:@"example.com"];
+    EXPECT_NOT_NULL(credentials);
+    EXPECT_EQ([credentials count], 1lu);
+    EXPECT_WK_STREQ([credentials firstObject][_WKLocalAuthenticatorCredentialRelyingPartyIDKey], "example.com");
+
+    credentials = [_WKWebAuthenticationPanel getAllLocalAuthenticatorCredentialsWithRPIDAndAccessGroup:@"com.apple.TestWebKitAPI" rpID:@"example2.com"];
+    EXPECT_NOT_NULL(credentials);
+    EXPECT_EQ([credentials count], 1lu);
+    EXPECT_WK_STREQ([credentials firstObject][_WKLocalAuthenticatorCredentialRelyingPartyIDKey], "example2.com");
+
+    credentials = [_WKWebAuthenticationPanel getAllLocalAuthenticatorCredentialsWithRPIDAndAccessGroup:@"com.apple.TestWebKitAPI" rpID:@"example3.com"];
+    EXPECT_NOT_NULL(credentials);
+    EXPECT_EQ([credentials count], 0lu);
+
+    cleanUpKeychain("example.com"_s);
+    cleanUpKeychain("example2.com"_s);
+}
+
+TEST(WebAuthenticationPanel, GetAllCredentialByCredentialID)
+{
+    reset();
+    cleanUpKeychain("example.com"_s);
+
+    // {"id": h'00010203040506070809', "name": "John", "displayName": "Johnny"}
+    ASSERT_TRUE(addKeyToKeychain(testES256PrivateKeyBase64, "example.com"_s, "o2JpZEoAAQIDBAUGBwgJZG5hbWVkSm9obmtkaXNwbGF5TmFtZWZKb2hubnk="_s));
+
+    auto *credentials = [_WKWebAuthenticationPanel getAllLocalAuthenticatorCredentialsWithAccessGroup:@"com.apple.TestWebKitAPI"];
+    EXPECT_NOT_NULL(credentials);
+    EXPECT_EQ([credentials count], 1lu);
+
+    credentials = [_WKWebAuthenticationPanel getAllLocalAuthenticatorCredentialsWithCredentialIDAndAccessGroup:@"com.apple.TestWebKitAPI" credentialID:[[NSData alloc] initWithBase64EncodedString:@"SMSXHngF7hEOsElA73C3RY+8bR4=" options:0]];
+    EXPECT_NOT_NULL(credentials);
+    EXPECT_EQ([credentials count], 1lu);
+
+    credentials = [_WKWebAuthenticationPanel getAllLocalAuthenticatorCredentialsWithCredentialIDAndAccessGroup:@"com.apple.TestWebKitAPI" credentialID:[[NSData alloc] initWithBase64EncodedString:@"SMSXHngF7hEOsElA73C3RY+8bR8=" options:0]];
+    EXPECT_NOT_NULL(credentials);
+    EXPECT_EQ([credentials count], 0lu);
 
     cleanUpKeychain("example.com"_s);
 }
@@ -2248,6 +2306,44 @@ TEST(WebAuthenticationPanel, UpdateCredentialDisplayName)
 
     EXPECT_NOT_NULL([credentials firstObject]);
     EXPECT_WK_STREQ([credentials firstObject][_WKLocalAuthenticatorCredentialDisplayNameKey], "Something Different");
+
+    cleanUpKeychain("example.com"_s);
+}
+
+TEST(WebAuthenticationPanel, UpdateCredentialName)
+{
+    reset();
+    cleanUpKeychain("example.com"_s);
+
+    ASSERT_TRUE(addKeyToKeychain(testES256PrivateKeyBase64, "example.com"_s, testUserEntityBundleBase64));
+
+    auto *credentials = [_WKWebAuthenticationPanel getAllLocalAuthenticatorCredentialsWithAccessGroup:@"com.apple.TestWebKitAPI"];
+    EXPECT_NOT_NULL(credentials);
+    EXPECT_EQ([credentials count], 1lu);
+
+    EXPECT_NOT_NULL([credentials firstObject]);
+    EXPECT_WK_STREQ([credentials firstObject][_WKLocalAuthenticatorCredentialNameKey], "John");
+    EXPECT_NULL([credentials firstObject][_WKLocalAuthenticatorCredentialDisplayNameKey]);
+
+    [_WKWebAuthenticationPanel setNameForLocalCredentialWithGroupAndID:nil credential:[credentials firstObject][_WKLocalAuthenticatorCredentialIDKey] name:@"Jill"];
+
+    credentials = [_WKWebAuthenticationPanel getAllLocalAuthenticatorCredentialsWithAccessGroup:@"com.apple.TestWebKitAPI"];
+    EXPECT_NOT_NULL(credentials);
+    EXPECT_EQ([credentials count], 1lu);
+
+    EXPECT_NOT_NULL([credentials firstObject]);
+    EXPECT_WK_STREQ([credentials firstObject][_WKLocalAuthenticatorCredentialNameKey], "Jill");
+    EXPECT_NULL([credentials firstObject][_WKLocalAuthenticatorCredentialDisplayNameKey]);
+
+    [_WKWebAuthenticationPanel setNameForLocalCredentialWithGroupAndID:nil credential:[credentials firstObject][_WKLocalAuthenticatorCredentialIDKey] name: @"Something Different"];
+
+    credentials = [_WKWebAuthenticationPanel getAllLocalAuthenticatorCredentialsWithAccessGroup:@"com.apple.TestWebKitAPI"];
+    EXPECT_NOT_NULL(credentials);
+    EXPECT_EQ([credentials count], 1lu);
+
+    EXPECT_NOT_NULL([credentials firstObject]);
+    EXPECT_WK_STREQ([credentials firstObject][_WKLocalAuthenticatorCredentialNameKey], "Something Different");
+    EXPECT_NULL([credentials firstObject][_WKLocalAuthenticatorCredentialDisplayNameKey]);
 
     cleanUpKeychain("example.com"_s);
 }

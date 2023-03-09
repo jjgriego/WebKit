@@ -375,13 +375,10 @@ AccessibilityUIElement AccessibilityUIElement::ariaFlowToElementAtIndex(unsigned
 
 AccessibilityUIElement AccessibilityUIElement::ariaControlsElementAtIndex(unsigned index)
 {
-    BEGIN_AX_OBJC_EXCEPTIONS
-    NSArray* ariaControls = [m_element accessibilityAttributeValue:@"AXARIAControls"];
-    if (index < [ariaControls count])
-        return [ariaControls objectAtIndex:index];
-    END_AX_OBJC_EXCEPTIONS
-    
-    return nullptr;
+    // Per spec, aria-controls is exposed via AXLinkedUIElements on the Mac.
+    // Note that a few other things are exposed via AXLinkedUIElements (aria-flowto), so this function
+    // may provide unexpected results for tests that use a combination of these attributes.
+    return linkedUIElementAtIndex(index);
 }
 
 AccessibilityUIElement AccessibilityUIElement::disclosedRowAtIndex(unsigned index)
@@ -1763,11 +1760,25 @@ AccessibilityTextMarker AccessibilityUIElement::textMarkerForIndex(int textIndex
     return nullptr;
 }
 
+bool AccessibilityUIElement::isTextMarkerNull(AccessibilityTextMarker* textMarker)
+{
+    if (!textMarker)
+        return true;
+
+    BEGIN_AX_OBJC_EXCEPTIONS
+    return [[m_element accessibilityAttributeValue:@"AXTextMarkerIsNull" forParameter:textMarker->platformTextMarker()] boolValue];
+    END_AX_OBJC_EXCEPTIONS
+
+    return true;
+}
+
 bool AccessibilityUIElement::isTextMarkerValid(AccessibilityTextMarker* textMarker)
 {
+    if (!textMarker)
+        return false;
+
     BEGIN_AX_OBJC_EXCEPTIONS
-    NSNumber* validNumber = [m_element accessibilityAttributeValue:@"AXTextMarkerIsValid" forParameter:textMarker->platformTextMarker()];
-    return [validNumber boolValue];
+    return [[m_element accessibilityAttributeValue:@"AXTextMarkerIsValid" forParameter:textMarker->platformTextMarker()] boolValue];
     END_AX_OBJC_EXCEPTIONS
 
     return false;

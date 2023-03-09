@@ -28,9 +28,29 @@
 #if ENABLE(WEBGL)
 
 #include "WebGLRenderingContextBase.h"
+#include <wtf/ForbidHeapAllocation.h>
+#include <wtf/Noncopyable.h>
 #include <wtf/RefCounted.h>
+#include <wtf/TypeCasts.h>
 
 namespace WebCore {
+
+class WebGLExtensionScopedContext final {
+    WTF_FORBID_HEAP_ALLOCATION;
+    WTF_MAKE_NONCOPYABLE(WebGLExtensionScopedContext);
+public:
+    explicit WebGLExtensionScopedContext(WebGLExtension*);
+
+    template<typename T>
+    constexpr T* downcast() const { return WTF::downcast<T>(m_context); }
+    constexpr bool isLost() const { return !m_context; }
+
+    constexpr WebGLRenderingContextBase& operator*() const { ASSERT(!isLost()); return *m_context; }
+    constexpr WebGLRenderingContextBase* operator->() const { ASSERT(!isLost()); return m_context; }
+
+private:
+    WebGLRenderingContextBase* m_context;
+};
 
 class WebGLExtension : public RefCounted<WebGLExtension> {
     WTF_MAKE_ISO_ALLOCATED(WebGLExtension);
@@ -41,8 +61,11 @@ public:
         EXTBlendMinMaxName,
         EXTColorBufferFloatName,
         EXTColorBufferHalfFloatName,
+        EXTDisjointTimerQueryName,
+        EXTDisjointTimerQueryWebGL2Name,
         EXTFloatBlendName,
         EXTFragDepthName,
+        EXTPolygonOffsetClampName,
         EXTShaderTextureLODName,
         EXTTextureCompressionBPTCName,
         EXTTextureCompressionRGTCName,
@@ -59,9 +82,9 @@ public:
         OESTextureHalfFloatName,
         OESTextureHalfFloatLinearName,
         OESVertexArrayObjectName,
+        WebGLClipCullDistanceName,
         WebGLColorBufferFloatName,
         WebGLCompressedTextureASTCName,
-        WebGLCompressedTextureATCName,
         WebGLCompressedTextureETCName,
         WebGLCompressedTextureETC1Name,
         WebGLCompressedTexturePVRTCName,
@@ -71,8 +94,11 @@ public:
         WebGLDebugShadersName,
         WebGLDepthTextureName,
         WebGLDrawBuffersName,
+        WebGLDrawInstancedBaseVertexBaseInstanceName,
         WebGLLoseContextName,
         WebGLMultiDrawName,
+        WebGLMultiDrawInstancedBaseVertexBaseInstanceName,
+        WebGLProvokingVertexName,
     };
 
     WebGLRenderingContextBase* context() { return m_context; }
@@ -86,10 +112,12 @@ public:
     // context loss. However, all extensions must be lost when
     // destroying their WebGLRenderingContextBase.
     virtual void loseParentContext(WebGLRenderingContextBase::LostContextMode);
-    bool isLost() { return !m_context; }
+    bool isLostContext() { return !m_context; }
 
 protected:
     WebGLExtension(WebGLRenderingContextBase&);
+
+private:
     WebGLRenderingContextBase* m_context;
 };
 

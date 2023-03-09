@@ -29,9 +29,9 @@
 
 #import "ArgumentCodersCF.h"
 #import "ArgumentCodersCocoa.h"
-#import "DaemonDecoder.h"
-#import "DaemonEncoder.h"
 #import "DataReference.h"
+#import "StreamConnectionEncoder.h"
+#import <WebCore/AppKitControlSystemImage.h>
 #import <WebCore/CertificateInfo.h>
 #import <WebCore/ContentFilterUnblockHandler.h>
 #import <WebCore/Credential.h>
@@ -39,6 +39,7 @@
 #import <WebCore/ProtectionSpace.h>
 #import <WebCore/ResourceError.h>
 #import <WebCore/ResourceRequest.h>
+#import <WebCore/ScrollbarTrackCornerSystemImageMac.h>
 #import <WebCore/SerializedPlatformDataCueMac.h>
 #import <pal/spi/cf/CFNetworkSPI.h>
 #import <wtf/MachSendRight.h>
@@ -46,76 +47,28 @@
 
 namespace IPC {
 
-template<>
-void ArgumentCoder<WebCore::CertificateInfo>::encode(Encoder& encoder, const WebCore::CertificateInfo& certificateInfo)
+static bool isSafeToEncodeUserInfo(id value)
 {
-    encoder << certificateInfo.type();
+    if ([value isKindOfClass:NSString.class] || [value isKindOfClass:NSURL.class] || [value isKindOfClass:NSNumber.class])
+        return true;
 
-    switch (certificateInfo.type()) {
-#if HAVE(SEC_TRUST_SERIALIZATION)
-    case WebCore::CertificateInfo::Type::Trust:
-        encoder << certificateInfo.trust();
-        break;
-#endif
-    case WebCore::CertificateInfo::Type::CertificateChain:
-        encoder << certificateInfo.certificateChain();
-        break;
-    case WebCore::CertificateInfo::Type::None:
-        // Do nothing.
-        break;
-    }
-}
-
-template<>
-void ArgumentCoder<WebCore::CertificateInfo>::encode(WebKit::Daemon::Encoder& encoder, const WebCore::CertificateInfo& certificateInfo)
-{
-    ASSERT(certificateInfo.type() == WebCore::CertificateInfo::Type::Trust);
-    encoder << certificateInfo.trust();
-}
-
-template<>
-std::optional<WebCore::CertificateInfo> ArgumentCoder<WebCore::CertificateInfo>::decode(Decoder& decoder)
-{
-    std::optional<WebCore::CertificateInfo::Type> certificateInfoType;
-    decoder >> certificateInfoType;
-    if (!certificateInfoType)
-        return std::nullopt;
-
-    switch (*certificateInfoType) {
-#if HAVE(SEC_TRUST_SERIALIZATION)
-    case WebCore::CertificateInfo::Type::Trust: {
-        std::optional<RetainPtr<SecTrustRef>> trust;
-        decoder >> trust;
-        if (!trust || !*trust)
-            return std::nullopt;
-
-        return WebCore::CertificateInfo(WTFMove(*trust));
-    }
-#endif
-    case WebCore::CertificateInfo::Type::CertificateChain: {
-        std::optional<RetainPtr<CFArrayRef>> certificateChain;
-        decoder >> certificateChain;
-        if (!certificateChain || !*certificateChain)
-            return std::nullopt;
-
-        return WebCore::CertificateInfo(WTFMove(*certificateChain));
-    }
-    case WebCore::CertificateInfo::Type::None:
-        // Do nothing.
-        break;
+    if (auto array = dynamic_objc_cast<NSArray>(value)) {
+        for (id object in array) {
+            if (!isSafeToEncodeUserInfo(object))
+                return false;
+        }
+        return true;
     }
 
-    return {{ }};
-}
+    if (auto dictionary = dynamic_objc_cast<NSDictionary>(value)) {
+        for (id innerValue in dictionary.objectEnumerator) {
+            if (!isSafeToEncodeUserInfo(innerValue))
+                return false;
+        }
+        return true;
+    }
 
-template<>
-std::optional<WebCore::CertificateInfo> ArgumentCoder<WebCore::CertificateInfo>::decode(WebKit::Daemon::Decoder& decoder)
-{
-    std::optional<RetainPtr<SecTrustRef>> trust;
-    decoder >> trust;
-    if (!trust || !*trust)
-        return std::nullopt;
-    return WebCore::CertificateInfo(WTFMove(*trust));
+    return false;
 }
 
 static void encodeNSError(Encoder& encoder, NSError *nsError)
@@ -131,7 +84,7 @@ static void encodeNSError(Encoder& encoder, NSError *nsError)
     RetainPtr<CFMutableDictionaryRef> filteredUserInfo = adoptCF(CFDictionaryCreateMutable(kCFAllocatorDefault, userInfo.count, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
 
     [userInfo enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL*) {
-        if ([value isKindOfClass:[NSString class]] || [value isKindOfClass:[NSURL class]] || [value isKindOfClass:[NSNumber class]])
+        if (isSafeToEncodeUserInfo(value))
             CFDictionarySetValue(filteredUserInfo.get(), (__bridge CFTypeRef)key, (__bridge CFTypeRef)value);
     }];
 
@@ -184,10 +137,8 @@ static void encodeNSError(Encoder& encoder, NSError *nsError)
     if (peerCertificateChain)
         CFDictionarySetValue(filteredUserInfo.get(), CFSTR("NSErrorPeerCertificateChainKey"), (__bridge CFTypeRef)peerCertificateChain);
 
-#if HAVE(SEC_TRUST_SERIALIZATION)
     if (SecTrustRef peerTrust = (__bridge SecTrustRef)[userInfo objectForKey:NSURLErrorFailingURLPeerTrustErrorKey])
         CFDictionarySetValue(filteredUserInfo.get(), (__bridge CFStringRef)NSURLErrorFailingURLPeerTrustErrorKey, peerTrust);
-#endif
 
     encoder << static_cast<CFDictionaryRef>(filteredUserInfo.get());
 
@@ -275,29 +226,6 @@ bool ArgumentCoder<WebCore::Credential>::decodePlatformData(Decoder& decoder, We
     return true;
 }
 
-void ArgumentCoder<MachSendRight>::encode(Encoder& encoder, const MachSendRight& sendRight)
-{
-    encoder << Attachment(sendRight.copySendRight().leakSendRight(), MACH_MSG_TYPE_MOVE_SEND);
-}
-
-void ArgumentCoder<MachSendRight>::encode(Encoder& encoder, MachSendRight&& sendRight)
-{
-    encoder << Attachment(sendRight.leakSendRight(), MACH_MSG_TYPE_MOVE_SEND);
-}
-
-bool ArgumentCoder<MachSendRight>::decode(Decoder& decoder, MachSendRight& sendRight)
-{
-    Attachment attachment;
-    if (!decoder.decode(attachment))
-        return false;
-
-    if (attachment.disposition() != MACH_MSG_TYPE_MOVE_SEND)
-        return false;
-
-    sendRight = MachSendRight::adopt(attachment.port());
-    return true;
-}
-
 void ArgumentCoder<WebCore::KeypressCommand>::encode(Encoder& encoder, const WebCore::KeypressCommand& keypressCommand)
 {
     encoder << keypressCommand.commandName << keypressCommand.text;
@@ -369,5 +297,61 @@ std::optional<WebCore::SerializedPlatformDataCueValue>  ArgumentCoder<WebCore::S
     return WebCore::SerializedPlatformDataCueValue { platformType, object.value().get() };
 }
 #endif
+
+#if USE(APPKIT)
+
+template<typename Encoder>
+void ArgumentCoder<WebCore::AppKitControlSystemImage>::encode(Encoder& encoder, const WebCore::AppKitControlSystemImage& systemImage)
+{
+    encoder << systemImage.controlType();
+    encoder << systemImage.useDarkAppearance();
+    encoder << systemImage.tintColor();
+
+    switch (systemImage.controlType()) {
+    case WebCore::AppKitControlSystemImageType::ScrollbarTrackCorner:
+        return;
+    }
+
+    ASSERT_NOT_REACHED();
+}
+
+template
+void ArgumentCoder<WebCore::AppKitControlSystemImage>::encode<Encoder>(Encoder&, const WebCore::AppKitControlSystemImage&);
+template
+void ArgumentCoder<WebCore::AppKitControlSystemImage>::encode<StreamConnectionEncoder>(StreamConnectionEncoder&, const WebCore::AppKitControlSystemImage&);
+
+std::optional<Ref<WebCore::AppKitControlSystemImage>> ArgumentCoder<WebCore::AppKitControlSystemImage>::decode(Decoder& decoder)
+{
+    std::optional<WebCore::AppKitControlSystemImageType> controlType;
+    decoder >> controlType;
+    if (!controlType)
+        return std::nullopt;
+
+    std::optional<bool> useDarkAppearance;
+    decoder >> useDarkAppearance;
+    if (!useDarkAppearance)
+        return std::nullopt;
+
+    std::optional<WebCore::Color> tintColor;
+    decoder >> tintColor;
+    if (!tintColor)
+        return std::nullopt;
+
+    std::optional<Ref<WebCore::AppKitControlSystemImage>> control;
+    switch (*controlType) {
+    case WebCore::AppKitControlSystemImageType::ScrollbarTrackCorner:
+        control = WebCore::ScrollbarTrackCornerSystemImageMac::create();
+    }
+
+    if (!control)
+        return std::nullopt;
+
+    (*control)->setTintColor(*tintColor);
+    (*control)->setUseDarkAppearance(*useDarkAppearance);
+
+    return control;
+}
+
+#endif // USE(APPKIT)
 
 } // namespace IPC

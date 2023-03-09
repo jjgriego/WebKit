@@ -36,6 +36,7 @@
 #import "Utilities.h"
 #import "WKWebViewConfigurationExtras.h"
 #import <WebKit/WKMain.h>
+#import <WebKit/WKNavigationActionPrivate.h>
 #import <WebKit/WKPage.h>
 #import <WebKit/WKPageInjectedBundleClient.h>
 #import <WebKit/WKPreferencesPrivate.h>
@@ -43,7 +44,7 @@
 #import <WebKit/WKWebViewPrivate.h>
 #import <WebKit/WKWebViewPrivateForTesting.h>
 #import <WebKit/WKWebsiteDataStorePrivate.h>
-#import <WebKit/_WKExperimentalFeature.h>
+#import <WebKit/_WKFeature.h>
 #import <WebKit/_WKInspector.h>
 #import <WebKit/_WKWebsiteDataStoreConfiguration.h>
 #import <wtf/spi/darwin/XPCSPI.h>
@@ -205,8 +206,8 @@ static void triggerAttributionWithSubresourceRedirect(Connection& connection, co
         auto redirect = makeString("HTTP/1.1 302 Found\r\nLocation: ", location, "\r\nContent-Length: 0\r\n\r\n");
         connection.send(WTFMove(redirect), [connection, location] {
             connection.receiveHTTPRequest([connection, location] (Vector<char>&& request2) {
-                auto expectedHttpGetString = makeString("GET ", location, " HTTP/1.1\r\n").utf8().data();
-                EXPECT_TRUE(strnstr(request2.data(), expectedHttpGetString, request2.size()));
+                auto expectedHttpGetString = makeString("GET ", location, " HTTP/1.1\r\n").utf8();
+                EXPECT_TRUE(strnstr(request2.data(), expectedHttpGetString.data(), request2.size()));
                 constexpr auto response = "HTTP/1.1 200 OK\r\n"
                     "Content-Length: 0\r\n\r\n"_s;
                 connection.send(response);
@@ -406,7 +407,7 @@ TEST(PrivateClickMeasurement, DatabaseLocation)
     pid_t originalNetworkProcessPid = 0;
     @autoreleasepool {
         auto dataStoreConfiguration = adoptNS([_WKWebsiteDataStoreConfiguration new]);
-        dataStoreConfiguration.get().privateClickMeasurementStorageDirectory = tempDir;
+        dataStoreConfiguration.get()._resourceLoadStatisticsDirectory = tempDir;
         dataStoreConfiguration.get().pcmMachServiceName = nil;
         auto viewConfiguration = configurationWithoutUsingDaemon();
         auto dataStore = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:dataStoreConfiguration.get()]);
@@ -549,20 +550,20 @@ TEST(PrivateClickMeasurement, DaemonDebugMode)
     Vector<String> consoleMessages;
     auto webView = webViewWithOpenInspector(configuration);
     setInjectedBundleClient(webView.get(), consoleMessages);
-    [configuration.websiteDataStore _setPrivateClickMeasurementDebugModeEnabledForTesting:YES];
+    [configuration.websiteDataStore _setPrivateClickMeasurementDebugModeEnabled:YES];
     while (consoleMessages.isEmpty())
         Util::spinRunLoop();
     EXPECT_WK_STREQ(consoleMessages[0], "[Private Click Measurement] Turned Debug Mode on.");
-    [configuration.websiteDataStore _setPrivateClickMeasurementDebugModeEnabledForTesting:NO];
+    [configuration.websiteDataStore _setPrivateClickMeasurementDebugModeEnabled:NO];
     while (consoleMessages.size() < 2)
         Util::spinRunLoop();
     EXPECT_WK_STREQ(consoleMessages[1], "[Private Click Measurement] Turned Debug Mode off.");
     cleanUpDaemon(tempDir);
 }
 
-TEST(PrivateClickMeasurement, SKAdNetwork)
+static void setupSKAdNetworkTest(Vector<String>& consoleMessages, id<WKNavigationDelegate> navigationDelegate)
 {
-    HTTPServer server({ { "/app/apple-store/id1234567890"_s, { "hello"_s } } }, HTTPServer::Protocol::HttpsProxy);
+    HTTPServer server({ { "/app/id1234567890"_s, { "hello"_s } } }, HTTPServer::Protocol::HttpsProxy);
 
     auto storeConfiguration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] init]);
     [storeConfiguration setProxyConfiguration:@{
@@ -574,37 +575,59 @@ TEST(PrivateClickMeasurement, SKAdNetwork)
     viewConfiguration.websiteDataStore = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:storeConfiguration.get()]).get();
     auto webView = webViewWithOpenInspector(viewConfiguration);
 
-    for (_WKExperimentalFeature *feature in [WKPreferences _experimentalFeatures]) {
+    for (_WKFeature *feature in [WKPreferences _features]) {
         if ([feature.key isEqualToString:@"SKAttributionEnabled"]) {
-            [[viewConfiguration preferences] _setEnabled:YES forExperimentalFeature:feature];
+            [[viewConfiguration preferences] _setEnabled:YES forFeature:feature];
             break;
         }
     }
 
-    Vector<String> consoleMessages;
     setInjectedBundleClient(webView.get(), consoleMessages);
-    [viewConfiguration.websiteDataStore _setPrivateClickMeasurementDebugModeEnabledForTesting:YES];
+    [viewConfiguration.websiteDataStore _setPrivateClickMeasurementDebugModeEnabled:YES];
 
     [webView synchronouslyLoadHTMLString:@"<body>"
-        "<a href='https://apps.apple.com/app/apple-store/id1234567890' id='anchorid' attributiondestination='https://destination/' attributionSourceNonce='MTIzNDU2Nzg5MDEyMzQ1Ng'>anchor</a>"
+        "<a href='https://apps.apple.com/app/id1234567890' id='anchorid' attributiondestination='https://destination/' attributionSourceNonce='MTIzNDU2Nzg5MDEyMzQ1Ng'>anchor</a>"
         "</body>" baseURL:[NSURL URLWithString:@"https://example.com/"]];
 
     while (consoleMessages.isEmpty())
         Util::spinRunLoop();
     EXPECT_WK_STREQ(consoleMessages[0], "[Private Click Measurement] Turned Debug Mode on.");
+    consoleMessages.clear();
 
-    auto delegate = adoptNS([TestNavigationDelegate new]);
-    [delegate setDidReceiveAuthenticationChallenge:^(WKWebView *, NSURLAuthenticationChallenge *challenge, void (^callback)(NSURLSessionAuthChallengeDisposition, NSURLCredential *)) {
-        EXPECT_WK_STREQ(challenge.protectionSpace.authenticationMethod, NSURLAuthenticationMethodServerTrust);
-        callback(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
-    }];
-    webView.get().navigationDelegate = delegate.get();
+    webView.get().navigationDelegate = navigationDelegate;
 
     [webView clickOnElementID:@"anchorid"];
+}
 
-    while (consoleMessages.size() < 2)
+const char* expectedSKAdNetworkConsoleMessage = "Submitting potential install attribution for AdamId: 1234567890, adNetworkRegistrableDomain: destination, impressionId: MTIzNDU2Nzg5MDEyMzQ1Ng, sourceWebRegistrableDomain: example.com, version: 3";
+
+TEST(PrivateClickMeasurement, SKAdNetwork)
+{
+    Vector<String> consoleMessages;
+    auto delegate = adoptNS([TestNavigationDelegate new]);
+    [delegate allowAnyTLSCertificate];
+    setupSKAdNetworkTest(consoleMessages, delegate.get());
+    while (consoleMessages.isEmpty())
         Util::spinRunLoop();
-    EXPECT_WK_STREQ(consoleMessages[1], "Submitting potential install attribution for AdamId: 1234567890, adNetworkRegistrableDomain: destination, impressionId: MTIzNDU2Nzg5MDEyMzQ1Ng, sourceWebRegistrableDomain: example.com, version: 3");
+    EXPECT_WK_STREQ(consoleMessages[0], expectedSKAdNetworkConsoleMessage);
+}
+
+TEST(PrivateClickMeasurement, SKAdNetworkWithoutNavigatingToAppStoreLink)
+{
+    Vector<String> consoleMessages;
+    auto delegate = adoptNS([TestNavigationDelegate new]);
+    [delegate allowAnyTLSCertificate];
+    delegate.get().decidePolicyForNavigationAction = ^(WKNavigationAction *navigationAction, void (^decisionHandler)(WKNavigationActionPolicy)) {
+        decisionHandler(WKNavigationActionPolicyCancel);
+        Util::runFor(0.1_s);
+        EXPECT_EQ(0u, consoleMessages.size());
+        [navigationAction _storeSKAdNetworkAttribution];
+    };
+    setupSKAdNetworkTest(consoleMessages, delegate.get());
+
+    while (consoleMessages.isEmpty())
+        Util::spinRunLoop();
+    EXPECT_WK_STREQ(consoleMessages[0], expectedSKAdNetworkConsoleMessage);
 }
 
 TEST(PrivateClickMeasurement, NetworkProcessDebugMode)
@@ -613,11 +636,11 @@ TEST(PrivateClickMeasurement, NetworkProcessDebugMode)
     Vector<String> consoleMessages;
     auto webView = webViewWithOpenInspector(configuration);
     setInjectedBundleClient(webView.get(), consoleMessages);
-    [configuration.websiteDataStore _setPrivateClickMeasurementDebugModeEnabledForTesting:YES];
+    [configuration.websiteDataStore _setPrivateClickMeasurementDebugModeEnabled:YES];
     while (consoleMessages.isEmpty())
         Util::spinRunLoop();
     EXPECT_WK_STREQ(consoleMessages[0], "[Private Click Measurement] Turned Debug Mode on.");
-    [configuration.websiteDataStore _setPrivateClickMeasurementDebugModeEnabledForTesting:NO];
+    [configuration.websiteDataStore _setPrivateClickMeasurementDebugModeEnabled:NO];
     while (consoleMessages.size() < 2)
         Util::spinRunLoop();
     EXPECT_WK_STREQ(consoleMessages[1], "[Private Click Measurement] Turned Debug Mode off.");

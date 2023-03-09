@@ -230,7 +230,7 @@ def _convert_to_lower_with_underscores(text):
     # (This puts an underscore before A in isA but not A in CBA).
     text = sub(r'(?<=[a-z0-9])([A-Z])(?=\b)', r'_\1', text)
 
-    # Next add underscores when you have a captial letter which is followed by a capital letter
+    # Next add underscores when you have a capital letter which is followed by a capital letter
     # but is not proceeded by one. (This puts an underscore before A in 'WordADay').
     text = sub(r'(?<=[a-z0-9])([A-Z][A-Z_])', r'_\1', text)
 
@@ -2080,7 +2080,7 @@ def check_function_body(filename, file_extension, clean_lines, line_number, clas
         max_index = min(function_line_count, i + 4)
         partial_function_body = ' '.join(function_body_view.trimmed_lines[min_index:max_index])
 
-        if search(r'[^_]ASSERT_NOT_REACHED\(\);\s*(continue|return(\s+[^;]+)?);', partial_function_body) \
+        if search(r'[^_]ASSERT_NOT_REACHED\(\);\s*(continue|return|break(\s+[^;]+)?);', partial_function_body) \
                 or search(r'[^_]ASSERT_NOT_REACHED\(\);(\s*#endif)?(\s*})+\s*$', partial_function_body) \
                 or search(r'[^_]ASSERT_NOT_REACHED\(\);(\s*completionHandler[^;]+;)?(\s*})+\s*$', partial_function_body) \
                 or search(r'[^_]ASSERT_NOT_REACHED\(\);(\s*[^;]+;)?\s*return(\s+[^;]+)?;', partial_function_body) \
@@ -3351,8 +3351,8 @@ def check_arguments_for_wk_api_available(clean_lines, line_number, error):
     """
 
     @memoized
-    def max_version_for_platform(platform_name):
-        return VersionNameMap.map().max_public_version(platform=platform_name)
+    def max_major_version_for_platform(platform_name):
+        return VersionNameMap.map().max_public_version(platform=platform_name).major
 
     def check_version_string(version_string, platform_name):
         mapping = {
@@ -3374,9 +3374,9 @@ def check_arguments_for_wk_api_available(clean_lines, line_number, error):
             error(line_number, 'build/wk_api_available', 5, '%s(%s) is invalid; version number should have one decimal' % (platform_name, version_string))
             return
 
-        max_version = max_version_for_platform(platform_name)
-        if version > max_version:
-            error(line_number, 'build/wk_api_available', 5, '%s(%s) is invalid; version number should not exceed %s' % (platform_name, version_string, max_version))
+        max_major_version = max_major_version_for_platform(platform_name)
+        if version.major > max_major_version:
+            error(line_number, 'build/wk_api_available', 5, '%s(%s) is invalid; major version number should not exceed %d' % (platform_name, version_string, max_major_version))
             return
 
     line = clean_lines.elided[line_number]  # Get rid of comments and strings.
@@ -3597,6 +3597,10 @@ def _classify_include(filename, include, is_system, include_state):
     # then we consider it the primary header.
     target_base = FileInfo(filename).base_name()
     include_base = FileInfo(include).base_name()
+
+    # Test .cpp, .mm, .c files do not have primary header files.
+    if any(target_base.endswith(suffix) for suffix in ['Test', 'Tests']):
+        return _OTHER_HEADER
 
     # If we haven't encountered a primary header, then be lenient in checking.
     if not include_state.visited_primary_section():
@@ -4015,7 +4019,7 @@ def check_language(filename, clean_lines, line_number, file_extension, include_s
               'http://google-styleguide.googlecode.com/svn/trunk/cppguide.xml#Namespaces'
               ' for more information.')
 
-    # Check for plain bitfields declared without either "singed" or "unsigned".
+    # Check for plain bitfields declared without either "signed" or "unsigned".
     # Most compilers treat such bitfields as signed, but there are still compilers like
     # RVCT 4.0 that use unsigned by default.
     matched = re.match(r'\s*((const|mutable)\s+)?(char|(short(\s+int)?)|int|long(\s+(long|int))?)\s+[a-zA-Z_][a-zA-Z0-9_]*\s*:\s*\d+\s*;', line)
@@ -4030,7 +4034,7 @@ def check_language(filename, clean_lines, line_number, file_extension, include_s
     matched = re.match(r'\s*((const|mutable)\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s+[a-zA-Z_][a-zA-Z0-9_]*\s*:\s*\d+\s*;', line)
     if matched:
         # Make sure the type is an enum and not an integral type
-        if not match(r'bool|char|(short(\s+int)?)|int|long(\s+(long|int))|(signed|unsigned)(\s+int)?', matched.group(3)):
+        if not match(r'bool|char|(short(\s+int)?)|u?int(8|16|32|64)_t|int|long(\s+(long|int))|(signed|unsigned)(\s+int)?', matched.group(3)):
             error(line_number, 'runtime/enum_bitfields', 5,
                   'Please declare enum bitfields as unsigned integral types.')
 
@@ -4196,6 +4200,7 @@ def check_identifier_name_in_declaration(filename, line_number, line, file_state
                 and not modified_identifier == "LOG_CHANNEL"
                 and not modified_identifier == "WTF_GUARDED_BY_LOCK"
                 and not modified_identifier == "WTF_GUARDED_BY_CAPABILITY"
+                and not modified_identifier.startswith("_AX")
                 and not modified_identifier.find('chrono_literals') >= 0):
                 error(line_number, 'readability/naming/underscores', 4, identifier + " is incorrectly named. Don't use underscores in your identifier names.")
 

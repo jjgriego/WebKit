@@ -28,7 +28,7 @@
 
 namespace WebCore {
 
-class FormAssociatedElement;
+class FormListedElement;
 class HTMLImageElement;
 
 // This class is just a big hack to find form elements even in malformed HTML elements.
@@ -57,11 +57,6 @@ private:
     mutable Element* m_cachedElement;
     mutable unsigned m_cachedElementOffsetInArray;
 };
-
-inline HTMLElement* HTMLFormControlsCollection::item(unsigned offset) const
-{
-    return downcast<HTMLElement>(CachedHTMLCollection::item(offset));
-}
 
 } // namespace WebCore
 

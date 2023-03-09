@@ -34,8 +34,10 @@
 #import "GestureRecognizerConsistencyEnforcer.h"
 #import "GestureTypes.h"
 #import "IdentifierTypes.h"
+#import "ImageAnalysisUtilities.h"
 #import "InteractionInformationAtPosition.h"
 #import "PasteboardAccessIntent.h"
+#import "RevealFocusedElementDeferrer.h"
 #import "SyntheticEditingCommandType.h"
 #import "TextCheckingController.h"
 #import "TransactionID.h"
@@ -163,10 +165,8 @@ typedef std::pair<WebKit::InteractionInformationRequest, InteractionInformationC
 
 #if HAVE(UIFINDINTERACTION)
 #define FOR_EACH_FIND_WKCONTENTVIEW_ACTION(M) \
-    M(find) \
-    M(findNext) \
-    M(findPrevious) \
-    M(findAndReplace)
+    M(useSelectionForFind) \
+    M(_findSelected)
 #else
 #define FOR_EACH_FIND_WKCONTENTVIEW_ACTION(M)
 #endif
@@ -260,7 +260,14 @@ enum class ProceedWithTextSelectionInImage : bool {
 enum ImageAnalysisRequestIdentifierType { };
 using ImageAnalysisRequestIdentifier = ObjectIdentifier<ImageAnalysisRequestIdentifierType>;
 
-}
+struct ImageAnalysisContextMenuActionData {
+    bool hasSelectableText { false };
+    bool hasVisualSearchResults { false };
+    RetainPtr<CGImageRef> copySubjectResult;
+    RetainPtr<UIMenu> machineReadableCodeMenu;
+};
+
+} // namespace WebKit
 
 @class WKFocusedElementInfo;
 @protocol UIMenuBuilder;
@@ -281,6 +288,7 @@ using ImageAnalysisRequestIdentifier = ObjectIdentifier<ImageAnalysisRequestIden
     RetainPtr<WKDeferringGestureRecognizer> _touchEndDeferringGestureRecognizerForImmediatelyResettableGestures;
     RetainPtr<WKDeferringGestureRecognizer> _touchEndDeferringGestureRecognizerForDelayedResettableGestures;
     RetainPtr<WKDeferringGestureRecognizer> _touchEndDeferringGestureRecognizerForSyntheticTapGestures;
+    RetainPtr<WKDeferringGestureRecognizer> _touchMoveDeferringGestureRecognizer;
     std::optional<HashSet<RetainPtr<WKDeferringGestureRecognizer>>> _failedTouchStartDeferringGestures;
 #if ENABLE(IMAGE_ANALYSIS)
     RetainPtr<WKDeferringGestureRecognizer> _imageAnalysisDeferringGestureRecognizer;
@@ -314,8 +322,10 @@ using ImageAnalysisRequestIdentifier = ObjectIdentifier<ImageAnalysisRequestIden
 
 #if HAVE(UIKIT_WITH_MOUSE_SUPPORT)
     RetainPtr<WKMouseGestureRecognizer> _mouseGestureRecognizer;
-    RetainPtr<WKMouseGestureRecognizer> _alternateMouseGestureRecognizer;
     WebCore::MouseEventPolicy _mouseEventPolicy;
+#if ENABLE(PENCIL_HOVER)
+    RetainPtr<WKMouseGestureRecognizer> _pencilHoverGestureRecognizer;
+#endif
 #endif
 
 #if HAVE(PENCILKIT_TEXT_INPUT)
@@ -366,6 +376,7 @@ using ImageAnalysisRequestIdentifier = ObjectIdentifier<ImageAnalysisRequestIden
     RetainPtr<UIMenu> _contextMenuLegacyMenu;
     BOOL _contextMenuHasRequestedLegacyData;
     BOOL _contextMenuActionProviderDelegateNeedsOverride;
+    BOOL _contextMenuIsUsingAlternateURLForImage;
     BOOL _isDisplayingContextMenuWithAnimation;
 #endif
     RetainPtr<UIPreviewItemController> _previewItemController;
@@ -424,6 +435,8 @@ using ImageAnalysisRequestIdentifier = ObjectIdentifier<ImageAnalysisRequestIden
     WeakObjCPtr<WKDataListSuggestionsControl> _dataListSuggestionsControl;
 #endif
 
+    RefPtr<WebKit::RevealFocusedElementDeferrer> _revealFocusedElementDeferrer;
+
     BOOL _isEditable;
     BOOL _showingTextStyleOptions;
     BOOL _hasValidPositionInformation;
@@ -443,7 +456,7 @@ using ImageAnalysisRequestIdentifier = ObjectIdentifier<ImageAnalysisRequestIden
     BOOL _showDebugTapHighlightsForFastClicking;
     BOOL _textInteractionDidChangeFocusedElement;
     BOOL _treatAsContentEditableUntilNextEditorStateUpdate;
-    bool _isWaitingOnPositionInformation;
+    BOOL _isWaitingOnPositionInformation;
     BOOL _autocorrectionContextNeedsUpdate;
 
     WebCore::PointerID _commitPotentialTapPointerId;
@@ -462,8 +475,9 @@ using ImageAnalysisRequestIdentifier = ObjectIdentifier<ImageAnalysisRequestIden
     BOOL _isRelinquishingFirstResponderToFocusedElement;
     BOOL _unsuppressSoftwareKeyboardAfterNextAutocorrectionContextUpdate;
     BOOL _isUnsuppressingSoftwareKeyboardUsingLastAutocorrectionContext;
-    BOOL _waitingForKeyboardToStartAnimatingInAfterElementFocus;
-    BOOL _shouldZoomToFocusRectAfterShowingKeyboard;
+    BOOL _waitingForKeyboardAppearanceAnimationToStart;
+    BOOL _isHidingKeyboard;
+    BOOL _isPreparingEditMenu;
 
     BOOL _focusRequiresStrongPasswordAssistance;
     BOOL _waitingForEditDragSnapshot;
@@ -518,22 +532,19 @@ using ImageAnalysisRequestIdentifier = ObjectIdentifier<ImageAnalysisRequestIden
     std::optional<WebCore::ElementContext> _elementPendingImageAnalysis;
     Vector<BlockPtr<void(WebKit::ProceedWithTextSelectionInImage)>> _actionsToPerformAfterPendingImageAnalysis;
 #if USE(UICONTEXTMENU)
-#if ENABLE(IMAGE_ANALYSIS_FOR_MACHINE_READABLE_CODES)
-    RetainPtr<UIMenu> _contextMenuForMachineReadableCode;
-#endif // ENABLE(IMAGE_ANALYSIS_FOR_MACHINE_READABLE_CODES)
     BOOL _contextMenuWasTriggeredByImageAnalysisTimeout;
 #endif // USE(UICONTEXTMENU)
     BOOL _isProceedingWithTextSelectionInImage;
-    RetainPtr<id> _imageAnalyzer;
+    RetainPtr<CocoaImageAnalyzer> _imageAnalyzer;
 #if USE(QUICK_LOOK)
     RetainPtr<QLPreviewController> _visualSearchPreviewController;
     RetainPtr<UIImage> _visualSearchPreviewImage;
     RetainPtr<NSURL> _visualSearchPreviewImageURL;
     RetainPtr<NSString> _visualSearchPreviewTitle;
     CGRect _visualSearchPreviewImageBounds;
-    BOOL _hasSelectableTextInImage;
-    BOOL _hasVisualSearchResults;
 #endif // USE(QUICK_LOOK)
+    BOOL _waitingForDynamicImageAnalysisContextMenuActions;
+    std::optional<WebKit::ImageAnalysisContextMenuActionData> _imageAnalysisContextMenuActionData;
 #endif // ENABLE(IMAGE_ANALYSIS)
     uint32_t _fullscreenVideoImageAnalysisRequestIdentifier;
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
@@ -541,13 +552,12 @@ using ImageAnalysisRequestIdentifier = ObjectIdentifier<ImageAnalysisRequestIden
     RetainPtr<NSMutableSet<UIButton *>> _imageAnalysisActionButtons;
     WebCore::FloatRect _imageAnalysisInteractionBounds;
     std::optional<WebKit::RemoveBackgroundData> _removeBackgroundData;
-    RetainPtr<CGImageRef> _copySubjectResult;
 #endif
 }
 
 @end
 
-@interface WKContentView (WKInteraction) <UIGestureRecognizerDelegate, UITextAutoscrolling, UITextInputMultiDocument, UITextInputPrivate, UIWebFormAccessoryDelegate, UIWebTouchEventsGestureRecognizerDelegate, UIWKInteractionViewProtocol, WKActionSheetAssistantDelegate, WKFileUploadPanelDelegate, WKKeyboardScrollViewAnimatorDelegate, WKDeferringGestureRecognizerDelegate
+@interface WKContentView (WKInteraction) <UIGestureRecognizerDelegate, UITextAutoscrolling, UITextInputMultiDocument, UITextInputPrivate, UIWebFormAccessoryDelegate, UIWebTouchEventsGestureRecognizerDelegate, UIWKInteractionViewProtocol, _UITextInputTranslationSupport, WKActionSheetAssistantDelegate, WKFileUploadPanelDelegate, WKKeyboardScrollViewAnimatorDelegate, WKDeferringGestureRecognizerDelegate
 #if HAVE(CONTACTSUI)
     , WKContactPickerDelegate
 #endif
@@ -574,6 +584,7 @@ using ImageAnalysisRequestIdentifier = ObjectIdentifier<ImageAnalysisRequestIden
 @property (nonatomic, readonly) UITextInputAssistantItem *inputAssistantItemForWebView;
 @property (nonatomic, readonly) UIView *inputViewForWebView;
 @property (nonatomic, readonly) UIView *inputAccessoryViewForWebView;
+@property (nonatomic, readonly) UITextInputTraits *textInputTraitsForWebView;
 @property (nonatomic, readonly) BOOL preventsPanningInXAxis;
 @property (nonatomic, readonly) BOOL preventsPanningInYAxis;
 @property (nonatomic, readonly) UIWebTouchEventsGestureRecognizer *touchEventGestureRecognizer;
@@ -630,6 +641,7 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 #endif
 #if ENABLE(IOS_TOUCH_EVENTS)
 - (void)_doneDeferringTouchStart:(BOOL)preventNativeGestures;
+- (void)_doneDeferringTouchMove:(BOOL)preventNativeGestures;
 - (void)_doneDeferringTouchEnd:(BOOL)preventNativeGestures;
 #endif
 - (void)_commitPotentialTapFailed;
@@ -787,16 +799,15 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 - (BOOL)_formControlRefreshEnabled;
 #endif
 
-#if HAVE(PASTEBOARD_DATA_OWNER)
 - (WebCore::DataOwnerType)_dataOwnerForPasteboard:(WebKit::PasteboardAccessIntent)intent;
-#endif
 
 #if ENABLE(IMAGE_ANALYSIS)
 - (void)_endImageAnalysisGestureDeferral:(WebKit::ShouldPreventGestures)shouldPreventGestures;
-- (void)requestTextRecognition:(NSURL *)imageURL imageData:(const WebKit::ShareableBitmap::Handle&)imageData sourceLanguageIdentifier:(NSString *)sourceLanguageIdentifier targetLanguageIdentifier:(NSString *)targetLanguageIdentifier completionHandler:(CompletionHandler<void(WebCore::TextRecognitionResult&&)>&&)completion;
+- (void)requestTextRecognition:(NSURL *)imageURL imageData:(const WebKit::ShareableBitmapHandle&)imageData sourceLanguageIdentifier:(NSString *)sourceLanguageIdentifier targetLanguageIdentifier:(NSString *)targetLanguageIdentifier completionHandler:(CompletionHandler<void(WebCore::TextRecognitionResult&&)>&&)completion;
 #endif
 
 #if HAVE(UIFINDINTERACTION)
+@property (nonatomic, readonly) BOOL supportsTextReplacementForWebView;
 - (NSInteger)offsetFromPosition:(UITextPosition *)from toPosition:(UITextPosition *)toPosition inDocument:(UITextSearchDocumentIdentifier)document;
 - (void)didBeginTextSearchOperation;
 - (void)didEndTextSearchOperation;
@@ -804,11 +815,11 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 - (void)requestRectForFoundTextRange:(UITextRange *)range completionHandler:(void (^)(CGRect))completionHandler;
 #endif
 
-- (void)beginTextRecognitionForFullscreenVideo:(const WebKit::ShareableBitmap::Handle&)imageHandle playerViewController:(AVPlayerViewController *)playerViewController;
+- (void)beginTextRecognitionForFullscreenVideo:(const WebKit::ShareableBitmapHandle&)imageHandle playerViewController:(AVPlayerViewController *)playerViewController;
 - (void)cancelTextRecognitionForFullscreenVideo:(AVPlayerViewController *)controller;
 @property (nonatomic, readonly) BOOL isTextRecognitionInFullscreenVideoEnabled;
 
-- (void)beginTextRecognitionForVideoInElementFullscreen:(const WebKit::ShareableBitmap::Handle&)bitmapHandle bounds:(WebCore::FloatRect)bounds;
+- (void)beginTextRecognitionForVideoInElementFullscreen:(const WebKit::ShareableBitmapHandle&)bitmapHandle bounds:(WebCore::FloatRect)bounds;
 - (void)cancelTextRecognitionForVideoInElementFullscreen;
 
 @end
@@ -827,6 +838,7 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 - (NSDictionary *)_contentsOfUserInterfaceItem:(NSString *)userInterfaceItem;
 - (void)_doAfterReceivingEditDragSnapshotForTesting:(dispatch_block_t)action;
 - (void)_dismissContactPickerWithContacts:(NSArray *)contacts;
+- (void)_simulateSelectionStart;
 
 #if ENABLE(DATALIST_ELEMENT)
 - (void)_selectDataListOption:(NSInteger)optionIndex;
@@ -853,6 +865,7 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 #if HAVE(LINK_PREVIEW)
 #if USE(UICONTEXTMENU)
 @interface WKContentView (WKInteractionPreview) <UIContextMenuInteractionDelegate, UIPreviewItemDelegate>
+@property (nonatomic, readonly) UIContextMenuInteraction *contextMenuInteraction;
 #else
 @interface WKContentView (WKInteractionPreview) <UIPreviewItemDelegate>
 #endif

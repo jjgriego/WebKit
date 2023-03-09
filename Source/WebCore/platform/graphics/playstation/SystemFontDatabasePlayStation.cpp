@@ -39,10 +39,14 @@ SystemFontDatabase& SystemFontDatabase::singleton()
     return database.get();
 }
 
-auto SystemFontDatabase::platformSystemFontShorthandInfo(FontShorthand fontShorthand) -> SystemFontShorthandInfo
+auto SystemFontDatabase::platformSystemFontShorthandInfo(FontShorthand) -> SystemFontShorthandInfo
 {
     notImplemented();
     return { WebKitFontFamilyNames::standardFamily, 16, normalWeightValue() };
+}
+
+void SystemFontDatabase::platformInvalidate()
+{
 }
 
 } // namespace WebCore

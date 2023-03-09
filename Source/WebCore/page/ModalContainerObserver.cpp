@@ -31,7 +31,7 @@
 #include "ChromeClient.h"
 #include "Document.h"
 #include "DocumentLoader.h"
-#include "ElementIterator.h"
+#include "ElementAncestorIteratorInlines.h"
 #include "EventHandler.h"
 #include "EventLoop.h"
 #include "EventNames.h"
@@ -51,6 +51,7 @@
 #include "RenderView.h"
 #include "SimulatedClickOptions.h"
 #include "Text.h"
+#include "TypedElementDescendantIteratorInlines.h"
 #include <wtf/Noncopyable.h>
 #include <wtf/RobinHoodHashSet.h>
 #include <wtf/Scope.h>
@@ -194,7 +195,11 @@ void ModalContainerObserver::updateModalContainerIfNeeded(const FrameView& view)
         return;
     }
 
-    if (!view.frame().isMainFrame())
+    auto* localFrame = dynamicDowncast<LocalFrame>(view.frame());
+    if (!localFrame)
+        return;
+
+    if (!localFrame->isMainFrame())
         return;
 
     if (!view.hasViewportConstrainedObjects())
@@ -238,7 +243,7 @@ void ModalContainerObserver::updateModalContainerIfNeeded(const FrameView& view)
         }
 
         for (auto& frameOwner : descendantsOfType<HTMLFrameOwnerElement>(*element)) {
-            RefPtr contentFrame = frameOwner.contentFrame();
+            RefPtr contentFrame = dynamicDowncast<LocalFrame>(frameOwner.contentFrame());
             if (!contentFrame)
                 continue;
 
@@ -451,7 +456,7 @@ public:
     Document* document() const { return m_document.get(); }
 
 private:
-    WeakPtr<Document> m_document;
+    WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
     bool m_continueHidingModalContainerAfterScope { false };
 };
 
@@ -500,13 +505,13 @@ void ModalContainerObserver::collectClickableElementsTimerFired()
                 return;
 
             struct ClassifiedControls {
-                Vector<WeakPtr<HTMLElement>> positive;
-                Vector<WeakPtr<HTMLElement>> neutral;
-                Vector<WeakPtr<HTMLElement>> negative;
+                Vector<WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData>> positive;
+                Vector<WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData>> neutral;
+                Vector<WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData>> negative;
 
                 HTMLElement* controlToClick(ModalContainerDecision decision) const
                 {
-                    auto matchNonNull = [&](const WeakPtr<HTMLElement>& element) {
+                    auto matchNonNull = [&](const WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData>& element) {
                         return !!element;
                     };
 
@@ -677,9 +682,13 @@ void ModalContainerObserver::hideUserInteractionBlockingElementIfNeeded()
 
     constexpr OptionSet hitTestTypes { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::DisallowUserAgentShadowContent };
 
+    RefPtr localFrame = dynamicDowncast<LocalFrame>(view->frame());
+    if (!localFrame)
+        return;
+
     RefPtr<Element> foundElement;
     for (auto& location : locationsToHitTest) {
-        auto hitTestResult = view->frame().eventHandler().hitTestResultAtPoint(location, hitTestTypes);
+        auto hitTestResult = localFrame->eventHandler().hitTestResultAtPoint(location, hitTestTypes);
         auto target = hitTestResult.targetElement();
         if (!target || is<HTMLBodyElement>(*target) || target->isDocumentNode())
             return;
@@ -711,7 +720,7 @@ void ModalContainerObserver::revealModalContainer()
         element->invalidateStyle();
 }
 
-std::pair<Vector<WeakPtr<HTMLElement>>, Vector<String>> ModalContainerObserver::collectClickableElements()
+std::pair<Vector<WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData>>, Vector<String>> ModalContainerObserver::collectClickableElements()
 {
     Ref container = *this->container();
     m_collectingClickableElements = true;
@@ -748,7 +757,7 @@ std::pair<Vector<WeakPtr<HTMLElement>>, Vector<String>> ModalContainerObserver::
     removeElementsWithEmptyBounds(clickableControls);
     removeParentOrChildElements(clickableControls);
 
-    Vector<WeakPtr<HTMLElement>> classifiableControls;
+    Vector<WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData>> classifiableControls;
     Vector<String> controlTextsToClassify;
     classifiableControls.reserveInitialCapacity(clickableControls.size());
     controlTextsToClassify.reserveInitialCapacity(clickableControls.size());

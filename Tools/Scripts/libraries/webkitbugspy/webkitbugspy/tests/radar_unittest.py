@@ -1,4 +1,4 @@
-# Copyright (C) 2022 Apple Inc. All rights reserved.
+# Copyright (C) 2022-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -31,7 +31,7 @@ class TestRadar(unittest.TestCase):
     def test_encoding(self):
         self.assertEqual(
             radar.Tracker.Encoder().default(radar.Tracker(project='WebKit')),
-            dict(type='radar', projects=['WebKit']),
+            dict(hide_title=True, type='radar', projects=['WebKit']),
         )
 
     def test_decoding(self):
@@ -60,29 +60,33 @@ class TestRadar(unittest.TestCase):
                 User.Encoder().default(tracker.user(name='Felix Filer')),
                 dict(name='Felix Filer', username=809, emails=['ffiler@example.com']),
             )
+            self.assertEqual(
+                User.Encoder().default(tracker.user(name='Olivia Outsider', email='ooutsider@example.com')),
+                dict(name='Olivia Outsider', emails=['ooutsider@example.com']),
+            )
 
     def test_link(self):
         with mocks.Radar(users=mocks.USERS):
             tracker = radar.Tracker()
-            self.assertEqual(tracker.issue(1234).link, '<rdar://1234>')
+            self.assertEqual(tracker.issue(1234).link, 'rdar://1234')
             self.assertEqual(
                 tracker.from_string('<rdar://problem/1234>').link,
-                '<rdar://1234>',
+                'rdar://1234',
             )
             self.assertEqual(
                 tracker.from_string('<radar://1234>').link,
-                '<rdar://1234>',
+                'rdar://1234',
             )
             self.assertEqual(
                 tracker.from_string('<radar://problem/1234>').link,
-                '<rdar://1234>',
+                'rdar://1234',
             )
 
     def test_title(self):
         with mocks.Radar(issues=mocks.ISSUES):
             tracker = radar.Tracker()
             self.assertEqual(tracker.issue(1).title, 'Example issue 1')
-            self.assertEqual(str(tracker.issue(1)), '<rdar://1> Example issue 1')
+            self.assertEqual(str(tracker.issue(1)), 'rdar://1 Example issue 1')
 
     def test_timestamp(self):
         with mocks.Radar(issues=mocks.ISSUES):
@@ -337,3 +341,49 @@ What version of 'WebKit Text' should the bug be associated with?:
         with wkmocks.Environment(RADAR_USERNAME='tcontributor'), mocks.Radar(issues=mocks.ISSUES):
             issue = radar.Tracker().issue(1)
             self.assertEqual(issue.labels, [])
+
+    def test_redaction(self):
+        with wkmocks.Environment(RADAR_USERNAME='tcontributor'), mocks.Radar(issues=mocks.ISSUES, projects=mocks.PROJECTS):
+            self.assertEqual(radar.Tracker(
+                project='WebKit',
+                redact=None,
+            ).issue(1).redacted, False)
+
+            self.assertTrue(bool(radar.Tracker(
+                project='WebKit',
+                redact={'.*': True},
+            ).issue(1).redacted))
+            self.assertEqual(radar.Tracker(
+                project='WebKit',
+                redact={'.*': True},
+            ).issue(1).redacted, radar.Tracker.Redaction(True, 'is a Radar'),)
+
+            self.assertEqual(radar.Tracker(
+                project='WebKit',
+                redact={'project:WebKit': True},
+            ).issue(1).redacted, radar.Tracker.Redaction(True, "matches 'project:WebKit'"))
+
+            self.assertEqual(radar.Tracker(
+                project='WebKit',
+                redact={'component:Text': True},
+            ).issue(1).redacted, radar.Tracker.Redaction(True, "matches 'component:Text'"))
+
+            self.assertEqual(radar.Tracker(
+                project='WebKit',
+                redact={'version:Other': True},
+            ).issue(1).redacted, radar.Tracker.Redaction(True, "matches 'version:Other'"))
+
+    def test_milestone(self):
+        with mocks.Radar(issues=mocks.ISSUES):
+            tracker = radar.Tracker()
+            self.assertEqual(tracker.issue(1).milestone, 'October')
+
+    def test_keywords(self):
+        with mocks.Radar(issues=mocks.ISSUES):
+            tracker = radar.Tracker()
+            self.assertEqual(tracker.issue(1).keywords, ['Keyword A'])
+
+    def test_classification(self):
+        with mocks.Radar(issues=mocks.ISSUES):
+            tracker = radar.Tracker()
+            self.assertEqual(tracker.issue(1).classification, 'Other Bug')

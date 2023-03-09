@@ -41,15 +41,31 @@ using Microsoft::WRL::ComPtr;
 #endif  // defined(ANGLE_ENABLE_D3D9) || defined(ANGLE_ENABLE_D3D11)
 
 #if defined(ANGLE_USE_ABSEIL)
-template <typename Key, typename T, class Hash = absl::container_internal::hash_default_hash<Key>>
-using HashMap = absl::flat_hash_map<Key, T, Hash>;
-template <typename Key, class Hash = absl::container_internal::hash_default_hash<Key>>
-using HashSet = absl::flat_hash_set<Key, Hash>;
+template <typename Key,
+          typename T,
+          class Hash = absl::container_internal::hash_default_hash<Key>,
+          class Eq   = absl::container_internal::hash_default_eq<Key>>
+using HashMap = absl::flat_hash_map<Key, T, Hash, Eq>;
+template <typename Key,
+          class Hash = absl::container_internal::hash_default_hash<Key>,
+          class Eq   = absl::container_internal::hash_default_eq<Key>>
+using HashSet = absl::flat_hash_set<Key, Hash, Eq>;
+
+// Absl has generic lookup unconditionally
+#    define ANGLE_HAS_HASH_MAP_GENERIC_LOOKUP 1
 #else
-template <typename Key, typename T, class Hash = std::hash<Key>>
-using HashMap = std::unordered_map<Key, T, Hash>;
-template <typename Key, class Hash = std::hash<Key>>
-using HashSet = std::unordered_set<Key, Hash>;
+template <typename Key,
+          typename T,
+          class Hash     = std::hash<Key>,
+          class KeyEqual = std::equal_to<Key>>
+using HashMap = std::unordered_map<Key, T, Hash, KeyEqual>;
+template <typename Key, class Hash = std::hash<Key>, class KeyEqual = std::equal_to<Key>>
+using HashSet = std::unordered_set<Key, Hash, KeyEqual>;
+#    if __cpp_lib_generic_unordered_lookup >= 201811L
+#        define ANGLE_HAS_HASH_MAP_GENERIC_LOOKUP 1
+#    else
+#        define ANGLE_HAS_HASH_MAP_GENERIC_LOOKUP 0
+#    endif
 #endif  // defined(ANGLE_USE_ABSEIL)
 
 class NonCopyable
@@ -98,7 +114,7 @@ struct PerfMonitorCounter
     ~PerfMonitorCounter();
 
     std::string name;
-    uint32_t value;
+    uint64_t value;
 };
 using PerfMonitorCounters = std::vector<PerfMonitorCounter>;
 
@@ -127,7 +143,7 @@ struct PerfMonitorTriplet
 {
     uint32_t group;
     uint32_t counter;
-    uint32_t value;
+    uint64_t value;
 };
 
 #define ANGLE_VK_PERF_COUNTERS_X(FN)               \
@@ -166,6 +182,11 @@ struct PerfMonitorTriplet
     FN(depthAttachmentResolves)                    \
     FN(stencilAttachmentResolves)                  \
     FN(readOnlyDepthStencilRenderPasses)           \
+    FN(pipelineCreationCacheHits)                  \
+    FN(pipelineCreationCacheMisses)                \
+    FN(pipelineCreationTotalCacheHitsDurationNs)   \
+    FN(pipelineCreationTotalCacheMissesDurationNs) \
+    FN(monolithicPipelineCreation)                 \
     FN(descriptorSetAllocations)                   \
     FN(descriptorSetCacheTotalSize)                \
     FN(descriptorSetCacheKeySizeBytes)             \
@@ -176,14 +197,16 @@ struct PerfMonitorTriplet
     FN(textureDescriptorSetCacheMisses)            \
     FN(textureDescriptorSetCacheTotalSize)         \
     FN(shaderResourcesDescriptorSetCacheHits)      \
+    FN(mutableTexturesUploaded)                    \
     FN(shaderResourcesDescriptorSetCacheMisses)    \
     FN(shaderResourcesDescriptorSetCacheTotalSize) \
     FN(buffersGhosted)                             \
     FN(vertexArraySyncStateCalls)                  \
     FN(allocateNewBufferBlockCalls)                \
-    FN(dynamicBufferAllocations)
+    FN(dynamicBufferAllocations)                   \
+    FN(framebufferCacheSize)
 
-#define ANGLE_DECLARE_PERF_COUNTER(COUNTER) uint32_t COUNTER;
+#define ANGLE_DECLARE_PERF_COUNTER(COUNTER) uint64_t COUNTER;
 
 struct VulkanPerfCounters
 {
@@ -550,34 +573,20 @@ size_t FormatStringIntoVector(const char *fmt, va_list vararg, std::vector<char>
 #    define ANGLE_MACRO_STRINGIFY(x) ANGLE_STRINGIFY(x)
 #endif
 
-// Detect support for C++17 [[nodiscard]]
-#if !defined(__has_cpp_attribute)
-#    define __has_cpp_attribute(name) 0
-#endif  // !defined(__has_cpp_attribute)
-
-#if __has_cpp_attribute(nodiscard)
-#    define ANGLE_NO_DISCARD [[nodiscard]]
+// The ANGLE_MAYBE_UNUSED_PRIVATE_FIELD can be used to hint 'unused private field'
+// instead of 'maybe_unused' attribute for the compatibility with GCC because
+// GCC doesn't have '-Wno-unused-private-field' whereas Clang has.
+#if defined(__clang__) || defined(_MSC_VER)
+#    define ANGLE_MAYBE_UNUSED_PRIVATE_FIELD [[maybe_unused]]
 #else
-#    define ANGLE_NO_DISCARD
-#endif  // __has_cpp_attribute(nodiscard)
+#    define ANGLE_MAYBE_UNUSED_PRIVATE_FIELD
+#endif
 
-#if __has_cpp_attribute(maybe_unused)
-#    define ANGLE_MAYBE_UNUSED [[maybe_unused]]
-#else
-#    define ANGLE_MAYBE_UNUSED
-#endif  // __has_cpp_attribute(maybe_unused)
-
-#if __has_cpp_attribute(require_constant_initialization)
-#    define ANGLE_REQUIRE_CONSTANT_INIT [[require_constant_initialization]]
+#if __has_cpp_attribute(clang::require_constant_initialization)
+#    define ANGLE_REQUIRE_CONSTANT_INIT [[clang::require_constant_initialization]]
 #else
 #    define ANGLE_REQUIRE_CONSTANT_INIT
 #endif  // __has_cpp_attribute(require_constant_initialization)
-
-#if __has_cpp_attribute(clang::fallthrough)
-#    define ANGLE_FALLTHROUGH [[clang::fallthrough]]
-#else
-#    define ANGLE_FALLTHROUGH
-#endif
 
 // Compiler configs.
 inline bool IsASan()

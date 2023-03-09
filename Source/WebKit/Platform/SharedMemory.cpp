@@ -42,8 +42,10 @@ RefPtr<SharedMemory> SharedMemory::copyBuffer(const FragmentedSharedBuffer& buff
         return nullptr;
 
     auto sharedMemoryPtr = static_cast<char*>(sharedMemory->data());
-    for (auto& segmentEntry : buffer)
-        memcpy(sharedMemoryPtr + segmentEntry.beginPosition, segmentEntry.segment->data(), segmentEntry.segment->size());
+    buffer.forEachSegment([sharedMemoryPtr] (Span<const uint8_t> segment) mutable {
+        memcpy(sharedMemoryPtr, segment.data(), segment.size());
+        sharedMemoryPtr += segment.size();
+    });
 
     return sharedMemory;
 }
@@ -63,6 +65,10 @@ Ref<SharedBuffer> SharedMemory::createSharedBuffer(size_t dataSize) const
 
 #if !PLATFORM(COCOA)
 void SharedMemory::Handle::takeOwnershipOfMemory(MemoryLedger) const
+{
+}
+
+void SharedMemory::Handle::setOwnershipOfMemory(const ProcessIdentity&, MemoryLedger) const
 {
 }
 #endif

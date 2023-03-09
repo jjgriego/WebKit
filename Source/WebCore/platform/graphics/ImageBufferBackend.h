@@ -30,6 +30,7 @@
 #include "FloatRect.h"
 #include "GraphicsTypesGL.h"
 #include "ImageBufferAllocator.h"
+#include "ImageBufferBackendParameters.h"
 #include "ImagePaintingOptions.h"
 #include "IntRect.h"
 #include "PixelBufferFormat.h"
@@ -45,6 +46,7 @@
 
 namespace WebCore {
 
+struct ImageBufferCreationContext;
 class GraphicsContext;
 class GraphicsContextGL;
 #if HAVE(IOSURFACE)
@@ -53,8 +55,9 @@ class IOSurfacePool;
 class Image;
 class NativeImage;
 class PixelBuffer;
+class ProcessIdentity;
 
-enum class PreserveResolution : uint8_t {
+enum class PreserveResolution : bool {
     No,
     Yes,
 };
@@ -86,15 +89,14 @@ public:
 
 class ImageBufferBackend {
 public:
-    struct Parameters {
-        FloatSize logicalSize;
-        float resolutionScale;
-        DestinationColorSpace colorSpace;
-        PixelFormat pixelFormat;
-        RenderingPurpose purpose;
+    using Parameters = ImageBufferBackendParameters;
 
-        template<typename Encoder> void encode(Encoder&) const;
-        template<typename Decoder> static std::optional<Parameters> decode(Decoder&);
+    struct Info {
+        RenderingMode renderingMode;
+        bool canMapBackingStore;
+        AffineTransform baseTransform;
+        size_t memoryCost;
+        size_t externalMemoryCost;
     };
 
     WEBCORE_EXPORT virtual ~ImageBufferBackend();
@@ -112,15 +114,13 @@ public:
     virtual void finalizeDrawIntoContext(GraphicsContext&) { }
     virtual RefPtr<NativeImage> copyNativeImage(BackingStoreCopy) const = 0;
 
+    WEBCORE_EXPORT virtual RefPtr<NativeImage> copyNativeImageForDrawing(BackingStoreCopy copyBehavior) const;
     WEBCORE_EXPORT virtual RefPtr<NativeImage> sinkIntoNativeImage();
 
     virtual void clipToMask(GraphicsContext&, const FloatRect&) { }
 
     WEBCORE_EXPORT void convertToLuminanceMask();
     virtual void transformToColorSpace(const DestinationColorSpace&) { }
-
-    virtual String toDataURL(const String& mimeType, std::optional<double> quality, PreserveResolution) const = 0;
-    virtual Vector<uint8_t> toData(const String& mimeType, std::optional<double> quality) const = 0;
 
     virtual RefPtr<PixelBuffer> getPixelBuffer(const PixelBufferFormat& outputFormat, const IntRect&, const ImageBufferAllocator& = ImageBufferAllocator()) const = 0;
     virtual void putPixelBuffer(const PixelBuffer&, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat) = 0;
@@ -135,6 +135,8 @@ public:
     virtual bool isInUse() const { return false; }
     virtual void releaseGraphicsContext() { ASSERT_NOT_REACHED(); }
 
+    virtual void transferToNewContext(const ImageBufferCreationContext&) { }
+
     // Returns true on success.
     virtual bool setVolatile() { return true; }
     virtual SetNonVolatileResult setNonVolatile() { return SetNonVolatileResult::Valid; }
@@ -142,8 +144,6 @@ public:
     virtual void setVolatilityState(VolatilityState) { }
 
     virtual std::unique_ptr<ThreadSafeImageBufferFlusher> createFlusher() { return nullptr; }
-
-    void applyBaseTransformToContext() const;
 
     static constexpr bool isOriginAtBottomLeftCorner = false;
     virtual bool originAtBottomLeftCorner() const { return isOriginAtBottomLeftCorner; }
@@ -154,6 +154,12 @@ public:
     virtual void ensureNativeImagesHaveCopiedBackingStore() { }
 
     virtual ImageBufferBackendSharing* toBackendSharing() { return nullptr; }
+
+    virtual void setOwnershipIdentity(const ProcessIdentity&) { }
+
+    virtual void clearContents() { ASSERT_NOT_REACHED(); }
+
+    const Parameters& parameters() { return m_parameters; }
 
 protected:
     WEBCORE_EXPORT ImageBufferBackend(const Parameters&);
@@ -184,55 +190,4 @@ protected:
     Parameters m_parameters;
 };
 
-template<typename Encoder> void ImageBufferBackend::Parameters::encode(Encoder& encoder) const
-{
-    encoder << logicalSize;
-    encoder << resolutionScale;
-    encoder << colorSpace;
-    encoder << pixelFormat;
-    encoder << purpose;
-}
-
-template<typename Decoder> std::optional<ImageBufferBackend::Parameters> ImageBufferBackend::Parameters::decode(Decoder& decoder)
-{
-    std::optional<FloatSize> logicalSize;
-    decoder >> logicalSize;
-    if (!logicalSize)
-        return std::nullopt;
-
-    std::optional<float> resolutionScale;
-    decoder >> resolutionScale;
-    if (!resolutionScale)
-        return std::nullopt;
-
-    std::optional<DestinationColorSpace> colorSpace;
-    decoder >> colorSpace;
-    if (!colorSpace)
-        return std::nullopt;
-
-    std::optional<PixelFormat> pixelFormat;
-    decoder >> pixelFormat;
-    if (!pixelFormat)
-        return std::nullopt;
-
-    std::optional<RenderingPurpose> purpose;
-    decoder >> purpose;
-    if (!purpose)
-        return std::nullopt;
-
-    return { { *logicalSize, *resolutionScale, *colorSpace, *pixelFormat, *purpose } };
-}
-
 } // namespace WebCore
-
-namespace WTF {
-
-template<> struct EnumTraits<WebCore::PreserveResolution> {
-    using values = EnumValues<
-        WebCore::PreserveResolution,
-        WebCore::PreserveResolution::No,
-        WebCore::PreserveResolution::Yes
-    >;
-};
-
-} // namespace WTF

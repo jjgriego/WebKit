@@ -33,7 +33,7 @@
 #if ENABLE(VIDEO)
 
 #include "DOMTokenList.h"
-#include "ElementChildIterator.h"
+#include "ElementChildIteratorInlines.h"
 #include "EventHandler.h"
 #include "EventLoop.h"
 #include "EventNames.h"
@@ -164,6 +164,10 @@ void MediaControlTextTrackContainerElement::updateDisplay()
         // following substeps:
         for (auto& interval : activeCues) {
             auto cue = interval.data();
+
+            if (cue->track()->isSpoken())
+                continue;
+
             cue->setFontSize(m_fontSize, m_videoDisplaySize.size(), m_fontSizeIsImportant);
             if (is<VTTCue>(*cue))
                 processActiveVTTCue(downcast<VTTCue>(*cue));

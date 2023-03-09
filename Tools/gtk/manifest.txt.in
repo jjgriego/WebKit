@@ -47,6 +47,7 @@ exclude .*\/(Configurations|mac|ios|cf|cg|cocoa|Cocoa|objc|avfoundation|ca|curl|
 
 directory Source
 exclude Source/JavaScriptCore/tests
+exclude Source/WebCore/PAL/libavif
 exclude Source/WebCore/platform/audio/resources
 exclude Source/WebCore/bindings/scripts/test
 exclude Source/WebCore/Resources
@@ -61,6 +62,8 @@ exclude Source/ThirdParty
 directory Source/ThirdParty/ANGLE
 directory Source/ThirdParty/gtest
 directory Source/ThirdParty/pdfjs
+# We need to include ThirdParty/pdfjs/web/locale/ca/viewer.properties manually, because ca directories are excluded as port specific.
+file Source/ThirdParty/pdfjs/web/locale/ca/viewer.properties
 directory Source/ThirdParty/xdgmime
 
 exclude Source/WebKit/Resources
@@ -93,8 +96,9 @@ exclude Tools/gtk/ycm_extra_conf.py
 
 file Tools/glib/common.py
 file Tools/glib/generate-inspector-gresource-manifest.py
+file Tools/glib/generate-modern-media-controls-gresource-manifest.py
+file Tools/glib/generate-pdfjs-resource-manifest.py
 
-directory Tools/gtkdoc
 directory Tools/MiniBrowser
 directory Tools/TestWebKitAPI
 
@@ -102,6 +106,6 @@ file CMakeLists.txt
 file Tools/CMakeLists.txt
 file Tools/PlatformGTK.cmake
 
-directory ${CMAKE_BINARY_DIR}/Documentation/javascriptcoregtk-${WEBKITGTK_API_VERSION} Documentation/jsc-glib-${WEBKITGTK_API_DOC_VERSION}
-directory ${CMAKE_BINARY_DIR}/Documentation/webkit2gtk-${WEBKITGTK_API_VERSION} Documentation/webkit2gtk-${WEBKITGTK_API_DOC_VERSION}
-directory ${CMAKE_BINARY_DIR}/Documentation/webkit2gtk-web-extension-${WEBKITGTK_API_VERSION} Documentation/webkit2gtk-web-extension-${WEBKITGTK_API_DOC_VERSION}
+directory ${CMAKE_BINARY_DIR}/Documentation/javascriptcoregtk-${WEBKITGTK_API_VERSION} Documentation/jsc-glib-${WEBKITGTK_API_VERSION}
+directory ${CMAKE_BINARY_DIR}/Documentation/webkit${WEBKITGTK_API_INFIX}gtk-${WEBKITGTK_API_VERSION} Documentation/webkit${WEBKITGTK_API_INFIX}gtk-${WEBKITGTK_API_VERSION}
+directory ${CMAKE_BINARY_DIR}/Documentation/webkit${WEBKITGTK_API_INFIX}gtk-web-extension-${WEBKITGTK_API_VERSION} Documentation/webkit${WEBKITGTK_API_INFIX}gtk-web-extension-${WEBKITGTK_API_VERSION}

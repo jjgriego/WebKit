@@ -1,4 +1,4 @@
-# Copyright (C) 2021-2022 Apple Inc. All rights reserved.
+# Copyright (C) 2021-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -39,6 +39,7 @@ class TestGitHub(unittest.TestCase):
             )), dict(
                 type='github',
                 url='https://github.example.com/WebKit/WebKit',
+                hide_title=False,
                 res=['\\Aexample.com/b/(?P<id>\\d+)\\Z']
             ),
         )
@@ -338,7 +339,6 @@ class TestGitHub(unittest.TestCase):
 
             self.assertEqual(created.project, 'WebKit')
             self.assertEqual(created.component, 'SVG')
-            self.assertEqual(created.version, 'Other')
 
         self.assertEqual(
             captured.stdout.getvalue(),
@@ -349,13 +349,6 @@ class TestGitHub(unittest.TestCase):
     4) Scrolling
     5) Tables
     6) Text
-: 
-What version of 'WebKit' should the bug be associated with?:
-    1) All
-    2) Other
-    3) Safari 15
-    4) Safari Technology Preview
-    5) WebKit Local Build
 : 
 ''',
         )
@@ -383,3 +376,47 @@ What version of 'WebKit' should the bug be associated with?:
         with mocks.GitHub(self.URL.split('://')[1], issues=mocks.ISSUES, projects=mocks.PROJECTS):
             issue = github.Tracker(self.URL).issue(1)
             self.assertEqual(issue.labels, ['Other', 'Text'])
+
+    def test_redaction(self):
+        with mocks.GitHub(self.URL.split('://')[1], issues=mocks.ISSUES, projects=mocks.PROJECTS):
+            self.assertEqual(github.Tracker(self.URL, redact=None).issue(1).redacted, False)
+            self.assertTrue(bool(github.Tracker(self.URL, redact={'.*': True}).issue(1).redacted))
+            self.assertEqual(
+                github.Tracker(self.URL, redact={'.*': True}).issue(1).redacted,
+                github.Tracker.Redaction(True, 'is a GitHub Issue'),
+            )
+            self.assertEqual(
+                github.Tracker(self.URL, redact={'project:WebKit': True}).issue(1).redacted,
+                github.Tracker.Redaction(True, "matches 'project:WebKit'"),
+            )
+            self.assertEqual(
+                github.Tracker(self.URL, redact={'component:Text': True}).issue(1).redacted,
+                github.Tracker.Redaction(True, "matches 'component:Text'"),
+            )
+            self.assertEqual(
+                github.Tracker(self.URL, redact={'version:Other': True}).issue(1).redacted,
+                github.Tracker.Redaction(True, "matches 'version:Other'"),
+            )
+
+    def test_parse_error(self):
+        error_json = {'message': 'Validation Failed', 'errors': [{'resource': 'Issue', 'code': 'custom', 'field': 'body', 'message': 'body is too long (maximum is 65536 characters)'}], 'documentation_url': 'https://docs.github.com/rest/reference/pulls#create-a-pull-request'}
+        with mocks.GitHub(self.URL.split('://')[1], issues=mocks.ISSUES):
+            parsed_error = '''Error Message: Validation Failed
+---\tERROR\t---
+Type: body is too long (maximum is 65536 characters)
+Resource: Issue
+Field: body
+---\t---\t---
+Documentation URL: https://docs.github.com/rest/reference/pulls#create-a-pull-request
+'''
+            self.assertEqual(github.Tracker(self.URL).parse_error(error_json), parsed_error)
+
+    def test_milestone(self):
+        with mocks.GitHub(self.URL.split('://')[1], issues=mocks.ISSUES):
+            tracker = github.Tracker(self.URL)
+            self.assertEqual(tracker.issue(1).milestone, 'October')
+
+    def test_classification(self):
+        with mocks.GitHub(self.URL.split('://')[1], issues=mocks.ISSUES):
+            tracker = github.Tracker(self.URL)
+            self.assertEqual(tracker.issue(1).classification, '')

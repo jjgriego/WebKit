@@ -35,11 +35,11 @@
 #import <WebKit/WKWebViewConfigurationPrivate.h>
 #import <WebKit/WKWebsiteDataStorePrivate.h>
 #import <WebKit/WebKit.h>
-#import <WebKit/_WKExperimentalFeature.h>
-#import <WebKit/_WKInternalDebugFeature.h>
+#import <WebKit/_WKFeature.h>
 #import <WebKit/_WKProcessPoolConfiguration.h>
-#import <WebKit/_WKUserContentExtensionStore.h>
 #import <WebKit/_WKWebsiteDataStoreConfiguration.h>
+
+static const NSString * const kURLArgumentString = @"--url";
 
 enum {
     WebKit1NewWindowTag = 1,
@@ -85,18 +85,16 @@ enum {
     if ([_settingsController usesGameControllerFramework])
         [WKProcessPool _forceGameControllerFramework];
 
-//    [[NSApp mainMenu] insertItem:[item autorelease] atIndex:[[NSApp mainMenu] indexOfItemWithTitle:@"Debug"]];
-
     if ([NSApp respondsToSelector:@selector(setAutomaticCustomizeTouchBarMenuItemEnabled:)])
         [NSApp setAutomaticCustomizeTouchBarMenuItemEnabled:YES];
 }
 
-static WKWebsiteDataStore *persistentDataStore()
+static WKWebsiteDataStore *persistentDataStore(void)
 {
     static WKWebsiteDataStore *dataStore;
 
     if (!dataStore) {
-        _WKWebsiteDataStoreConfiguration *configuration = [[[_WKWebsiteDataStoreConfiguration alloc] init] autorelease];
+        _WKWebsiteDataStoreConfiguration *configuration = [[_WKWebsiteDataStoreConfiguration alloc] init];
         configuration.networkCacheSpeculativeValidationEnabled = YES;
 
         // FIXME: When built-in notifications are enabled, WebKit doesn't yet gracefully handle a missing webpushd service
@@ -117,38 +115,27 @@ static WKWebsiteDataStore *persistentDataStore()
         configuration = [[WKWebViewConfiguration alloc] init];
         configuration.websiteDataStore = persistentDataStore();
 
-        _WKProcessPoolConfiguration *processConfiguration = [[[_WKProcessPoolConfiguration alloc] init] autorelease];
+        _WKProcessPoolConfiguration *processConfiguration = [[_WKProcessPoolConfiguration alloc] init];
         if (_settingsController.perWindowWebProcessesDisabled)
             processConfiguration.usesSingleWebProcess = YES;
         if (_settingsController.processSwapOnWindowOpenWithOpenerEnabled)
             processConfiguration.processSwapsOnWindowOpenWithOpener = true;
         
-        configuration.processPool = [[[WKProcessPool alloc] _initWithConfiguration:processConfiguration] autorelease];
+        configuration.processPool = [[WKProcessPool alloc] _initWithConfiguration:processConfiguration];
 
-        NSArray<_WKExperimentalFeature *> *experimentalFeatures = [WKPreferences _experimentalFeatures];
-        for (_WKExperimentalFeature *feature in experimentalFeatures) {
+        NSArray<_WKFeature *> *features = [WKPreferences _features];
+        for (_WKFeature *feature in features) {
             BOOL enabled;
             if ([[NSUserDefaults standardUserDefaults] objectForKey:feature.key])
                 enabled = [[NSUserDefaults standardUserDefaults] boolForKey:feature.key];
             else
                 enabled = [feature defaultValue];
-            [configuration.preferences _setEnabled:enabled forExperimentalFeature:feature];
-        }
-
-        NSArray<_WKInternalDebugFeature *> *internalDebugFeatures = [WKPreferences _internalDebugFeatures];
-        for (_WKInternalDebugFeature *feature in internalDebugFeatures) {
-            BOOL enabled;
-            if ([[NSUserDefaults standardUserDefaults] objectForKey:feature.key])
-                enabled = [[NSUserDefaults standardUserDefaults] boolForKey:feature.key];
-            else
-                enabled = [feature defaultValue];
-            [configuration.preferences _setEnabled:enabled forInternalDebugFeature:feature];
+            [configuration.preferences _setEnabled:enabled forFeature:feature];
         }
 
         configuration.preferences.elementFullscreenEnabled = YES;
         configuration.preferences._allowsPictureInPictureMediaPlayback = YES;
         configuration.preferences._developerExtrasEnabled = YES;
-        configuration.preferences._mockCaptureDevicesEnabled = YES;
         configuration.preferences._accessibilityIsolatedTreeEnabled = YES;
         configuration.preferences._logsPageMessagesToSystemConsoleEnabled = YES;
     }
@@ -193,6 +180,20 @@ static WKWebsiteDataStore *persistentDataStore()
     return controller;
 }
 
+- (NSString *)targetURLOrDefaultURL
+{
+    NSArray *args = [[NSProcessInfo processInfo] arguments];
+    const NSUInteger targetURLIndex = [args indexOfObject:kURLArgumentString];
+    NSString *targetURL = nil;
+
+    if (targetURLIndex != NSNotFound && targetURLIndex + 1 < [args count])
+        targetURL = [args objectAtIndex:targetURLIndex + 1];
+
+    if (!targetURL || [targetURL isEqualToString:@""])
+        return _settingsController.defaultURL;
+    return targetURL;
+}
+
 - (IBAction)newWindow:(id)sender
 {
     BrowserWindowController *controller = [self createBrowserWindowController:sender];
@@ -200,7 +201,7 @@ static WKWebsiteDataStore *persistentDataStore()
         return;
 
     [[controller window] makeKeyAndOrderFront:sender];
-    [controller loadURLString:_settingsController.defaultURL];
+    [controller loadURLString:[self targetURLOrDefaultURL]];
 }
 
 - (IBAction)newPrivateWindow:(id)sender
@@ -209,7 +210,6 @@ static WKWebsiteDataStore *persistentDataStore()
     privateConfiguraton.websiteDataStore = [WKWebsiteDataStore nonPersistentDataStore];
 
     BrowserWindowController *controller = [[WK2BrowserWindowController alloc] initWithConfiguration:privateConfiguraton];
-    [privateConfiguraton release];
 
     [[controller window] makeKeyAndOrderFront:sender];
     [_browserWindowControllers addObject:controller];
@@ -236,7 +236,6 @@ static WKWebsiteDataStore *persistentDataStore()
 {
     WebHistory *webHistory = [[WebHistory alloc] init];
     [WebHistory setOptionalSharedHistory:webHistory];
-    [webHistory release];
 
     [self _updateNewWindowKeyEquivalents];
 
@@ -282,7 +281,7 @@ static WKWebsiteDataStore *persistentDataStore()
     BrowserWindowController *browserWindowController = [self frontmostBrowserWindowController];
 
     if (browserWindowController) {
-        NSOpenPanel *openPanel = [[NSOpenPanel openPanel] retain];
+        NSOpenPanel *openPanel = [NSOpenPanel openPanel];
         [openPanel beginSheetModalForWindow:browserWindowController.window completionHandler:^(NSInteger result) {
             if (result != NSModalResponseOK)
                 return;

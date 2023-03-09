@@ -49,7 +49,6 @@ public:
         NoFlag = 0x00,
         ShouldBlend = 0x01,
         ShouldFlipTexture = 0x02,
-        ShouldUseARBTextureRect = 0x04,
         ShouldAntialias = 0x08,
         ShouldRotateTexture90 = 0x10,
         ShouldRotateTexture180 = 0x20,
@@ -80,21 +79,19 @@ public:
     void beginPainting(PaintFlags = 0) override;
     void endPainting() override;
     void endClip() override;
-    void beginPreserves3D() override;
-    void endPreserves3D() override;
     IntRect clipBounds() override;
     IntSize maxTextureSize() const override { return IntSize(2000, 2000); }
     Ref<BitmapTexture> createTexture() override { return createTexture(GL_DONT_CARE); }
     Ref<BitmapTexture> createTexture(GLint internalFormat) override;
+    void setDepthRange(double zNear, double zFar) override;
 
     void drawFiltered(const BitmapTexture& sourceTexture, const BitmapTexture* contentTexture, const FilterOperation&, int pass);
 
-    void setEnableEdgeDistanceAntialiasing(bool enabled) { m_enableEdgeDistanceAntialiasing = enabled; }
-    void drawTextureExternalOES(GLuint texture, Flags, const IntSize&, const FloatRect&, const TransformationMatrix& modelViewMatrix, float opacity);
+    void drawTextureExternalOES(GLuint texture, Flags, const FloatRect&, const TransformationMatrix& modelViewMatrix, float opacity);
 
 private:
-    void drawTexturedQuadWithProgram(TextureMapperShaderProgram&, uint32_t texture, Flags, const IntSize&, const FloatRect&, const TransformationMatrix& modelViewMatrix, float opacity);
-    void drawTexturedQuadWithProgram(TextureMapperShaderProgram&, const Vector<std::pair<GLuint, GLuint> >& texturesAndSamplers, Flags, const IntSize&, const FloatRect&, const TransformationMatrix& modelViewMatrix, float opacity);
+    void drawTexturedQuadWithProgram(TextureMapperShaderProgram&, uint32_t texture, Flags, const FloatRect&, const TransformationMatrix& modelViewMatrix, float opacity);
+    void drawTexturedQuadWithProgram(TextureMapperShaderProgram&, const Vector<std::pair<GLuint, GLuint> >& texturesAndSamplers, Flags, const FloatRect&, const TransformationMatrix& modelViewMatrix, float opacity);
     void draw(const FloatRect&, const TransformationMatrix& modelViewMatrix, TextureMapperShaderProgram&, GLenum drawingMode, Flags);
 
     void drawUnitRect(TextureMapperShaderProgram&, GLenum drawingMode);
@@ -109,7 +106,6 @@ private:
     TextureMapperContextAttributes m_contextAttributes;
     TextureMapperGLData* m_data;
     ClipStack m_clipStack;
-    bool m_enableEdgeDistanceAntialiasing;
 };
 
 } // namespace WebCore

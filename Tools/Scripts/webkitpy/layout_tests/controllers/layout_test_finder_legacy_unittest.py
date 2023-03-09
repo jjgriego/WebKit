@@ -103,6 +103,26 @@ class LayoutTestFinderTests(unittest.TestCase, TestCaseMixin):
         self.assertEqual(self.port.name(), 'test-mac-leopard')
         self.assertIn('platform/test-snow-leopard/websocket/test.html', tests)
 
+    def test_includes_other_platforms_fallback(self):
+        finder = self.finder
+        tests = [t.test_path for t in finder.find_tests_by_path([]) if t.test_path.endswith("/http/test.html")]
+        self.assertEqual(self.port.name(), "test-mac-leopard")
+        self.assertEqual(
+            self.port.baseline_search_path(),
+            [
+                "/test.checkout/LayoutTests/platform/test-mac-leopard",
+                "/test.checkout/LayoutTests/platform/test-mac-snowleopard",
+            ],
+        )
+        self.assertEqual(
+            tests,
+            [
+                "platform/test-mac-leopard/http/test.html",
+                "platform/test-snow-leopard/http/test.html",
+                "platform/test-win-7sp0/http/test.html",
+            ],
+        )
+
     def test_find_one_test(self):
         finder = self.finder
         tests = [t.test_path for t in finder.find_tests_by_path(['failures/expected/image.html'])]
@@ -196,6 +216,11 @@ class LayoutTestFinderTests(unittest.TestCase, TestCaseMixin):
         finder = self.finder
         tests = [t.test_path for t in finder.find_tests_by_path(['failures/expected/i[m]age.html'])]
         self.assertEqual(tests, ['failures/expected/image.html'])
+
+    def test_find_glob_query(self):
+        finder = self.finder
+        tests = [t.test_path for t in finder.find_tests_by_path(['failures/expected/image.html?variant'])]
+        self.assertEqual(tests, ['failures/expected/image.html?variant'])
 
     def test_find_glob_mixed_file_type_sorted(self):
         finder = self.finder
@@ -295,10 +320,10 @@ class LayoutTestFinderTests(unittest.TestCase, TestCaseMixin):
         self.assertEqual(tests_to_find, tests_found)
 
     def test_find_template_variants(self):
-        find_paths = ["template_test"]
+        find_paths = ["web-platform-tests"]
         finder = self.finder
 
-        path = finder._port.layout_tests_dir() + "/template_test/variant_test.any.html"
+        path = finder._port.layout_tests_dir() + "/web-platform-tests/variant_test.any.html"
 
         finder._filesystem.maybe_make_directory(finder._filesystem.dirname(path))
         finder._filesystem.write_text_file(path, """<!-- This file is required for WebKit test infrastructure to run the templated test -->
@@ -306,7 +331,7 @@ class LayoutTestFinderTests(unittest.TestCase, TestCaseMixin):
 <!-- META: variant=?11-20 -->
         """)
         tests_found = [t.test_path for t in finder.find_tests_by_path(find_paths)]
-        self.assertEqual(['template_test/variant_test.any.html?1-10', 'template_test/variant_test.any.html?11-20'], tests_found)
+        self.assertEqual(['web-platform-tests/variant_test.any.html?1-10', 'web-platform-tests/variant_test.any.html?11-20'], tests_found)
 
     def test_preserves_order_directories(self):
         tests_to_find = ['http/tests/ssl', 'http/tests/passes']

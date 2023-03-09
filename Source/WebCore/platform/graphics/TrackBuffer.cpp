@@ -29,6 +29,7 @@
 #if ENABLE(MEDIA_SOURCE)
 
 #include "Logging.h"
+#include <wtf/CryptographicallyRandomNumber.h>
 
 namespace WebCore {
 
@@ -338,6 +339,7 @@ void TrackBuffer::clearSamples()
 {
     m_samples.clear();
     m_decodeQueue.clear();
+    m_buffered = PlatformTimeRanges();
 }
 
 void TrackBuffer::setRoundedTimestampOffset(const MediaTime& time, uint32_t timeScale, const MediaTime& roundingMargin)
@@ -349,7 +351,7 @@ void TrackBuffer::setRoundedTimestampOffset(const MediaTime& time, uint32_t time
 void TrackBuffer::setLogger(const Logger& newLogger, const void* newLogIdentifier)
 {
     m_logger = &newLogger;
-    m_logIdentifier = childLogIdentifier(newLogIdentifier, cryptographicallyRandomNumber());
+    m_logIdentifier = childLogIdentifier(newLogIdentifier, cryptographicallyRandomNumber<uint32_t>());
     ALWAYS_LOG(LOGIDENTIFIER);
 }
 

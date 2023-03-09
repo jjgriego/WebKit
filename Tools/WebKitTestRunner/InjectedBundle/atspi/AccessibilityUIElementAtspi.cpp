@@ -379,7 +379,7 @@ JSRetainPtr<JSStringRef> AccessibilityUIElement::stringDescriptionOfAttributeVal
 
 static bool checkElementState(WebCore::AccessibilityObjectAtspi* element, WebCore::Atspi::State state)
 {
-    return element->state() & (G_GUINT64_CONSTANT(1) << state);
+    return element->states().contains(state);
 }
 
 JSRetainPtr<JSStringRef> AccessibilityUIElement::stringAttributeValue(JSStringRef attribute)
@@ -397,8 +397,10 @@ JSRetainPtr<JSStringRef> AccessibilityUIElement::stringAttributeValue(JSStringRe
 
     m_element->updateBackingStore();
     auto attributes = m_element->attributes();
+    
     if (attributeName == "AXPlaceholderValue"_s)
         return OpaqueJSString::tryCreate(attributes.get("placeholder-text"_s)).leakRef();
+
     if (attributeName == "AXInvalid"_s) {
         auto textAttributes = m_element->textAttributes();
         auto value = textAttributes.attributes.get("invalid"_s);
@@ -406,10 +408,18 @@ JSRetainPtr<JSStringRef> AccessibilityUIElement::stringAttributeValue(JSStringRe
             value = checkElementState(m_element.get(), WebCore::Atspi::State::InvalidEntry) ? "true"_s : "false"_s;
         return OpaqueJSString::tryCreate(value).leakRef();
     }
+
     if (attributeName == "AXARIALive"_s)
         return OpaqueJSString::tryCreate(attributes.get("live"_s)).leakRef();
+
     if (attributeName == "AXARIARelevant"_s)
         return OpaqueJSString::tryCreate(attributes.get("relevant"_s)).leakRef();
+
+    if (attributeName == "AXAutocompleteValue"_s)
+        return OpaqueJSString::tryCreate(attributes.get("autocomplete"_s)).leakRef();
+    
+    if (attributeName == "AXKeyShortcutsValue"_s)
+        return OpaqueJSString::tryCreate(attributes.get("keyshortcuts"_s)).leakRef();
 
     return JSStringCreateWithCharacters(nullptr, 0);
 }
@@ -444,6 +454,21 @@ JSRetainPtr<JSStringRef> AccessibilityUIElement::currentStateValue() const
     m_element->updateBackingStore();
     auto value = m_element->attributes().get("current"_s);
     return OpaqueJSString::tryCreate(!value.isNull() ? value : "false"_s).leakRef();
+}
+
+JSRetainPtr<JSStringRef> AccessibilityUIElement::sortDirection() const
+{
+    m_element->updateBackingStore();
+    auto sort = m_element->attributes().get("sort"_s);
+
+    if (sort == "ascending"_s)
+        return OpaqueJSString::tryCreate("AXAscendingSortDirection"_s).leakRef();
+    if (sort == "descending"_s)
+        return OpaqueJSString::tryCreate("AXDescendingSortDirection"_s).leakRef();
+    if (sort == "other"_s)
+        return OpaqueJSString::tryCreate("AXUnknownSortDirection"_s).leakRef();
+    
+    return nullptr;
 }
 
 JSRetainPtr<JSStringRef> AccessibilityUIElement::domIdentifier() const
@@ -498,6 +523,27 @@ JSValueRef AccessibilityUIElement::columnHeaders() const
     }
 
     return makeJSArray({ });
+}
+
+static JSValueRef elementsForRelation(WebCore::AccessibilityObjectAtspi* element, WebCore::Atspi::Relation relation)
+{
+    element->updateBackingStore();
+    auto relationMap = element->relationMap();
+    auto targets = relationMap.get(relation);
+    if (targets.isEmpty())
+        return { };
+
+    return makeJSArray(elementsVector(targets));
+}
+
+JSValueRef AccessibilityUIElement::detailsElements() const
+{
+    return elementsForRelation(m_element.get(), WebCore::Atspi::Relation::Details);
+}
+
+JSValueRef AccessibilityUIElement::errorMessageElements() const
+{
+    return elementsForRelation(m_element.get(), WebCore::Atspi::Relation::ErrorMessage);
 }
 
 RefPtr<AccessibilityUIElement> AccessibilityUIElement::uiElementAttributeValue(JSStringRef attribute) const
@@ -647,7 +693,7 @@ static String xmlRoleValueString(const String& xmlRoles)
     return { };
 }
 
-static String roleValueToString(unsigned roleValue)
+static String roleValueToString(WebCore::Atspi::Role roleValue)
 {
     switch (roleValue) {
     case WebCore::Atspi::Role::Alert:
@@ -1798,6 +1844,26 @@ bool AccessibilityUIElement::insertText(JSStringRef)
 JSRetainPtr<JSStringRef> AccessibilityUIElement::popupValue() const
 {
     return nullptr;
+}
+
+bool AccessibilityUIElement::isInsertion() const
+{
+    return false;
+}
+
+bool AccessibilityUIElement::isDeletion() const
+{
+    return false;
+}
+
+bool AccessibilityUIElement::isFirstItemInSuggestion() const
+{
+    return false;
+}
+
+bool AccessibilityUIElement::isLastItemInSuggestion() const
+{
+    return false;
 }
 
 } // namespace WTR

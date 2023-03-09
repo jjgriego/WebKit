@@ -19,12 +19,8 @@
 
 #include "config.h"
 
-// Include WebKitSettingsPrivate.h for webkitSettingsSetMediaCaptureRequiresSecureConnection().
-#define WEBKIT2_COMPILATION
-#include <WebKitSettingsPrivate.h>
-#undef WEBKIT2_COMPILATION
-
 #include "WebViewTest.h"
+#include <WebKitSettingsPrivate.h>
 #include <wtf/HashSet.h>
 #include <wtf/RunLoop.h>
 #include <wtf/glib/GRefPtr.h>
@@ -257,6 +253,32 @@ public:
         g_main_loop_quit(test->m_mainLoop);
     }
 
+    static gboolean queryPermissionStateCallback(WebKitWebView*, WebKitPermissionStateQuery* query, UIClientTest* test)
+    {
+        if (!g_strcmp0(test->m_expectedQueryPermissionReply, "prompt-default"))
+            return FALSE;
+
+        WebKitPermissionState state = WEBKIT_PERMISSION_STATE_PROMPT;
+
+        if (!g_strcmp0(test->m_expectedQueryPermissionReply, "granted"))
+            state = WEBKIT_PERMISSION_STATE_GRANTED;
+        if (!g_strcmp0(test->m_expectedQueryPermissionReply, "denied"))
+            state = WEBKIT_PERMISSION_STATE_DENIED;
+
+        g_assert_cmpstr(webkit_permission_state_query_get_name(query), ==, "screen-wake-lock");
+
+        GUniquePtr<gchar> origin(webkit_security_origin_to_string(webkit_permission_state_query_get_security_origin(query)));
+        g_assert_cmpstr(origin.get(), ==, "https://foo.com");
+
+        webkit_permission_state_query_finish(query, state);
+        return TRUE;
+    }
+
+    static void queryPermissionResultMessageReceivedCallback(WebKitUserContentManager* userContentManager, WebKitJavascriptResult* javascriptResult, UIClientTest* test)
+    {
+        test->m_queryPermissionResult.reset(WebViewTest::javascriptResultToCString(javascriptResult));
+        g_main_loop_quit(test->m_mainLoop);
+    }
 
     static void displayCaptureChanged(WebKitWebView* webView, GParamSpec*, UIClientTest* test)
     {
@@ -327,15 +349,30 @@ public:
         g_signal_connect(m_webView, "script-dialog", G_CALLBACK(scriptDialog), this);
         g_signal_connect(m_webView, "mouse-target-changed", G_CALLBACK(mouseTargetChanged), this);
         g_signal_connect(m_webView, "permission-request", G_CALLBACK(permissionRequested), this);
+        g_signal_connect(m_webView, "query-permission-state", G_CALLBACK(queryPermissionStateCallback), this);
+#if !ENABLE(2022_GLIB_API)
         webkit_user_content_manager_register_script_message_handler(m_userContentManager.get(), "permission");
+        webkit_user_content_manager_register_script_message_handler(m_userContentManager.get(), "queryPermission");
+#else
+        webkit_user_content_manager_register_script_message_handler(m_userContentManager.get(), "permission", nullptr);
+        webkit_user_content_manager_register_script_message_handler(m_userContentManager.get(), "queryPermission", nullptr);
+#endif
         g_signal_connect(m_userContentManager.get(), "script-message-received::permission", G_CALLBACK(permissionResultMessageReceivedCallback), this);
+        g_signal_connect(m_userContentManager.get(), "script-message-received::queryPermission", G_CALLBACK(queryPermissionResultMessageReceivedCallback), this);
     }
 
     ~UIClientTest()
     {
         g_signal_handlers_disconnect_matched(m_webView, G_SIGNAL_MATCH_DATA, 0, 0, 0, 0, this);
         g_signal_handlers_disconnect_matched(m_userContentManager.get(), G_SIGNAL_MATCH_DATA, 0, 0, 0, 0, this);
+
+#if !ENABLE(2022_GLIB_API)
         webkit_user_content_manager_unregister_script_message_handler(m_userContentManager.get(), "permission");
+        webkit_user_content_manager_unregister_script_message_handler(m_userContentManager.get(), "queryPermission");
+#else
+        webkit_user_content_manager_unregister_script_message_handler(m_userContentManager.get(), "permission", nullptr);
+        webkit_user_content_manager_unregister_script_message_handler(m_userContentManager.get(), "queryPermission", nullptr);
+#endif
     }
 
     static void tryWebViewCloseCallback(UIClientTest* test)
@@ -366,6 +403,13 @@ public:
         m_permissionResult = nullptr;
         g_main_loop_run(m_mainLoop);
         return m_permissionResult.get();
+    }
+
+    const char* waitUntilQueryPermissionResultMessageReceived()
+    {
+        m_queryPermissionResult = nullptr;
+        g_main_loop_run(m_mainLoop);
+        return m_queryPermissionResult.get();
     }
 
     void setExpectedWindowProperties(const WindowProperties& windowProperties)
@@ -469,6 +513,7 @@ public:
     bool m_scriptDialogConfirmed;
     bool m_delayedScriptDialogs { false };
     bool m_allowPermissionRequests;
+    const char* m_expectedQueryPermissionReply;
     gboolean m_verifyMediaTypes;
     gboolean m_expectedAudioMedia;
     gboolean m_expectedVideoMedia;
@@ -478,6 +523,7 @@ public:
     GRefPtr<WebKitHitTestResult> m_mouseTargetHitTestResult;
     unsigned m_mouseTargetModifiers;
     GUniquePtr<char> m_permissionResult;
+    GUniquePtr<char> m_queryPermissionResult;
     bool m_waitingForMouseTargetChange { false };
 
 #if PLATFORM(GTK)
@@ -629,37 +675,6 @@ public:
         m_webViewEvents.append(ReadyToShow);
     }
 };
-
-static void testWebViewAllowModalDialogs(ModalDialogsTest* test, gconstpointer)
-{
-    WebKitSettings* settings = webkit_web_view_get_settings(test->m_webView);
-    webkit_settings_set_allow_modal_dialogs(settings, TRUE);
-    webkit_settings_set_allow_top_navigation_to_data_urls(settings, TRUE);
-
-    test->loadHtml("<html><body onload=\"window.showModalDialog('data:text/html,<html><body/><script>window.close();</script></html>')\"></body></html>", 0);
-    test->waitUntilMainLoopFinishes();
-
-    Vector<UIClientTest::WebViewEvents>& events = test->m_webViewEvents;
-    g_assert_cmpint(events.size(), ==, 4);
-    g_assert_cmpint(events[0], ==, UIClientTest::Create);
-    g_assert_cmpint(events[1], ==, UIClientTest::ReadyToShow);
-    g_assert_cmpint(events[2], ==, UIClientTest::RunAsModal);
-    g_assert_cmpint(events[3], ==, UIClientTest::Close);
-}
-
-static void testWebViewDisallowModalDialogs(ModalDialogsTest* test, gconstpointer)
-{
-    WebKitSettings* settings = webkit_web_view_get_settings(test->m_webView);
-    webkit_settings_set_allow_modal_dialogs(settings, FALSE);
-
-    test->loadHtml("<html><body onload=\"window.showModalDialog('data:text/html,<html><body/><script>window.close();</script></html>')\"></body></html>", 0);
-    // We need to use a timeout here because the viewClose() function
-    // won't ever be called as the dialog won't be created.
-    test->wait(1);
-
-    Vector<UIClientTest::WebViewEvents>& events = test->m_webViewEvents;
-    g_assert_cmpint(events.size(), ==, 0);
-}
 
 static void testWebViewJavaScriptDialogs(UIClientTest* test, gconstpointer)
 {
@@ -995,6 +1010,51 @@ static void testWebViewMediaKeySystemPermissionRequests(UIClientTest* test, gcon
 }
 #endif
 
+static void testWebViewQueryPermissionRequests(UIClientTest* test, gconstpointer)
+{
+    test->showInWindow();
+    static const char* queryHTML =
+        "<html>"
+        "  <script>"
+        "  function runTest()"
+        "  {"
+        "    navigator.permissions.query({"
+        "      name : \"screen-wake-lock\""
+        "    }).then((r) => {"
+        "      window.webkit.messageHandlers.queryPermission.postMessage(r.state);"
+        "    }).catch((e) => {"
+        "      window.webkit.messageHandlers.queryPermission.postMessage('error');"
+        "    });"
+        "  }"
+        "  </script>"
+        "  <body onload='runTest();'></body>"
+        "</html>";
+
+    // Test granting a permission state query.
+    test->m_expectedQueryPermissionReply = "granted";
+    test->loadHtml(queryHTML, "https://foo.com/bar");
+    const gchar* result = test->waitUntilQueryPermissionResultMessageReceived();
+    g_assert_cmpstr(result, ==, test->m_expectedQueryPermissionReply);
+
+    // Test requesting a user prompt for the given permission type.
+    test->m_expectedQueryPermissionReply = "prompt";
+    test->loadHtml(queryHTML, "https://foo.com/bar");
+    result = test->waitUntilQueryPermissionResultMessageReceived();
+    g_assert_cmpstr(result, ==, test->m_expectedQueryPermissionReply);
+
+    // Test denying a permission state query.
+    test->m_expectedQueryPermissionReply = "denied";
+    test->loadHtml(queryHTML, "https://foo.com/bar");
+    result = test->waitUntilQueryPermissionResultMessageReceived();
+    g_assert_cmpstr(result, ==, test->m_expectedQueryPermissionReply);
+
+    // Test returning FALSE from the signal handler, we should then expect the state to be `prompt`.
+    test->m_expectedQueryPermissionReply = "prompt-default";
+    test->loadHtml(queryHTML, "https://foo.com/bar");
+    result = test->waitUntilQueryPermissionResultMessageReceived();
+    g_assert_cmpstr(result, ==, "prompt");
+}
+
 #if ENABLE(MEDIA_STREAM)
 static void testWebViewUserMediaEnumerateDevicesPermissionCheck(UIClientTest* test, gconstpointer)
 {
@@ -1027,12 +1087,12 @@ static void testWebViewUserMediaEnumerateDevicesPermissionCheck(UIClientTest* te
 
     // Test denying a permission request.
     test->m_allowPermissionRequests = false;
-    test->loadHtml(userMediaRequestHTML, nullptr);
+    test->loadHtml(userMediaRequestHTML, "https://foo.com/bar");
     test->waitUntilTitleChangedTo("Permission denied");
 
     // Test allowing a permission request.
     test->m_allowPermissionRequests = true;
-    test->loadHtml(userMediaRequestHTML, nullptr);
+    test->loadHtml(userMediaRequestHTML, "https://foo.com/bar");
     test->waitUntilTitleChangedTo("OK");
 
     webkit_settings_set_enable_media_stream(settings, enabled);
@@ -1070,7 +1130,7 @@ static void testWebViewUserMediaPermissionRequests(UIClientTest* test, gconstpoi
 
     // Test denying a permission request.
     test->m_allowPermissionRequests = false;
-    test->loadHtml(userMediaRequestHTML, nullptr);
+    test->loadHtml(userMediaRequestHTML, "https://foo.com/bar");
     test->waitUntilTitleChangedTo("NotAllowedError");
     g_assert_cmpuint(webkit_web_view_get_display_capture_state(test->m_webView), ==, WEBKIT_MEDIA_CAPTURE_STATE_NONE);
     g_assert_cmpuint(webkit_web_view_get_microphone_capture_state(test->m_webView), ==, WEBKIT_MEDIA_CAPTURE_STATE_NONE);
@@ -1078,7 +1138,7 @@ static void testWebViewUserMediaPermissionRequests(UIClientTest* test, gconstpoi
 
     // Test allowing a permission request.
     test->m_allowPermissionRequests = true;
-    test->loadHtml(userMediaRequestHTML, nullptr);
+    test->loadHtml(userMediaRequestHTML, "https://foo.com/bar");
     test->waitUntilTitleChangedTo("OK");
     g_assert_cmpuint(webkit_web_view_get_display_capture_state(test->m_webView), ==, WEBKIT_MEDIA_CAPTURE_STATE_NONE);
     g_assert_cmpuint(webkit_web_view_get_microphone_capture_state(test->m_webView), ==, WEBKIT_MEDIA_CAPTURE_STATE_ACTIVE);
@@ -1140,7 +1200,7 @@ static void testWebViewAudioOnlyUserMediaPermissionRequests(UIClientTest* test, 
 
     // Test denying a permission request.
     test->m_allowPermissionRequests = false;
-    test->loadHtml(userMediaRequestHTML, nullptr);
+    test->loadHtml(userMediaRequestHTML, "https://foo.com/bar");
     test->waitUntilTitleChangedTo("NotAllowedError");
     g_assert_cmpuint(webkit_web_view_get_display_capture_state(test->m_webView), ==, WEBKIT_MEDIA_CAPTURE_STATE_NONE);
     g_assert_cmpuint(webkit_web_view_get_microphone_capture_state(test->m_webView), ==, WEBKIT_MEDIA_CAPTURE_STATE_NONE);
@@ -1182,7 +1242,7 @@ static void testWebViewDisplayUserMediaPermissionRequests(UIClientTest* test, gc
 
     // Test denying a permission request.
     test->m_allowPermissionRequests = false;
-    test->loadHtml(displayMediaRequestHTML, nullptr);
+    test->loadHtml(displayMediaRequestHTML, "https://foo.com/bar");
     test->waitUntilLoadFinished();
     test->clickMouseButton(5, 5);
     test->waitUntilTitleChangedTo("NotAllowedError");
@@ -1192,7 +1252,7 @@ static void testWebViewDisplayUserMediaPermissionRequests(UIClientTest* test, gc
 
     // Test allowing a permission request.
     test->m_allowPermissionRequests = true;
-    test->loadHtml(displayMediaRequestHTML, nullptr);
+    test->loadHtml(displayMediaRequestHTML, "https://foo.com/bar");
     test->waitUntilLoadFinished();
     test->clickMouseButton(5, 5);
     test->waitUntilTitleChangedTo("OK");
@@ -1488,8 +1548,6 @@ void beforeAll()
 #if PLATFORM(GTK)
     CreateNavigationDataTest::add("WebKitWebView", "create-navigation-data", testWebViewCreateNavigationData);
 #endif
-    ModalDialogsTest::add("WebKitWebView", "allow-modal-dialogs", testWebViewAllowModalDialogs);
-    ModalDialogsTest::add("WebKitWebView", "disallow-modal-dialogs", testWebViewDisallowModalDialogs);
     UIClientTest::add("WebKitWebView", "javascript-dialogs", testWebViewJavaScriptDialogs);
     UIClientTest::add("WebKitWebView", "window-properties", testWebViewWindowProperties);
 #if PLATFORM(GTK)
@@ -1505,6 +1563,7 @@ void beforeAll()
 #if ENABLE(ENCRYPTED_MEDIA)
     UIClientTest::add("WebKitWebView", "mediaKeySystem-permission-requests", testWebViewMediaKeySystemPermissionRequests);
 #endif
+    UIClientTest::add("WebKitWebView", "query-permission-requests", testWebViewQueryPermissionRequests);
 #if ENABLE(MEDIA_STREAM)
     UIClientTest::add("WebKitWebView", "usermedia-enumeratedevices-permission-check", testWebViewUserMediaEnumerateDevicesPermissionCheck);
     UIClientTest::add("WebKitWebView", "usermedia-permission-requests", testWebViewUserMediaPermissionRequests);

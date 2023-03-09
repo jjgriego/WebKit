@@ -28,6 +28,8 @@ div#image-overlay {
     position: relative;
     overflow: hidden;
     color: transparent;
+    -webkit-text-stroke-color: currentcolor;
+    -webkit-text-fill-color: currentcolor;
     text-shadow: none;
     text-indent: 0;
     text-align: center;
@@ -85,5 +87,5 @@ div.image-overlay-line, .image-overlay-text {
 
 div.image-overlay-data-detector-result {
     position: absolute;
-    user-select: none;
+    -webkit-user-select: none;
 }

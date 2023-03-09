@@ -71,7 +71,6 @@
 #include "ResourceLoadInfo.h"
 #include "ResourceTiming.h"
 #include "RuntimeApplicationChecks.h"
-#include "RuntimeEnabledFeatures.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGImage.h"
 #include "ScriptController.h"
@@ -97,7 +96,7 @@
 
 #undef CACHEDRESOURCELOADER_RELEASE_LOG
 #define PAGE_ID(frame) (valueOrDefault(frame.pageID()).toUInt64())
-#define FRAME_ID(frame) (valueOrDefault(frame.frameID()).toUInt64())
+#define FRAME_ID(frame) (frame.frameID().object().toUInt64())
 #define CACHEDRESOURCELOADER_RELEASE_LOG(fmt, ...) RELEASE_LOG(Network, "%p - CachedResourceLoader::" fmt, this, ##__VA_ARGS__)
 #define CACHEDRESOURCELOADER_RELEASE_LOG_WITH_FRAME(fmt, frame, ...) RELEASE_LOG(Network, "%p - [pageID=%" PRIu64 ", frameID=%" PRIu64 "] CachedResourceLoader::" fmt, this, PAGE_ID(frame), FRAME_ID(frame), ##__VA_ARGS__)
 
@@ -448,8 +447,9 @@ bool CachedResourceLoader::checkInsecureContent(CachedResource::Type type, const
         if (Frame* frame = this->frame()) {
             if (!MixedContentChecker::canRunInsecureContent(*frame, m_document->securityOrigin(), url))
                 return false;
-            Frame& top = frame->tree().top();
-            if (&top != frame && !MixedContentChecker::canRunInsecureContent(top, top.document()->securityOrigin(), url))
+            auto& top = frame->tree().top();
+            auto* localTop = dynamicDowncast<LocalFrame>(top);
+            if (&top != frame && localTop && !MixedContentChecker::canRunInsecureContent(*localTop, localTop->document()->securityOrigin(), url))
                 return false;
         }
         break;
@@ -469,8 +469,9 @@ bool CachedResourceLoader::checkInsecureContent(CachedResource::Type type, const
         if (Frame* frame = this->frame()) {
             if (!MixedContentChecker::canDisplayInsecureContent(*frame, m_document->securityOrigin(), contentTypeFromResourceType(type), url, MixedContentChecker::AlwaysDisplayInNonStrictMode::Yes))
                 return false;
-            Frame& topFrame = frame->tree().top();
-            if (!MixedContentChecker::canDisplayInsecureContent(topFrame, topFrame.document()->securityOrigin(), contentTypeFromResourceType(type), url))
+            auto& topFrame = frame->tree().top();
+            auto* localTopFrame = dynamicDowncast<LocalFrame>(topFrame);
+            if (!localTopFrame || !MixedContentChecker::canDisplayInsecureContent(*localTopFrame, localTopFrame->document()->securityOrigin(), contentTypeFromResourceType(type), url))
                 return false;
         }
         break;
@@ -517,6 +518,10 @@ bool CachedResourceLoader::allowedByContentSecurityPolicy(CachedResource::Type t
     case CachedResource::Type::Icon:
     case CachedResource::Type::ImageResource:
         if (!m_document->contentSecurityPolicy()->allowImageFromSource(url, redirectResponseReceived, preRedirectURL))
+            return false;
+        break;
+    case CachedResource::Type::LinkPrefetch:
+        if (!m_document->contentSecurityPolicy()->allowPrefetchFromSource(url, redirectResponseReceived, preRedirectURL))
             return false;
         break;
     case CachedResource::Type::SVGFontResource:
@@ -631,13 +636,92 @@ bool CachedResourceLoader::canRequestAfterRedirection(CachedResource::Type type,
     return true;
 }
 
-bool CachedResourceLoader::updateRequestAfterRedirection(CachedResource::Type type, ResourceRequest& request, const ResourceLoaderOptions& options, const URL& preRedirectURL)
+// Created by binding generator.
+String convertEnumerationToString(FetchOptions::Destination);
+String convertEnumerationToString(FetchOptions::Mode);
+
+static const String& convertEnumerationToString(FetchMetadataSite enumerationValue)
+{
+    static NeverDestroyed<const String> none(MAKE_STATIC_STRING_IMPL("none"));
+    static NeverDestroyed<const String> sameOrigin(MAKE_STATIC_STRING_IMPL("same-origin"));
+    static NeverDestroyed<const String> sameSite(MAKE_STATIC_STRING_IMPL("same-site"));
+    static NeverDestroyed<const String> crossSite(MAKE_STATIC_STRING_IMPL("cross-site"));
+
+    switch (enumerationValue) {
+    case FetchMetadataSite::None:
+        return none;
+    case FetchMetadataSite::SameOrigin:
+        return sameOrigin;
+    case FetchMetadataSite::SameSite:
+        return sameSite;
+    case FetchMetadataSite::CrossSite:
+        return crossSite;
+    }
+
+    ASSERT_NOT_REACHED();
+    return emptyString();
+}
+
+static void updateRequestFetchMetadataHeaders(ResourceRequest& request, const ResourceLoaderOptions& options, FetchMetadataSite site)
+{
+    // Implementing step 13 of https://fetch.spec.whatwg.org/#http-network-or-cache-fetch as of 22 Feb 2022
+    // https://w3c.github.io/webappsec-fetch-metadata/#fetch-integration
+    auto requestOrigin = SecurityOrigin::create(request.url());
+    if (!requestOrigin->isPotentiallyTrustworthy())
+        return;
+
+    String destinationString;
+    // The Fetch IDL documents this as "" while FetchMetadata expects "empty".
+    if (options.destination == FetchOptions::Destination::EmptyString)
+        destinationString = "empty"_s;
+    else
+        destinationString = convertEnumerationToString(options.destination);
+
+    request.setHTTPHeaderField(HTTPHeaderName::SecFetchDest, WTFMove(destinationString));
+    request.setHTTPHeaderField(HTTPHeaderName::SecFetchMode, convertEnumerationToString(options.mode));
+    request.setHTTPHeaderField(HTTPHeaderName::SecFetchSite, convertEnumerationToString(site));
+}
+
+FetchMetadataSite CachedResourceLoader::computeFetchMetadataSite(const ResourceRequest& request, CachedResource::Type type, FetchOptions::Mode mode, const SecurityOrigin& originalOrigin, FetchMetadataSite originalSite)
+{
+    // This is true when a user causes a request, such as entering a URL.
+    if (mode == FetchOptions::Mode::Navigate && type == CachedResource::Type::MainResource && !request.hasHTTPReferrer())
+        return FetchMetadataSite::None;
+
+    // If this is a redirect we start with the old value.
+    // The value can never get more "secure" so a full redirect
+    // chain only degrades towards cross-site.
+    Ref<SecurityOrigin> requestOrigin = SecurityOrigin::create(request.url());
+    if ((originalSite == FetchMetadataSite::SameOrigin || originalSite == FetchMetadataSite::None) && originalOrigin.isSameOriginAs(requestOrigin))
+        return FetchMetadataSite::SameOrigin;
+    if (originalSite != FetchMetadataSite::CrossSite && originalOrigin.isSameSiteAs(requestOrigin))
+        return FetchMetadataSite::SameSite;
+    return FetchMetadataSite::CrossSite;
+}
+
+bool CachedResourceLoader::updateRequestAfterRedirection(CachedResource::Type type, ResourceRequest& request, const ResourceLoaderOptions& options, FetchMetadataSite site, const URL& preRedirectURL)
 {
     ASSERT(m_documentLoader);
     if (auto* document = m_documentLoader->cachedResourceLoader().document())
         upgradeInsecureResourceRequestIfNeeded(request, *document);
 
     // FIXME: We might want to align the checks done here with the ones done in CachedResourceLoader::requestResource, content extensions blocking in particular.
+
+#if ENABLE(PUBLIC_SUFFIX_LIST)
+    auto* frame = m_documentLoader ? m_documentLoader->frame() : nullptr;
+    if (frame && frame->settings().fetchMetadataEnabled()) {
+        auto requestOrigin = SecurityOrigin::create(request.url());
+
+        // In the case of a protocol downgrade we strip all FetchMetadata headers.
+        // Otherwise we add or update FetchMetadata.
+        if (!requestOrigin->isPotentiallyTrustworthy()) {
+            request.removeHTTPHeaderField(HTTPHeaderName::SecFetchDest);
+            request.removeHTTPHeaderField(HTTPHeaderName::SecFetchMode);
+            request.removeHTTPHeaderField(HTTPHeaderName::SecFetchSite);
+        } else
+            updateRequestFetchMetadataHeaders(request, options, site);
+    }
+#endif // ENABLE(PUBLIC_SUFFIX_LIST)
 
     return canRequestAfterRedirection(type, request.url(), options, preRedirectURL);
 }
@@ -675,6 +759,7 @@ bool CachedResourceLoader::shouldContinueAfterNotifyingLoadedFromMemoryCache(con
         return true;
 
     ResourceRequest newRequest = ResourceRequest(resource.url());
+    newRequest.setRequester(request.resourceRequest().requester());
     newRequest.setInitiatorIdentifier(request.resourceRequest().initiatorIdentifier());
     if (auto inspectorInitiatorNodeIdentifier = request.resourceRequest().inspectorInitiatorNodeIdentifier())
         newRequest.setInspectorInitiatorNodeIdentifier(*inspectorInitiatorNodeIdentifier);
@@ -795,10 +880,19 @@ void CachedResourceLoader::updateHTTPRequestHeaders(FrameLoader& frameLoader, Ca
     // FIXME: We should reconcile handling of MainResource with other resources.
     if (type != CachedResource::Type::MainResource)
         request.updateReferrerAndOriginHeaders(frameLoader);
-    if (frameLoader.frame().settings().fetchMetadataEnabled())
-        request.updateFetchMetadataHeaders();
+#if ENABLE(PUBLIC_SUFFIX_LIST)
+    // FetchMetadata depends on PSL to determine same-site relationships and without this
+    // ability it is best to not set any FetchMetadata headers as sites generally expect
+    // all of them or none.
+    if (frameLoader.frame().settings().fetchMetadataEnabled()) {
+        auto site = computeFetchMetadataSite(request.resourceRequest(), type, request.options().mode, frameLoader.frame().document()->securityOrigin());
+        updateRequestFetchMetadataHeaders(request.resourceRequest(), request.options(), site);
+    }
+#endif // ENABLE(PUBLIC_SUFFIX_LIST)
     request.updateUserAgentHeader(frameLoader);
 
+    if (frameLoader.frame().loader().loadType() == FrameLoadType::ReloadFromOrigin)
+        request.updateCacheModeIfNeeded(cachePolicy(type, request.resourceRequest().url()));
     request.updateAccordingCacheMode();
     request.updateAcceptEncodingHeader();
 }
@@ -936,6 +1030,10 @@ ResourceErrorOr<CachedResourceHandle<CachedResource>> CachedResourceLoader::requ
                 resource->setResourceError(ResourceError(ContentExtensions::WebKitContentBlockerDomain, 0, resourceRequest.url(), WEB_UI_STRING("The URL was blocked by a content blocker", "WebKitErrorBlockedByContentBlocker description")));
                 return resource;
             }
+            if (RefPtr document = this->document()) {
+                if (auto message = ContentExtensions::customLoadBlockingMessageForConsole(results, resourceRequest.url()))
+                    document->addConsoleMessage(MessageSource::ContentBlocker, MessageLevel::Info, WTFMove(*message));
+            }
             return makeUnexpected(ResourceError { errorDomainWebKitInternal, 0, url, "Resource blocked by content blocker"_s, ResourceError::Type::AccessControl });
         }
         if (madeHTTPS
@@ -953,9 +1051,10 @@ ResourceErrorOr<CachedResourceHandle<CachedResource>> CachedResourceLoader::requ
         bool sameOriginRequest = false;
         auto requestedOrigin = SecurityOrigin::create(url);
         if (type == CachedResource::Type::MainResource) {
+            auto* localMainFrame = dynamicDowncast<LocalFrame>(frame.mainFrame());
             if (frame.isMainFrame())
                 sameOriginRequest = true;
-            else if (auto* topDocument = frame.mainFrame().document())
+            else if (auto* topDocument = localMainFrame ? localMainFrame->document() : nullptr)
                 sameOriginRequest = topDocument->securityOrigin().isSameSchemeHostPort(requestedOrigin.get());
         } else if (document()) {
             sameOriginRequest = document()->topOrigin().isSameSchemeHostPort(requestedOrigin.get())
@@ -975,6 +1074,7 @@ ResourceErrorOr<CachedResourceHandle<CachedResource>> CachedResourceLoader::requ
 
     if (request.resourceRequest().url().protocolIsInHTTPFamily())
         updateHTTPRequestHeaders(frame.loader(), type, request);
+    request.disableCachingIfNeeded();
 
     auto& memoryCache = MemoryCache::singleton();
     if (request.allowsCaching() && memoryCache.disabled())
@@ -1015,7 +1115,8 @@ ResourceErrorOr<CachedResourceHandle<CachedResource>> CachedResourceLoader::requ
     case Use:
         ASSERT(resource);
         if (request.options().mode == FetchOptions::Mode::Navigate && !frame.isMainFrame()) {
-            if (auto* parentDocument = frame.tree().parent() ? frame.tree().parent()->document() : nullptr) {
+            auto* localParentFrame = dynamicDowncast<LocalFrame>(frame.tree().parent());
+            if (auto* parentDocument = localParentFrame ? localParentFrame->document() : nullptr) {
                 auto coep = parentDocument->crossOriginEmbedderPolicy().value;
                 if (auto error = validateCrossOriginResourcePolicy(coep, parentDocument->securityOrigin(), request.resourceRequest().url(), resource->response(), ForNavigation::Yes))
                     return makeUnexpected(WTFMove(*error));
@@ -1053,13 +1154,13 @@ ResourceErrorOr<CachedResourceHandle<CachedResource>> CachedResourceLoader::requ
                 // for this document because it may have been speculatively preloaded.
                 if (auto metricsFromResource = resource->takeNetworkLoadMetrics(); metricsFromResource && documentLoader && metricsFromResource->redirectStart >= documentLoader->timing().timeOrigin())
                     metrics = WTFMove(metricsFromResource);
-                auto resourceTiming = ResourceTiming::fromMemoryCache(url, request.initiatorName(), loadTiming, resource->response(), metrics ? *metrics : NetworkLoadMetrics::emptyMetrics(), *request.origin());
+                auto resourceTiming = ResourceTiming::fromMemoryCache(url, request.initiatorType(), loadTiming, resource->response(), metrics ? *metrics : NetworkLoadMetrics::emptyMetrics(), *request.origin());
                 if (initiatorContext == InitiatorContext::Worker) {
                     ASSERT(is<CachedRawResource>(resource.get()));
                     downcast<CachedRawResource>(resource.get())->finishedTimingForWorkerLoad(WTFMove(resourceTiming));
                 } else {
                     ASSERT(initiatorContext == InitiatorContext::Document);
-                    m_resourceTimingInfo.storeResourceTimingInitiatorInformation(resource, request.initiatorName(), &frame);
+                    m_resourceTimingInfo.storeResourceTimingInitiatorInformation(resource, request.initiatorType(), &frame);
                     m_resourceTimingInfo.addResourceTiming(*resource.get(), *document(), WTFMove(resourceTiming));
                 }
             }
@@ -1072,9 +1173,10 @@ ResourceErrorOr<CachedResourceHandle<CachedResource>> CachedResourceLoader::requ
     ASSERT(resource);
     resource->setOriginalRequest(WTFMove(originalRequest));
 
-    if (forPreload == ForPreload::No && resource->loader() && resource->ignoreForRequestCount()) {
+    if (auto* subresourceLoader = resource->loader(); forPreload == ForPreload::No && subresourceLoader && resource->ignoreForRequestCount()) {
+        subresourceLoader->clearRequestCountTracker();
         resource->setIgnoreForRequestCount(false);
-        incrementRequestCount(*resource);
+        subresourceLoader->resetRequestCountTracker(*this, *resource);
     }
 
     if ((policy != Use || resource->stillNeedsLoad()) && imageLoading == ImageLoading::Immediate) {
@@ -1098,7 +1200,7 @@ ResourceErrorOr<CachedResourceHandle<CachedResource>> CachedResourceLoader::requ
 
     ASSERT(resource->url() == url.string());
     m_documentResources.set(resource->url().string(), resource);
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     frame.loader().client().didLoadFromRegistrableDomain(RegistrableDomain(resource->resourceRequest().url()));
 #endif
     return resource;
@@ -1110,7 +1212,7 @@ void CachedResourceLoader::documentDidFinishLoadEvent()
 
     // If m_preloads is not empty here, it's full of link preloads,
     // as speculative preloads were cleared at DCL.
-    if (m_preloads && m_preloads->size() && !m_unusedPreloadsTimer.isActive())
+    if (m_preloads && !m_preloads->isEmptyIgnoringNullReferences() && !m_unusedPreloadsTimer.isActive())
         m_unusedPreloadsTimer.startOneShot(unusedPreloadTimeout);
 }
 
@@ -1136,7 +1238,7 @@ CachedResourceHandle<CachedResource> CachedResourceLoader::revalidateResource(Ca
     memoryCache.remove(resource);
     memoryCache.add(*newResource);
 
-    m_resourceTimingInfo.storeResourceTimingInitiatorInformation(newResource, newResource->initiatorName(), frame());
+    m_resourceTimingInfo.storeResourceTimingInitiatorInformation(newResource, newResource->initiatorType(), frame());
 
     return newResource;
 }
@@ -1154,7 +1256,7 @@ CachedResourceHandle<CachedResource> CachedResourceLoader::loadResource(CachedRe
     if (resource->allowsCaching())
         memoryCache.add(*resource);
 
-    m_resourceTimingInfo.storeResourceTimingInitiatorInformation(resource, resource->initiatorName(), frame());
+    m_resourceTimingInfo.storeResourceTimingInitiatorInformation(resource, resource->initiatorType(), frame());
 
     return resource;
 }
@@ -1486,20 +1588,19 @@ void CachedResourceLoader::loadDone(LoadCompletionType type, bool shouldPerformP
 // remove it from the map.
 void CachedResourceLoader::garbageCollectDocumentResources()
 {
-    LOG(ResourceLoading, "CachedResourceLoader %p garbageCollectDocumentResources", this);
-
     typedef Vector<String, 10> StringVector;
     StringVector resourcesToDelete;
 
     for (auto& resourceEntry : m_documentResources) {
         auto& resource = *resourceEntry.value;
-        LOG(ResourceLoading, "  cached resource %p - hasOneHandle %d", &resource, resource.hasOneHandle());
 
         if (resource.hasOneHandle() && !resource.loader() && !resource.isPreloaded()) {
             resourcesToDelete.append(resourceEntry.key);
             m_resourceTimingInfo.removeResourceTiming(resource);
         }
     }
+
+    LOG_WITH_STREAM(ResourceLoading, stream << "CachedResourceLoader " << this << " garbageCollectDocumentResources - deleting " << resourcesToDelete.size() << " resources");
 
     for (auto& resource : resourcesToDelete)
         m_documentResources.remove(resource);
@@ -1555,7 +1656,7 @@ ResourceErrorOr<CachedResourceHandle<CachedResource>> CachedResourceLoader::prel
         request.setCharset(m_document->charset());
 
     auto resource = requestResource(type, WTFMove(request), ForPreload::Yes);
-    if (resource && (!m_preloads || !m_preloads->contains(resource.value().get()))) {
+    if (resource && (!m_preloads || !m_preloads->contains(*resource.value().get()))) {
         auto resourceValue = resource.value();
         // Fonts need special treatment since just creating the resource doesn't trigger a load.
         if (type == CachedResource::Type::FontResource)
@@ -1563,8 +1664,8 @@ ResourceErrorOr<CachedResourceHandle<CachedResource>> CachedResourceLoader::prel
         resourceValue->increasePreloadCount();
 
         if (!m_preloads)
-            m_preloads = makeUnique<ListHashSet<CachedResource*>>();
-        m_preloads->add(resourceValue.get());
+            m_preloads = makeUnique<WeakListHashSet<CachedResource>>();
+        m_preloads->add(*resourceValue.get());
     }
     return resource;
 }
@@ -1574,9 +1675,9 @@ void CachedResourceLoader::warnUnusedPreloads()
     if (!m_preloads)
         return;
     for (const auto& resource : *m_preloads) {
-        if (resource && resource->isLinkPreload() && resource->preloadResult() == CachedResource::PreloadResult::PreloadNotReferenced && document()) {
+        if (resource.isLinkPreload() && resource.preloadResult() == CachedResource::PreloadResult::PreloadNotReferenced && document()) {
             document()->addConsoleMessage(MessageSource::Other, MessageLevel::Warning,
-                "The resource " + resource->url().string() +
+                "The resource " + resource.url().string() +
                 " was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it wasn't preloaded for nothing.");
         }
     }
@@ -1586,11 +1687,12 @@ bool CachedResourceLoader::isPreloaded(const String& urlString) const
 {
     const URL& url = m_document->completeURL(urlString);
 
-    if (m_preloads) {
-        for (auto& resource : *m_preloads) {
-            if (resource->url() == url)
-                return true;
-        }
+    if (!m_preloads)
+        return false;
+
+    for (auto& resource : *m_preloads) {
+        if (resource.url() == url)
+            return true;
     }
     return false;
 }
@@ -1600,19 +1702,18 @@ void CachedResourceLoader::clearPreloads(ClearPreloadsMode mode)
     if (!m_preloads)
         return;
 
-    std::unique_ptr<ListHashSet<CachedResource*>> remainingLinkPreloads;
-    for (auto* resource : *m_preloads) {
-        ASSERT(resource);
-        if (mode == ClearPreloadsMode::ClearSpeculativePreloads && resource->isLinkPreload()) {
+    std::unique_ptr<WeakListHashSet<CachedResource>> remainingLinkPreloads;
+    for (auto& resource : *m_preloads) {
+        if (mode == ClearPreloadsMode::ClearSpeculativePreloads && resource.isLinkPreload()) {
             if (!remainingLinkPreloads)
-                remainingLinkPreloads = makeUnique<ListHashSet<CachedResource*>>();
+                remainingLinkPreloads = makeUnique<WeakListHashSet<CachedResource>>();
             remainingLinkPreloads->add(resource);
             continue;
         }
-        resource->decreasePreloadCount();
-        bool deleted = resource->deleteIfPossible();
-        if (!deleted && resource->preloadResult() == CachedResource::PreloadResult::PreloadNotReferenced)
-            MemoryCache::singleton().remove(*resource);
+        resource.decreasePreloadCount();
+        bool deleted = resource.deleteIfPossible();
+        if (!deleted && resource.preloadResult() == CachedResource::PreloadResult::PreloadNotReferenced)
+            MemoryCache::singleton().remove(resource);
     }
     m_preloads = WTFMove(remainingLinkPreloads);
 }

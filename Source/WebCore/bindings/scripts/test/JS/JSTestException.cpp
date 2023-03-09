@@ -107,8 +107,8 @@ template<> void JSTestExceptionDOMConstructor::initializeProperties(VM& vm, JSDO
 
 static const HashTableValue JSTestExceptionPrototypeTableValues[] =
 {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsTestExceptionConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsTestException_name), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestExceptionConstructor, 0 } },
+    { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestException_name, 0 } },
 };
 
 const ClassInfo JSTestExceptionPrototype::s_info = { "TestException"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestExceptionPrototype) };
@@ -184,9 +184,9 @@ JSC::GCClient::IsoSubspace* JSTestException::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSTestException, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForTestException.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForTestException = WTFMove(space); },
+        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForTestException = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForTestException.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForTestException = WTFMove(space); }
+        [] (auto& spaces, auto&& space) { spaces.m_subspaceForTestException = std::forward<decltype(space)>(space); }
     );
 }
 
@@ -195,7 +195,7 @@ void JSTestException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSTestException*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, "url "_s + thisObject->scriptExecutionContext()->url().string());
     Base::analyzeHeap(cell, analyzer);
 }
 

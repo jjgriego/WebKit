@@ -27,7 +27,7 @@
 #import <WebKit/WKWebpagePreferences.h>
 
 #import "APICustomHeaderFields.h"
-#import "CaptivePortalModeObserver.h"
+#import "LockdownModeObserver.h"
 #import "WKUserContentControllerInternal.h"
 #import "WKWebpagePreferencesInternal.h"
 #import "WKWebsiteDataStoreInternal.h"
@@ -128,34 +128,34 @@ static WebCore::ModalContainerObservationPolicy coreModalContainerObservationPol
     return WebCore::ModalContainerObservationPolicy::Disabled;
 }
 
-class WebPagePreferencesCaptivePortalModeObserver final : public CaptivePortalModeObserver {
+class WebPagePreferencesLockdownModeObserver final : public LockdownModeObserver {
     WTF_MAKE_FAST_ALLOCATED;
 public:
-    WebPagePreferencesCaptivePortalModeObserver(id object)
+    WebPagePreferencesLockdownModeObserver(id object)
         : m_object(object)
     {
-        addCaptivePortalModeObserver(*this);
+        addLockdownModeObserver(*this);
     }
 
-    ~WebPagePreferencesCaptivePortalModeObserver()
+    ~WebPagePreferencesLockdownModeObserver()
     {
-        removeCaptivePortalModeObserver(*this);
+        removeLockdownModeObserver(*this);
     }
 
 private:
-    void willChangeCaptivePortalMode() final
+    void willChangeLockdownMode() final
     {
         if (auto object = m_object.get()) {
             [object willChangeValueForKey:@"_captivePortalModeEnabled"];
-            [object _willChangeCaptivePortalMode];
+            [object willChangeValueForKey:@"lockdownModeEnabled"];
         }
     }
 
-    void didChangeCaptivePortalMode() final
+    void didChangeLockdownMode() final
     {
         if (auto object = m_object.get()) {
             [object didChangeValueForKey:@"_captivePortalModeEnabled"];
-            [object _didChangeCaptivePortalMode];
+            [object didChangeValueForKey:@"lockdownModeEnabled"];
         }
     }
 
@@ -187,19 +187,33 @@ private:
         return nil;
 
     API::Object::constructInWrapper<API::WebsitePolicies>(self);
-    _captivePortalModeObserver = makeUnique<WebKit::WebPagePreferencesCaptivePortalModeObserver>(self);
+    _lockdownModeObserver = makeUnique<WebKit::WebPagePreferencesLockdownModeObserver>(self);
 
     return self;
 }
 
 - (void)_setContentBlockersEnabled:(BOOL)contentBlockersEnabled
 {
-    _websitePolicies->setContentBlockersEnabled(contentBlockersEnabled);
+    auto defaultEnablement = contentBlockersEnabled ? WebCore::ContentExtensionDefaultEnablement::Enabled : WebCore::ContentExtensionDefaultEnablement::Disabled;
+    _websitePolicies->setContentExtensionEnablement({ defaultEnablement, { } });
 }
 
 - (BOOL)_contentBlockersEnabled
 {
-    return _websitePolicies->contentBlockersEnabled();
+    // Note that this only reports default state, and ignores exceptions. This should be turned into a no-op and
+    // eventually removed, once no more internal clients rely on it.
+    return _websitePolicies->contentExtensionEnablement().first == WebCore::ContentExtensionDefaultEnablement::Enabled;
+}
+
+- (void)_setContentRuleListsEnabled:(BOOL)enabled exceptions:(NSSet<NSString *> *)identifiers
+{
+    HashSet<String> exceptions;
+    exceptions.reserveInitialCapacity(identifiers.count);
+    for (NSString *identifier in identifiers)
+        exceptions.add(identifier);
+
+    auto defaultEnablement = enabled ? WebCore::ContentExtensionDefaultEnablement::Enabled : WebCore::ContentExtensionDefaultEnablement::Disabled;
+    _websitePolicies->setContentExtensionEnablement({ defaultEnablement, WTFMove(exceptions) });
 }
 
 - (void)_setActiveContentRuleListActionPatterns:(NSDictionary<NSString *, NSSet<NSString *> *> *)patterns
@@ -477,20 +491,30 @@ static _WKWebsiteDeviceOrientationAndMotionAccessPolicy toWKWebsiteDeviceOrienta
     }
 }
 
-- (void)_setCaptivePortalModeEnabled:(BOOL)captivePortalModeEnabled
+- (void)_setCaptivePortalModeEnabled:(BOOL)enabled
 {
 #if PLATFORM(IOS_FAMILY)
-    // On iOS, the web browser entitlement is required to disable captive portal mode.
-    if (!captivePortalModeEnabled && !WTF::processHasEntitlement("com.apple.developer.web-browser"_s))
-        [NSException raise:NSInternalInconsistencyException format:@"The 'com.apple.developer.web-browser' restricted entitlement is required to disable captive portal mode"];
+    // On iOS, the web browser entitlement is required to disable Lockdown mode.
+    if (!enabled && !WTF::processHasEntitlement("com.apple.developer.web-browser"_s))
+        [NSException raise:NSInternalInconsistencyException format:@"The 'com.apple.developer.web-browser' restricted entitlement is required to disable Lockdown mode"];
 #endif
 
-    _websitePolicies->setCaptivePortalModeEnabled(!!captivePortalModeEnabled);
+    _websitePolicies->setLockdownModeEnabled(!!enabled);
 }
 
 - (BOOL)_captivePortalModeEnabled
 {
-    return _websitePolicies->captivePortalModeEnabled();
+    return _websitePolicies->lockdownModeEnabled();
+}
+
+- (void)_setAllowPrivacyProxy:(BOOL)allow
+{
+    _websitePolicies->setAllowPrivacyProxy(allow);
+}
+
+- (BOOL)_allowPrivacyProxy
+{
+    return _websitePolicies->allowPrivacyProxy();
 }
 
 - (_WKWebsiteColorSchemePreference)_colorSchemePreference
@@ -554,15 +578,115 @@ static _WKWebsiteDeviceOrientationAndMotionAccessPolicy toWKWebsiteDeviceOrienta
     return WebKit::modalContainerObservationPolicy(_websitePolicies->modalContainerObservationPolicy());
 }
 
-#if USE(APPLE_INTERNAL_SDK)
-#import <WebKitAdditions/WKWebpagePreferencesAdditions.mm>
+- (BOOL)isLockdownModeEnabled
+{
+#if ENABLE(LOCKDOWN_MODE_API)
+    return _websitePolicies->lockdownModeEnabled();
 #else
-- (void)_willChangeCaptivePortalMode
-{
-}
-- (void)_didChangeCaptivePortalMode
-{
-}
+    return NO;
 #endif
+}
+
+- (void)setLockdownModeEnabled:(BOOL)lockdownModeEnabled
+{
+#if ENABLE(LOCKDOWN_MODE_API)
+#if PLATFORM(IOS_FAMILY)
+    // On iOS, the web browser entitlement is required to disable lockdown mode.
+    if (!lockdownModeEnabled && !WTF::processHasEntitlement("com.apple.developer.web-browser"_s))
+        [NSException raise:NSInternalInconsistencyException format:@"The 'com.apple.developer.web-browser' restricted entitlement is required to disable lockdown mode"];
+#endif
+
+    _websitePolicies->setLockdownModeEnabled(!!lockdownModeEnabled);
+#endif
+}
+
+- (BOOL)_networkConnectionIntegrityEnabled
+{
+    return _websitePolicies->networkConnectionIntegrityPolicy().containsAll({
+        WebCore::NetworkConnectionIntegrity::Enabled,
+        WebCore::NetworkConnectionIntegrity::EnhancedTelemetry,
+        WebCore::NetworkConnectionIntegrity::RequestValidation,
+        WebCore::NetworkConnectionIntegrity::SanitizeLookalikeCharacters,
+    });
+}
+
+- (void)_setNetworkConnectionIntegrityEnabled:(BOOL)enabled
+{
+    auto webCorePolicy = _websitePolicies->networkConnectionIntegrityPolicy();
+    webCorePolicy.set(WebCore::NetworkConnectionIntegrity::Enabled, enabled);
+    webCorePolicy.set(WebCore::NetworkConnectionIntegrity::EnhancedTelemetry, enabled);
+    webCorePolicy.set(WebCore::NetworkConnectionIntegrity::RequestValidation, enabled);
+    webCorePolicy.set(WebCore::NetworkConnectionIntegrity::SanitizeLookalikeCharacters, enabled);
+    _websitePolicies->setNetworkConnectionIntegrityPolicy(webCorePolicy);
+}
+
+- (_WKWebsiteNetworkConnectionIntegrityPolicy)_networkConnectionIntegrityPolicy
+{
+    _WKWebsiteNetworkConnectionIntegrityPolicy policy = _WKWebsiteNetworkConnectionIntegrityPolicyNone;
+    auto webCorePolicy = _websitePolicies->networkConnectionIntegrityPolicy();
+
+    if (webCorePolicy.contains(WebCore::NetworkConnectionIntegrity::Enabled))
+        policy |= _WKWebsiteNetworkConnectionIntegrityPolicyEnabled;
+
+    if (webCorePolicy.contains(WebCore::NetworkConnectionIntegrity::HTTPSFirst))
+        policy |= _WKWebsiteNetworkConnectionIntegrityPolicyHTTPSFirst;
+
+    if (webCorePolicy.contains(WebCore::NetworkConnectionIntegrity::HTTPSOnly))
+        policy |= _WKWebsiteNetworkConnectionIntegrityPolicyHTTPSOnly;
+
+    if (webCorePolicy.contains(WebCore::NetworkConnectionIntegrity::HTTPSOnlyExplicitlyBypassedForDomain))
+        policy |= _WKWebsiteNetworkConnectionIntegrityPolicyHTTPSOnlyExplicitlyBypassedForDomain;
+
+    if (webCorePolicy.contains(WebCore::NetworkConnectionIntegrity::FailClosed))
+        policy |= _WKWebsiteNetworkConnectionIntegrityPolicyFailClosed;
+
+    if (webCorePolicy.contains(WebCore::NetworkConnectionIntegrity::WebSearchContent))
+        policy |= _WKWebsiteNetworkConnectionIntegrityPolicyWebSearchContent;
+
+    if (webCorePolicy.contains(WebCore::NetworkConnectionIntegrity::EnhancedTelemetry))
+        policy |= _WKWebsiteNetworkConnectionIntegrityPolicyEnhancedTelemetry;
+
+    if (webCorePolicy.contains(WebCore::NetworkConnectionIntegrity::RequestValidation))
+        policy |= _WKWebsiteNetworkConnectionIntegrityPolicyRequestValidation;
+
+    if (webCorePolicy.contains(WebCore::NetworkConnectionIntegrity::SanitizeLookalikeCharacters))
+        policy |= _WKWebsiteNetworkConnectionIntegrityPolicySanitizeLookalikeCharacters;
+
+    return policy;
+}
+
+- (void)_setNetworkConnectionIntegrityPolicy:(_WKWebsiteNetworkConnectionIntegrityPolicy)networkConnectionIntegrityPolicy
+{
+    OptionSet<WebCore::NetworkConnectionIntegrity> webCorePolicy;
+
+    if (networkConnectionIntegrityPolicy & _WKWebsiteNetworkConnectionIntegrityPolicyEnabled)
+        webCorePolicy.add(WebCore::NetworkConnectionIntegrity::Enabled);
+
+    if (networkConnectionIntegrityPolicy & _WKWebsiteNetworkConnectionIntegrityPolicyHTTPSFirst)
+        webCorePolicy.add(WebCore::NetworkConnectionIntegrity::HTTPSFirst);
+
+    if (networkConnectionIntegrityPolicy & _WKWebsiteNetworkConnectionIntegrityPolicyHTTPSOnly)
+        webCorePolicy.add(WebCore::NetworkConnectionIntegrity::HTTPSOnly);
+
+    if (networkConnectionIntegrityPolicy & _WKWebsiteNetworkConnectionIntegrityPolicyHTTPSOnlyExplicitlyBypassedForDomain)
+        webCorePolicy.add(WebCore::NetworkConnectionIntegrity::HTTPSOnlyExplicitlyBypassedForDomain);
+
+    if (networkConnectionIntegrityPolicy & _WKWebsiteNetworkConnectionIntegrityPolicyFailClosed)
+        webCorePolicy.add(WebCore::NetworkConnectionIntegrity::FailClosed);
+
+    if (networkConnectionIntegrityPolicy & _WKWebsiteNetworkConnectionIntegrityPolicyWebSearchContent)
+        webCorePolicy.add(WebCore::NetworkConnectionIntegrity::WebSearchContent);
+
+    if (networkConnectionIntegrityPolicy & _WKWebsiteNetworkConnectionIntegrityPolicyEnhancedTelemetry)
+        webCorePolicy.add(WebCore::NetworkConnectionIntegrity::EnhancedTelemetry);
+
+    if (networkConnectionIntegrityPolicy & _WKWebsiteNetworkConnectionIntegrityPolicyRequestValidation)
+        webCorePolicy.add(WebCore::NetworkConnectionIntegrity::RequestValidation);
+
+    if (networkConnectionIntegrityPolicy & _WKWebsiteNetworkConnectionIntegrityPolicySanitizeLookalikeCharacters)
+        webCorePolicy.add(WebCore::NetworkConnectionIntegrity::SanitizeLookalikeCharacters);
+
+    _websitePolicies->setNetworkConnectionIntegrityPolicy(webCorePolicy);
+}
 
 @end

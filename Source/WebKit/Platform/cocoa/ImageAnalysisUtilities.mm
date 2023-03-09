@@ -26,7 +26,7 @@
 #import "config.h"
 #import "ImageAnalysisUtilities.h"
 
-#if ENABLE(IMAGE_ANALYSIS)
+#if ENABLE(IMAGE_ANALYSIS) || HAVE(VISION)
 
 #import "CocoaImage.h"
 #import "Logging.h"
@@ -41,9 +41,12 @@
 #endif
 
 #import <pal/cocoa/VisionKitCoreSoftLink.h>
+#import <pal/cocoa/VisionSoftLink.h>
 
 namespace WebKit {
 using namespace WebCore;
+
+#if ENABLE(IMAGE_ANALYSIS)
 
 RetainPtr<CocoaImageAnalyzer> createImageAnalyzer()
 {
@@ -285,46 +288,55 @@ void requestVisualTranslation(CocoaImageAnalyzer *analyzer, NSURL *imageURL, con
     }).get()];
 }
 
-void requestBackgroundRemoval(CGImageRef image, CompletionHandler<void(CGImageRef, CGRect normalizedCropRect)>&& completion)
+void requestBackgroundRemoval(CGImageRef image, CompletionHandler<void(CGImageRef)>&& completion)
 {
     if (!PAL::canLoad_VisionKitCore_vk_cgImageRemoveBackground()) {
-        completion(nullptr, CGRectZero);
+        completion(nullptr);
         return;
     }
 
     // FIXME (rdar://88834023): We should find a way to avoid this extra transcoding.
     auto tiffData = transcode(image, (__bridge CFStringRef)UTTypeTIFF.identifier);
     if (![tiffData length]) {
-        completion(nullptr, CGRectZero);
+        completion(nullptr);
         return;
     }
 
     auto transcodedImageSource = adoptCF(CGImageSourceCreateWithData((__bridge CFDataRef)tiffData.get(), nullptr));
     auto transcodedImage = adoptCF(CGImageSourceCreateImageAtIndex(transcodedImageSource.get(), 0, nullptr));
     if (!transcodedImage) {
-        completion(nullptr, CGRectZero);
+        completion(nullptr);
         return;
     }
 
     auto sourceImageSize = CGSizeMake(CGImageGetWidth(transcodedImage.get()), CGImageGetHeight(transcodedImage.get()));
     if (!sourceImageSize.width || !sourceImageSize.height) {
-        completion(nullptr, CGRectZero);
+        completion(nullptr);
         return;
     }
 
-    PAL::softLinkVisionKitCorevk_cgImageRemoveBackground(transcodedImage.get(), YES, makeBlockPtr([sourceImageSize, completion = WTFMove(completion)](CGImageRef result, CGRect cropRect, NSError *error) mutable {
+    auto startTime = MonotonicTime::now();
+    auto completionBlock = makeBlockPtr([completion = WTFMove(completion), startTime](CGImageRef result, NSError *error) mutable {
         if (error)
             RELEASE_LOG(ImageAnalysis, "Remove background failed with error: %@", error);
 
-        callOnMainRunLoop([sourceImageSize, cropRect, protectedResult = RetainPtr { result }, completion = WTFMove(completion)]() mutable {
-            FloatRect normalizedCropRect = cropRect;
-            normalizedCropRect.scale(1 / sourceImageSize.width, 1 / sourceImageSize.height);
-            completion(protectedResult.get(), normalizedCropRect);
+        callOnMainRunLoop([protectedResult = RetainPtr { result }, completion = WTFMove(completion), startTime]() mutable {
+            RELEASE_LOG(ImageAnalysis, "Remove background finished in %.0f ms (found subject? %d)", (MonotonicTime::now() - startTime).milliseconds(), !!protectedResult);
+            completion(protectedResult.get());
         });
-    }).get());
+    });
+
+    if (PAL::canLoad_VisionKitCore_vk_cgImageRemoveBackgroundWithDownsizing()) {
+        PAL::softLinkVisionKitCorevk_cgImageRemoveBackgroundWithDownsizing(transcodedImage.get(), YES, YES, completionBlock.get());
+        return;
+    }
+
+    PAL::softLinkVisionKitCorevk_cgImageRemoveBackground(transcodedImage.get(), YES, [completionBlock = WTFMove(completionBlock)](CGImageRef image, CGRect, NSError *error) mutable {
+        completionBlock(image, error);
+    });
 }
 
-void setUpAdditionalImageAnalysisBehaviors(PlatformImageAnalysisObject *interactionOrView)
+void prepareImageAnalysisForOverlayView(PlatformImageAnalysisObject *interactionOrView)
 {
     interactionOrView.activeInteractionTypes = VKImageAnalysisInteractionTypeTextSelection | VKImageAnalysisInteractionTypeDataDetectors;
     interactionOrView.wantsAutomaticContentsRectCalculation = NO;
@@ -361,6 +373,63 @@ std::pair<RetainPtr<NSData>, RetainPtr<CFStringRef>> imageDataForRemoveBackgroun
 
 #endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
 
+#endif // ENABLE(IMAGE_ANALYSIS)
+
+#if HAVE(VISION)
+
+static RetainPtr<CGImageRef> imageFilledWithWhiteBackground(CGImageRef image)
+{
+    CGRect imageRect = CGRectMake(0, 0, CGImageGetWidth(image), CGImageGetHeight(image));
+
+    RetainPtr colorSpace = CGImageGetColorSpace(image);
+    if (!CGColorSpaceSupportsOutput(colorSpace.get()))
+        colorSpace = adoptCF(CGColorSpaceCreateWithName(kCGColorSpaceSRGB));
+
+    auto context = adoptCF(CGBitmapContextCreate(nil, CGRectGetWidth(imageRect), CGRectGetHeight(imageRect), 8, 4 * CGRectGetWidth(imageRect), colorSpace.get(), kCGImageAlphaPremultipliedLast));
+    CGContextSetFillColorWithColor(context.get(), cachedCGColor(WebCore::Color::white).get());
+    CGContextFillRect(context.get(), imageRect);
+    CGContextDrawImage(context.get(), imageRect, image);
+
+    return adoptCF(CGBitmapContextCreateImage(context.get()));
+}
+
+void requestPayloadForQRCode(CGImageRef image, CompletionHandler<void(NSString *)>&& completion)
+{
+    if (!image || !PAL::isVisionFrameworkAvailable())
+        return completion(nil);
+
+    auto adjustedImage = imageFilledWithWhiteBackground(image);
+
+    auto completionHandler = makeBlockPtr([completion = WTFMove(completion)](VNRequest *request, NSError *error) mutable {
+        if (error) {
+            completion(nil);
+            return;
+        }
+
+        for (VNBarcodeObservation *result in request.results) {
+            if (![result.symbology isEqualToString:VNBarcodeSymbologyQR])
+                continue;
+
+            completion(result.payloadStringValue);
+            return;
+        }
+
+        completion(nil);
+    });
+
+    auto request = adoptNS([PAL::allocVNDetectBarcodesRequestInstance() initWithCompletionHandler:completionHandler.get()]);
+    [request setSymbologies:@[ VNBarcodeSymbologyQR ]];
+
+    NSError *error = nil;
+    auto handler = adoptNS([PAL::allocVNImageRequestHandlerInstance() initWithCGImage:adjustedImage.get() options:@{ }]);
+    [handler performRequests:@[ request.get() ] error:&error];
+
+    if (error)
+        completionHandler(nil, error);
+}
+
+#endif // HAVE(VISION)
+
 } // namespace WebKit
 
-#endif // ENABLE(IMAGE_ANALYSIS)
+#endif // ENABLE(IMAGE_ANALYSIS) || HAVE(VISION)

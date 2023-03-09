@@ -119,9 +119,7 @@ JSValue ObjcField::valueFromInstance(JSGlobalObject* lexicalGlobalObject, const 
         throwError(lexicalGlobalObject, scope, [localException reason]);
     }
 
-    // Work around problem in some versions of GCC where result gets marked volatile and
-    // it can't handle copying from a volatile to non-volatile.
-    return const_cast<JSValue&>(result);
+    return result;
 }
 
 static id convertValueToObjcObject(JSGlobalObject* lexicalGlobalObject, JSValue value)
@@ -235,7 +233,7 @@ void ObjcFallbackObjectImp::finishCreation(JSGlobalObject* globalObject)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     putDirect(vm, vm.propertyNames->toPrimitiveSymbol,
-        JSFunction::create(vm, globalObject, 0, "[Symbol.toPrimitive]"_s, convertObjCFallbackObjectToPrimitive),
+        JSFunction::create(vm, globalObject, 0, "[Symbol.toPrimitive]"_s, convertObjCFallbackObjectToPrimitive, ImplementationVisibility::Public),
         static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 
@@ -299,6 +297,7 @@ CallData ObjcFallbackObjectImp::getCallData(JSCell* cell)
     if ([targetObject respondsToSelector:@selector(invokeUndefinedMethodFromWebScript:withArguments:)]) {
         callData.type = CallData::Type::Native;
         callData.native.function = callObjCFallbackObject;
+        callData.native.isBoundFunction = false;
     }
 
     return callData;

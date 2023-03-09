@@ -31,7 +31,7 @@
 
 WI.CSSKeywordCompletions = {};
 
-WI.CSSKeywordCompletions.forPartialPropertyName = function(text, {caretPosition, allowEmptyPrefix, useFuzzyMatching} = {})
+WI.CSSKeywordCompletions.forPartialPropertyName = function(text, {caretPosition, allowEmptyPrefix} = {})
 {
     allowEmptyPrefix ??= false;
 
@@ -42,16 +42,10 @@ WI.CSSKeywordCompletions.forPartialPropertyName = function(text, {caretPosition,
     if (!text.length && allowEmptyPrefix)
         return {prefix: text, completions: WI.cssManager.propertyNameCompletions.values};
 
-    let completions;
-    if (useFuzzyMatching)
-        completions = WI.cssManager.propertyNameCompletions.executeQuery(text);
-    else
-        completions = WI.cssManager.propertyNameCompletions.startsWith(text);
-
-    return {prefix: text, completions};
+    return {prefix: text, completions: WI.cssManager.propertyNameCompletions.executeQuery(text)};
 };
 
-WI.CSSKeywordCompletions.forPartialPropertyValue = function(text, propertyName, {caretPosition, additionalFunctionValueCompletionsProvider, useFuzzyMatching} = {})
+WI.CSSKeywordCompletions.forPartialPropertyValue = function(text, propertyName, {caretPosition, additionalFunctionValueCompletionsProvider} = {})
 {
     caretPosition ??= text.length;
 
@@ -130,13 +124,7 @@ WI.CSSKeywordCompletions.forPartialPropertyValue = function(text, propertyName, 
     else
         valueCompletions = WI.CSSKeywordCompletions.forProperty(propertyName);
 
-    let completions;
-    if (useFuzzyMatching)
-        completions = valueCompletions.executeQuery(currentTokenValue);
-    else
-        completions = valueCompletions.startsWith(currentTokenValue);
-
-    return {prefix: currentTokenValue, completions};
+    return {prefix: currentTokenValue, completions: valueCompletions.executeQuery(currentTokenValue)};
 };
 
 WI.CSSKeywordCompletions.forProperty = function(propertyName)
@@ -353,6 +341,9 @@ WI.CSSKeywordCompletions.InheritedProperties = new Set([
     "font-stretch",
     "font-style",
     "font-synthesis",
+    "font-synthesis-weight",
+    "font-synthesis-style",
+    "font-synthesis-small-caps",
     "font-variant",
     "font-variant-alternates",
     "font-variant-caps",
@@ -613,7 +604,16 @@ WI.CSSKeywordCompletions._propertyKeywordMap = {
         "normal", "bold", "bolder", "lighter", "100", "200", "300", "400", "500", "600", "700", "800", "900"
     ],
     "font-synthesis": [
-        "none", "weight", "style"
+        "none", "weight", "style", "small-caps"
+    ],
+    "font-synthesis-weight": [
+        "none", "auto"
+    ],
+    "font-synthesis-style": [
+        "none", "auto"
+    ],
+    "font-synthesis-small-caps": [
+        "none", "auto"
     ],
     "font-style": [
         "italic", "oblique", "normal"
@@ -625,7 +625,7 @@ WI.CSSKeywordCompletions._propertyKeywordMap = {
         "caption", "icon", "menu", "message-box", "small-caption", "-webkit-mini-control", "-webkit-small-control",
         "-webkit-control", "status-bar", "italic", "oblique", "small-caps", "normal", "bold", "bolder", "lighter",
         "100", "200", "300", "400", "500", "600", "700", "800", "900", "xx-small", "x-small", "small", "medium",
-        "large", "x-large", "xx-large", "-webkit-xxx-large", "smaller", "larger", "serif", "sans-serif", "cursive",
+        "large", "x-large", "xx-large", "xxx-large", "smaller", "larger", "serif", "sans-serif", "cursive",
         "fantasy", "monospace", "-webkit-body", "-webkit-pictograph", "-apple-system",
         "-apple-system-headline", "-apple-system-body", "-apple-system-subheadline", "-apple-system-footnote",
         "-apple-system-caption1", "-apple-system-caption2", "-apple-system-short-headline", "-apple-system-short-body",
@@ -743,7 +743,7 @@ WI.CSSKeywordCompletions._propertyKeywordMap = {
         "none", "hidden", "inset", "groove", "ridge", "outset", "dotted", "dashed", "solid", "double"
     ],
     "font-size": [
-        "xx-small", "x-small", "small", "medium", "large", "x-large", "xx-large", "-webkit-xxx-large", "smaller", "larger"
+        "xx-small", "x-small", "small", "medium", "large", "x-large", "xx-large", "xxx-large", "smaller", "larger"
     ],
     "font-variant": [
         "small-caps", "normal"

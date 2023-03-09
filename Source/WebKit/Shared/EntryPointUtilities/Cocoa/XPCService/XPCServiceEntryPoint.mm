@@ -127,6 +127,12 @@ bool XPCServiceInitializerDelegate::getExtraInitializationData(HashMap<String, S
         extraInitializationData.add("registrable-domain"_s, WTFMove(registrableDomain));
 #endif
 
+#if ENABLE(WEBCONTENT_CRASH_TESTING)
+    auto isWebcontentCrashy = String::fromLatin1(xpc_dictionary_get_string(extraDataInitializationDataObject, "is-webcontent-crashy"));
+    if (!isWebcontentCrashy.isEmpty())
+        extraInitializationData.add("is-webcontent-crashy"_s, WTFMove(isWebcontentCrashy));
+#endif
+
     auto isPrewarmedProcess = String::fromLatin1(xpc_dictionary_get_string(extraDataInitializationDataObject, "is-prewarmed"));
     if (!isPrewarmedProcess.isEmpty())
         extraInitializationData.add("is-prewarmed"_s, isPrewarmedProcess);
@@ -154,10 +160,11 @@ bool XPCServiceInitializerDelegate::isClientSandboxed()
     return connectedProcessIsSandboxed(m_connection.get());
 }
 
-#if PLATFORM(MAC)
+#if !USE(RUNNINGBOARD)
 void setOSTransaction(OSObjectPtr<os_transaction_t>&& transaction)
 {
     static NeverDestroyed<OSObjectPtr<os_transaction_t>> globalTransaction;
+    static NeverDestroyed<OSObjectPtr<dispatch_source_t>> globalSource;
 
     // Because we don't use RunningBoard on macOS, we leak an OS transaction to control the lifetime of our XPC
     // services ourselves. However, one of the side effects of leaking this transaction is that the default SIGTERM
@@ -167,23 +174,20 @@ void setOSTransaction(OSObjectPtr<os_transaction_t>&& transaction)
     // control our lifetime via process assertions instead of leaking this OS transaction.
     static dispatch_once_t flag;
     dispatch_once(&flag, ^{
-        auto sigTermSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0, dispatch_get_main_queue());
-        dispatch_source_set_event_handler(sigTermSource, ^{
+        globalSource.get() = adoptOSObject(dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0, dispatch_get_main_queue()));
+        dispatch_source_set_event_handler(globalSource.get().get(), ^{
             exit(0);
         });
-        dispatch_resume(sigTermSource);
+        dispatch_resume(globalSource.get().get());
     });
 
     globalTransaction.get() = WTFMove(transaction);
 }
 #endif
 
-void XPCServiceExit(OSObjectPtr<xpc_object_t>&& priorityBoostMessage)
+void XPCServiceExit()
 {
-    // Make sure to destroy the priority boost message to avoid leaking a transaction.
-    priorityBoostMessage = nullptr;
-
-#if PLATFORM(MAC)
+#if !USE(RUNNINGBOARD)
     setOSTransaction(nullptr);
 #endif
 

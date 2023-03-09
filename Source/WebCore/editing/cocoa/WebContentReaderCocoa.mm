@@ -31,6 +31,7 @@
 #import "BlobURL.h"
 #import "CachedResourceLoader.h"
 #import "DOMURL.h"
+#import "DeprecatedGlobalSettings.h"
 #import "Document.h"
 #import "DocumentFragment.h"
 #import "DocumentLoader.h"
@@ -56,11 +57,10 @@
 #import "Quirks.h"
 #import "Range.h"
 #import "RenderView.h"
-#import "RuntimeEnabledFeatures.h"
 #import "SerializedAttachmentData.h"
 #import "Settings.h"
 #import "SocketProvider.h"
-#import "TypedElementDescendantIterator.h"
+#import "TypedElementDescendantIteratorInlines.h"
 #import "UTIUtilities.h"
 #import "WebArchiveResourceFromNSAttributedString.h"
 #import "WebArchiveResourceWebResourceHandler.h"
@@ -115,7 +115,7 @@ static NSDictionary *attributesForAttributedStringConversion()
         nil]);
 
 #if ENABLE(ATTACHMENT_ELEMENT)
-    if (!RuntimeEnabledFeatures::sharedFeatures().attachmentElementEnabled())
+    if (!DeprecatedGlobalSettings::attachmentElementEnabled())
         [excludedElements addObject:@"object"];
 #endif
 
@@ -147,7 +147,7 @@ static FragmentAndResources createFragment(Frame& frame, NSAttributedString *str
     NSString *fragmentString = [string _htmlDocumentFragmentString:NSMakeRange(0, [string length]) documentAttributes:attributesForAttributedStringConversion() subresources:&subresources];
     auto fragment = DocumentFragment::create(document);
     auto dummyBodyToForceInBodyInsertionMode = HTMLBodyElement::create(document);
-    fragment->parseHTML(fragmentString, dummyBodyToForceInBodyInsertionMode.ptr(), DisallowScriptingAndPluginContent);
+    fragment->parseHTML(fragmentString, dummyBodyToForceInBodyInsertionMode.ptr(), { });
 
     result.fragment = WTFMove(fragment);
     for (WebArchiveResourceFromNSAttributedString *resource in subresources)
@@ -208,7 +208,7 @@ static bool shouldReplaceSubresourceURLWithBlobDuringSanitization(const URL& url
 static bool shouldReplaceRichContentWithAttachments()
 {
 #if ENABLE(ATTACHMENT_ELEMENT)
-    return RuntimeEnabledFeatures::sharedFeatures().attachmentElementEnabled();
+    return DeprecatedGlobalSettings::attachmentElementEnabled();
 #else
     return false;
 #endif
@@ -288,7 +288,7 @@ static void replaceRichContentWithAttachments(Frame& frame, DocumentFragment& fr
         Ref<Element> originalElement;
     };
 
-    ASSERT(RuntimeEnabledFeatures::sharedFeatures().attachmentElementEnabled());
+    ASSERT(DeprecatedGlobalSettings::attachmentElementEnabled());
     if (subresources.isEmpty())
         return;
 
@@ -397,7 +397,7 @@ RefPtr<DocumentFragment> createFragmentAndAddResources(Frame& frame, NSAttribute
     if (!fragmentAndResources.fragment)
         return nullptr;
 
-    if (!RuntimeEnabledFeatures::sharedFeatures().customPasteboardDataEnabled()) {
+    if (!DeprecatedGlobalSettings::customPasteboardDataEnabled()) {
         if (DocumentLoader* loader = frame.loader().documentLoader()) {
             for (auto& resource : fragmentAndResources.resources)
                 loader->addArchiveResource(resource.copyRef());
@@ -447,9 +447,13 @@ static std::optional<MarkupAndArchive> extractMarkupAndArchive(SharedBuffer& buf
 static String sanitizeMarkupWithArchive(Frame& frame, Document& destinationDocument, MarkupAndArchive& markupAndArchive, MSOListQuirks msoListQuirks, const std::function<bool(const String)>& canShowMIMETypeAsHTML)
 {
     auto page = createPageForSanitizingWebContent();
-    Document* stagingDocument = page->mainFrame().document();
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(page->mainFrame());
+    if (!localMainFrame)
+        return String();
+
+    Document* stagingDocument = localMainFrame->document();
     ASSERT(stagingDocument);
-    auto fragment = createFragmentFromMarkup(*stagingDocument, markupAndArchive.markup, markupAndArchive.mainResource->url().string(), DisallowScriptingAndPluginContent);
+    auto fragment = createFragmentFromMarkup(*stagingDocument, markupAndArchive.markup, markupAndArchive.mainResource->url().string(), { });
 
     if (shouldReplaceRichContentWithAttachments()) {
         replaceRichContentWithAttachments(frame, fragment, markupAndArchive.archive->subresources());
@@ -508,22 +512,22 @@ bool WebContentReader::readWebArchive(SharedBuffer& buffer)
     if (!result)
         return false;
     
-    if (!RuntimeEnabledFeatures::sharedFeatures().customPasteboardDataEnabled()) {
-        fragment = createFragmentFromMarkup(*frame.document(), result->markup, result->mainResource->url().string(), DisallowScriptingAndPluginContent);
+    if (!DeprecatedGlobalSettings::customPasteboardDataEnabled()) {
+        fragment = createFragmentFromMarkup(*frame.document(), result->markup, result->mainResource->url().string(), { });
         if (DocumentLoader* loader = frame.loader().documentLoader())
             loader->addAllArchiveResources(result->archive.get());
         return true;
     }
 
     if (!shouldSanitize()) {
-        fragment = createFragmentFromMarkup(*frame.document(), result->markup, result->mainResource->url().string(), DisallowScriptingAndPluginContent);
+        fragment = createFragmentFromMarkup(*frame.document(), result->markup, result->mainResource->url().string(), { });
         return true;
     }
 
     String sanitizedMarkup = sanitizeMarkupWithArchive(frame, *frame.document(), *result, msoListQuirksForMarkup(), [&] (const String& type) {
         return frame.loader().client().canShowMIMETypeAsHTML(type);
     });
-    fragment = createFragmentFromMarkup(*frame.document(), sanitizedMarkup, aboutBlankURL().string(), DisallowScriptingAndPluginContent);
+    fragment = createFragmentFromMarkup(*frame.document(), sanitizedMarkup, aboutBlankURL().string(), { });
 
     if (!fragment)
         return false;
@@ -580,16 +584,16 @@ bool WebContentReader::readHTML(const String& string)
         return false;
 
     String markup;
-    if (RuntimeEnabledFeatures::sharedFeatures().customPasteboardDataEnabled() && shouldSanitize()) {
+    if (DeprecatedGlobalSettings::customPasteboardDataEnabled() && shouldSanitize()) {
         markup = sanitizeMarkup(stringOmittingMicrosoftPrefix, msoListQuirksForMarkup(), WTF::Function<void (DocumentFragment&)> { [] (DocumentFragment& fragment) {
-            removeSubresourceURLAttributes(fragment, [] (const URL& url) {
-                return shouldReplaceSubresourceURLWithBlobDuringSanitization(url);
+            removeSubresourceURLAttributes(fragment, [](auto& url) {
+                return url.isLocalFile();
             });
         } });
     } else
         markup = stringOmittingMicrosoftPrefix;
 
-    addFragment(createFragmentFromMarkup(document, markup, emptyString(), DisallowScriptingAndPluginContent));
+    addFragment(createFragmentFromMarkup(document, markup, emptyString(), { }));
     return true;
 }
 
@@ -601,8 +605,8 @@ bool WebContentMarkupReader::readHTML(const String& string)
     String rawHTML = stripMicrosoftPrefix(string);
     if (shouldSanitize()) {
         markup = sanitizeMarkup(rawHTML, msoListQuirksForMarkup(), WTF::Function<void (DocumentFragment&)> { [] (DocumentFragment& fragment) {
-            removeSubresourceURLAttributes(fragment, [] (const URL& url) {
-                return shouldReplaceSubresourceURLWithBlobDuringSanitization(url);
+            removeSubresourceURLAttributes(fragment, [](auto& url) {
+                return url.isLocalFile();
             });
         } });
     } else
@@ -669,7 +673,11 @@ bool WebContentReader::readPlainText(const String& text)
     if (!allowPlainText)
         return false;
 
-    addFragment(createFragmentFromText(context, [text precomposedStringWithCanonicalMapping]));
+    String precomposedString = [text precomposedStringWithCanonicalMapping];
+    if (auto* page = frame.page())
+        precomposedString = page->sanitizeLookalikeCharacters(precomposedString, LookalikeCharacterSanitizationTrigger::Paste);
+
+    addFragment(createFragmentFromText(context, precomposedString));
 
     madeFragmentFromPlainText = true;
     return true;
@@ -797,7 +805,7 @@ bool WebContentReader::readFilePath(const String& path, PresentationSize preferr
         fragment = document.createDocumentFragment();
 
 #if ENABLE(ATTACHMENT_ELEMENT)
-    if (RuntimeEnabledFeatures::sharedFeatures().attachmentElementEnabled())
+    if (DeprecatedGlobalSettings::attachmentElementEnabled())
         fragment->appendChild(attachmentForFilePath(frame, path, preferredPresentationSize, contentType));
 #endif
 
@@ -820,11 +828,17 @@ bool WebContentReader::readURL(const URL& url, const String& title)
         return false;
 #endif // PLATFORM(IOS_FAMILY)
 
+    auto sanitizedURLString = [&] {
+        if (auto* page = frame.page())
+            return page->sanitizeLookalikeCharacters(url, LookalikeCharacterSanitizationTrigger::Paste);
+        return url;
+    }().string();
+
     Ref document = *frame.document();
     auto anchor = HTMLAnchorElement::create(document.get());
-    anchor->setAttributeWithoutSynchronization(HTMLNames::hrefAttr, AtomString { url.string() });
+    anchor->setAttributeWithoutSynchronization(HTMLNames::hrefAttr, AtomString { sanitizedURLString });
 
-    NSString *linkText = title.isEmpty() ? [(NSURL *)url absoluteString] : (NSString *)title;
+    NSString *linkText = title.isEmpty() ? sanitizedURLString : title;
     anchor->appendChild(document->createTextNode([linkText precomposedStringWithCanonicalMapping]));
 
     auto newFragment = document->createDocumentFragment();

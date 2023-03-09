@@ -32,9 +32,14 @@
 #include <wtf/RefCounted.h>
 #include <wtf/WeakPtr.h>
 
+namespace WTF {
+class TextStream;
+}
+
 namespace WebCore {
 
 class Element;
+class WeakPtrImplWithEventTargetData;
 
 class ResizeObservation : public RefCounted<ResizeObservation> {
     WTF_MAKE_FAST_ALLOCATED;
@@ -51,6 +56,7 @@ public:
 
     std::optional<BoxSizes> elementSizeChanged() const;
     void updateObservationSize(const BoxSizes&);
+    void resetObservationSize();
 
     FloatRect computeContentRect() const;
     FloatSize borderBoxSize() const;
@@ -64,12 +70,14 @@ public:
 private:
     ResizeObservation(Element&, ResizeObserverBoxOptions);
 
-    BoxSizes computeObservedSizes() const;
+    std::optional<BoxSizes> computeObservedSizes() const;
     LayoutPoint computeTargetLocation() const;
 
-    WeakPtr<Element> m_target;
+    WeakPtr<Element, WeakPtrImplWithEventTargetData> m_target;
     BoxSizes m_lastObservationSizes;
     ResizeObserverBoxOptions m_observedBox;
 };
+
+WTF::TextStream& operator<<(WTF::TextStream&, const ResizeObservation&);
 
 } // namespace WebCore

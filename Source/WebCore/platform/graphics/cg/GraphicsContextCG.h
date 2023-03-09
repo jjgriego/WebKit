@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,16 +34,18 @@ namespace WebCore {
 
 class WEBCORE_EXPORT GraphicsContextCG : public GraphicsContext {
 public:
-    GraphicsContextCG(CGContextRef);
-
-#if PLATFORM(WIN)
-    GraphicsContextCG(HDC, bool hasAlpha = false); // FIXME: To be removed.
-#endif
+    enum CGContextSource {
+        Unknown,
+        CGContextFromCALayer
+    };
+    GraphicsContextCG(CGContextRef, CGContextSource = CGContextSource::Unknown);
 
     ~GraphicsContextCG();
 
     bool hasPlatformContext() const final;
     CGContextRef platformContext() const final;
+
+    const DestinationColorSpace& colorSpace() const final;
 
     void save() final;
     void restore() final;
@@ -74,10 +76,8 @@ public:
     void fillEllipse(const FloatRect& ellipse) final;
     void strokeEllipse(const FloatRect& ellipse) final;
 
-    void setIsCALayerContext(bool) final;
     bool isCALayerContext() const final;
 
-    void setIsAcceleratedContext(bool) final;
     RenderingMode renderingMode() const final;
 
     void clip(const FloatRect&) final;
@@ -94,8 +94,8 @@ public:
     void setLineJoin(LineJoin) final;
     void setMiterLimit(float) final;
 
-    void drawNativeImage(NativeImage&, const FloatSize& selfSize, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& = { }) final;
     void drawPattern(NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, const ImagePaintingOptions& = { }) final;
+    bool needsCachedNativeImageInvalidationWorkaround(RenderingMode) override;
 
     using GraphicsContext::scale;
     void scale(const FloatSize&) final;
@@ -107,14 +107,8 @@ public:
 
     AffineTransform getCTM(IncludeDeviceScale = PossiblyIncludeDeviceScale) const override;
 
-    FloatRect roundToDevicePixels(const FloatRect&, RoundingMode = RoundAllSides) final;
-
-    void drawFocusRing(const Vector<FloatRect>&, float, float, const Color&) final;
-    void drawFocusRing(const Path&, float, float, const Color&) final;
-#if PLATFORM(MAC)
-    void drawFocusRing(const Path&, double, bool&, const Color&) final;
-    void drawFocusRing(const Vector<FloatRect>&, double, bool&, const Color&) final;
-#endif
+    void drawFocusRing(const Path&, float outlineWidth, const Color&) final;
+    void drawFocusRing(const Vector<FloatRect>&, float outlineOffset, float outlineWidth, const Color&) final;
 
     void drawLinesForText(const FloatPoint&, float thickness, const DashArray& widths, bool printing, bool doubleLines, StrokeStyle) final;
 
@@ -131,12 +125,22 @@ public:
 
     virtual bool canUseShadowBlur() const;
 
-#if OS(WINDOWS)
-    GraphicsContextPlatformPrivate* deprecatedPrivateContext() const final;
-#endif
+    virtual FloatRect roundToDevicePixels(const FloatRect&, RoundingMode = RoundAllSides) const;
+
+protected:
+    virtual void setCGShadow(RenderingMode, const FloatSize& offset, float blur, const Color&, bool shadowsIgnoreTransforms);
 
 private:
-    GraphicsContextPlatformPrivate* m_data { nullptr };
+    void convertToDestinationColorSpaceIfNeeded(RetainPtr<CGImageRef>&);
+    void drawNativeImageInternal(NativeImage&, const FloatSize& selfSize, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& = { }) final;
+
+    void clearCGShadow();
+
+    const RetainPtr<CGContextRef> m_cgContext;
+    const RenderingMode m_renderingMode : 1; // NOLINT
+    const bool m_isLayerCGContext : 1;
+    mutable bool m_userToDeviceTransformKnownToBeIdentity : 1 { false };
+    mutable std::optional<DestinationColorSpace> m_colorSpace;
 };
 
 CGAffineTransform getUserToBaseCTM(CGContextRef);

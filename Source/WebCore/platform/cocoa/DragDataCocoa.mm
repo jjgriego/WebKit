@@ -27,6 +27,7 @@
 #import "DragData.h"
 
 #if ENABLE(DRAG_SUPPORT)
+#import "DeprecatedGlobalSettings.h"
 #import "LegacyNSPasteboardTypes.h"
 #import "MIMETypeRegistry.h"
 #import "NotImplemented.h"
@@ -35,7 +36,6 @@
 #import "PasteboardStrategy.h"
 #import "PlatformPasteboard.h"
 #import "PlatformStrategies.h"
-#import "RuntimeEnabledFeatures.h"
 #import "WebCoreNSURLExtras.h"
 #import <wtf/cocoa/NSURLExtras.h>
 
@@ -159,6 +159,18 @@ DragData::DragData(const String& dragStorageName, const IntPoint& clientPosition
 {
 }
 
+DragData::DragData(const String& dragStorageName, const IntPoint& clientPosition, const IntPoint& globalPosition, const Vector<String>& fileNames, OptionSet<DragOperation> sourceOperationMask, OptionSet<DragApplicationFlags> flags, OptionSet<DragDestinationAction> destinationActionMask, std::optional<PageIdentifier> pageID)
+    : m_clientPosition(clientPosition)
+    , m_globalPosition(globalPosition)
+    , m_draggingSourceOperationMask(sourceOperationMask)
+    , m_applicationFlags(flags)
+    , m_fileNames(fileNames)
+    , m_dragDestinationActionMask(destinationActionMask)
+    , m_pageID(pageID)
+    , m_pasteboardName(dragStorageName)
+{
+}
+
 bool DragData::containsURLTypeIdentifier() const
 {
     Vector<String> types;
@@ -182,17 +194,21 @@ bool DragData::containsColor() const
 
 bool DragData::containsFiles() const
 {
-    return numberOfFiles();
+    return !m_disallowFileAccess && numberOfFiles();
 }
 
 unsigned DragData::numberOfFiles() const
 {
+    if (m_disallowFileAccess)
+        return 0;
     auto context = createPasteboardContext();
     return platformStrategies()->pasteboardStrategy()->getNumberOfFiles(m_pasteboardName, context.get());
 }
 
 Vector<String> DragData::asFilenames() const
 {
+    if (m_disallowFileAccess)
+        return { };
     auto context = createPasteboardContext();
 #if PLATFORM(MAC)
     Vector<String> types;
@@ -253,7 +269,7 @@ bool DragData::containsCompatibleContent(DraggingPurpose purpose) const
     if (purpose == DraggingPurpose::ForColorControl)
         return containsColor();
 
-    if (purpose == DraggingPurpose::ForEditing && RuntimeEnabledFeatures::sharedFeatures().attachmentElementEnabled() && containsFiles())
+    if (purpose == DraggingPurpose::ForEditing && DeprecatedGlobalSettings::attachmentElementEnabled() && containsFiles())
         return true;
 
     auto context = createPasteboardContext();
@@ -264,8 +280,8 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         || types.contains(htmlPasteboardType())
         || types.contains(String(kUTTypeWebArchive))
 #if PLATFORM(MAC)
-        || types.contains(String(legacyFilenamesPasteboardType()))
-        || types.contains(String(legacyFilesPromisePasteboardType()))
+        || (!m_disallowFileAccess && types.contains(String(legacyFilenamesPasteboardType())))
+        || (!m_disallowFileAccess && types.contains(String(legacyFilesPromisePasteboardType())))
 #endif
         || types.contains(tiffPasteboardType())
         || types.contains(pdfPasteboardType())
@@ -282,6 +298,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 bool DragData::containsPromise() const
 {
+    if (m_disallowFileAccess)
+        return false;
     auto context = createPasteboardContext();
     // FIXME: legacyFilesPromisePasteboardType() contains UTIs, not path names. Also, why do we
     // think promises should only contain one file (or UTI)?

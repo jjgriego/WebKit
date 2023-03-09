@@ -14,9 +14,10 @@ if (window.IPC) {
     let dataReadSuccess = false;
     let dataWriteSuccess = false;
 
-    const testBytes = Uint8Array.from({length: 16}, (x, i) => i + 0x41);
-    const bufferSize = 48;
-    const streamConnection = IPC.createStreamClientConnection('GPU', bufferSize);
+    const testBytes = Uint8Array.from({length: 64}, (x, i) => i + 0x41);
+    const bufferSizeLog2 = 6;
+    const [streamConnection, serverConnectionHandle] = IPC.createStreamClientConnection(bufferSizeLog2);
+    streamConnection.open();
 
     let streamBuffer = streamConnection.streamBuffer();
     let initialData = new Uint8Array(streamBuffer.readHeaderBytes(0, 32));
@@ -45,7 +46,7 @@ if (window.IPC) {
 
     if(headerWriteSuccess && headerReadSuccess){
         streamBuffer.writeDataBytes(testBytes.slice(0,8), 0, 8);
-        streamBuffer.writeDataBytes(testBytes.slice(8,16), 8, 8);
+        streamBuffer.writeDataBytes(testBytes.slice(8,64), 8, 56);
         readResult = new Uint8Array(streamBuffer.readDataBytes(0));
 
         if(arraysAreEqual(readResult, testBytes)){
@@ -63,6 +64,7 @@ if (window.IPC) {
         if(dataWriteSuccess && dataReadSuccess){
             document.write("PASS");
         }
+        streamConnection.invalidate();
     }
 } else {
     // IPC not enabled so this test passes by default.

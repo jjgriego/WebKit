@@ -152,7 +152,18 @@ function expect(expression, expectedValue) {
     const evalExpression = `${expression} === ${expectedValue}`;
     if (eval(evalExpression))
         return `PASS: ${evalExpression}\n`;
-    return `FAIL: ${expression} !== ${expectedValue}\n`;
+    return `FAIL: ${expression} !== ${expectedValue}, was ${eval(expression)}\n`;
+}
+
+async function expectAsync(expression, expectedValue) {
+    if (typeof expression !== "string")
+        debug("WARN: The expression arg in expectAsync should be a string.");
+
+    const evalExpression = `${expression} === ${expectedValue}`;
+    await waitFor(() => {
+        return eval(evalExpression);
+    });
+    return `PASS: ${evalExpression}\n`;
 }
 
 async function expectAsyncExpression(expression, expectedValue) {
@@ -166,3 +177,18 @@ async function expectAsyncExpression(expression, expectedValue) {
     debug(`PASS ${evalExpression}`);
 }
 
+async function waitForFocus(id) {
+    document.getElementById(id).focus();
+    await waitFor(() => {
+        const focusedElement = accessibilityController.focusedElement;
+        return focusedElement && focusedElement.domIdentifier === id;
+    });
+}
+
+function evalAndReturn(expression) {
+    if (typeof expression !== "string")
+        debug("FAIL: evalAndReturn() expects a string argument");
+
+    eval(expression);
+    return `${expression}\n`;
+}

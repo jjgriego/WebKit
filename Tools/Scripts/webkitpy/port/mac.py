@@ -1,5 +1,5 @@
 # Copyright (C) 2011 Google Inc. All rights reserved.
-# Copyright (C) 2012-2019 Apple Inc. All rights reserved.
+# Copyright (C) 2012-2022 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -40,6 +40,7 @@ from webkitpy.common.version_name_map import VersionNameMap
 from webkitpy.port.base import Port
 from webkitpy.port.config import apple_additions, Config
 from webkitpy.port.darwin import DarwinPort
+from webkitpy.port.driver import DriverInput
 
 _log = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ _log = logging.getLogger(__name__)
 class MacPort(DarwinPort):
     port_name = "mac"
 
-    CURRENT_VERSION = Version(12, 0)
+    CURRENT_VERSION = Version(13, 0)
     LAST_MACOSX = Version(10, 15)
 
     SDK = 'macosx'
@@ -224,6 +225,11 @@ class MacPort(DarwinPort):
     def default_child_processes(self, **kwargs):
         default_count = super(MacPort, self).default_child_processes()
 
+        # FIXME: arm64 Mac hardware can handle more processes than the default number we calculate.
+        # Double the amount of default workers until we implement more sophisticated test scheduling.
+        if self.architecture() == 'arm64':
+            default_count = default_count * 2
+
         # FIXME: https://bugs.webkit.org/show_bug.cgi?id=95906  With too many WebProcess WK2 tests get stuck in resource contention.
         # To alleviate the issue reduce the number of running processes
         # Anecdotal evidence suggests that a 4 core/8 core logical machine may run into this, but that a 2 core/4 core logical machine does not.
@@ -272,7 +278,7 @@ class MacPort(DarwinPort):
     def reset_preferences(self):
         _log.debug("Resetting persistent preferences")
 
-        for domain in ["DumpRenderTree", "WebKitTestRunner"]:
+        for domain in ["com.apple.WebKit.DumpRenderTree", "com.apple.WebKit.WebKitTestRunner"]:
             try:
                 self._executive.run_command(["defaults", "delete", domain])
             except ScriptError as e:
@@ -281,7 +287,7 @@ class MacPort(DarwinPort):
                     raise e
 
     def logging_patterns_to_strip(self):
-        logging_patterns = []
+        logging_patterns = super(MacPort, self).logging_patterns_to_strip()
 
         # FIXME: Remove this after <rdar://problem/35954459> is fixed.
         logging_patterns.append(('AVDCreateGPUAccelerator: Error loading GPU renderer\n', ''))
@@ -295,6 +301,9 @@ class MacPort(DarwinPort):
         # FIXME: Find where this is coming from and file a bug to have it removed (then remove this line).
         logging_patterns.append((re.compile('VP9 Info:.*\n'), ''))
 
+        # FIXME: Find where this is coming from and file a bug to have it removed (then remove this line).
+        logging_patterns.append((re.compile('set AppID to 1\n'), ''))
+
         return logging_patterns
 
     def logging_detectors_to_strip_text_start(self, test_name):
@@ -306,7 +315,7 @@ class MacPort(DarwinPort):
         return logging_detectors
 
     def stderr_patterns_to_strip(self):
-        worthless_patterns = []
+        worthless_patterns = super(MacPort, self).stderr_patterns_to_strip()
         worthless_patterns.append((re.compile('.*(Fig|fig|itemasync|vt|mv_|PullParamSetSPS|ccrp_|client).* signalled err=.*\n'), ''))
         worthless_patterns.append((re.compile('.*<<<< FigFilePlayer >>>>.*\n'), ''))
         worthless_patterns.append((re.compile('.*<<<< FigFile >>>>.*\n'), ''))
@@ -328,6 +337,15 @@ class MacPort(DarwinPort):
                 configuration['model'] = match.group('model')
 
         return configuration
+
+    def setup_test_run(self, device_type=None):
+        super(MacPort, self).setup_test_run(device_type)
+        # Warm-up can be disabled with `--no-timeout`. This is useful when trying to avoid debugger
+        # attaching to the warmup process when debugging with `lldb --wait-for --attach-name ...`.
+        if not self.get_option("no_timeout"):
+            _log.debug('Warming up the runner ...')
+            warmup_driver = self.create_driver(0)
+            warmup_driver.run_test(DriverInput('file:///warmup-does-not-exist', 60000., None, should_run_pixel_test=False), stop_when_done=True)
 
 
 class MacCatalystPort(MacPort):

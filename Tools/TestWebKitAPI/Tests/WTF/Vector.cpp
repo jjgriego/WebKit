@@ -583,6 +583,42 @@ TEST(WTF_Vector, RemoveFirst)
     EXPECT_TRUE(v.isEmpty());
 }
 
+TEST(WTF_Vector, RemoveLast)
+{
+    Vector<int> v;
+    EXPECT_TRUE(v.isEmpty());
+    EXPECT_FALSE(v.removeLast(1));
+    EXPECT_FALSE(v.removeLast(-1));
+    EXPECT_TRUE(v.isEmpty());
+
+    v.fill(2, 10);
+    EXPECT_EQ(10U, v.size());
+    EXPECT_FALSE(v.removeLast(1));
+    EXPECT_EQ(10U, v.size());
+    v.clear();
+
+    v.fill(1, 10);
+    EXPECT_EQ(10U, v.size());
+    EXPECT_TRUE(v.removeLast(1));
+    EXPECT_TRUE(v == Vector<int>({1, 1, 1, 1, 1, 1, 1, 1, 1}));
+    EXPECT_EQ(9U, v.size());
+    EXPECT_FALSE(v.removeLast(2));
+    EXPECT_EQ(9U, v.size());
+    EXPECT_TRUE(v == Vector<int>({1, 1, 1, 1, 1, 1, 1, 1, 1}));
+
+    unsigned removed = 0;
+    while (v.removeLast(1))
+        ++removed;
+    EXPECT_EQ(9U, removed);
+    EXPECT_TRUE(v.isEmpty());
+
+    v.resize(1);
+    EXPECT_EQ(1U, v.size());
+    EXPECT_TRUE(v.removeLast(1));
+    EXPECT_EQ(0U, v.size());
+    EXPECT_TRUE(v.isEmpty());
+}
+
 TEST(WTF_Vector, RemoveAll)
 {
     // Using a memcpy-able type.
@@ -773,6 +809,39 @@ TEST(WTF_Vector, RemoveFirstMatching)
     EXPECT_FALSE(v.removeFirstMatching([] (int value) { return value == 1; }, 7));
     EXPECT_EQ(7U, v.size());
     EXPECT_FALSE(v.removeFirstMatching([] (int value) { return value == 1; }, 10));
+    EXPECT_EQ(7U, v.size());
+}
+
+TEST(WTF_Vector, RemoveLastMatching)
+{
+    Vector<int> v;
+    EXPECT_TRUE(v.isEmpty());
+    EXPECT_FALSE(v.removeLastMatching([] (int value) { return value > 0; }));
+    EXPECT_FALSE(v.removeLastMatching([] (int) { return true; }));
+    EXPECT_FALSE(v.removeLastMatching([] (int) { return false; }));
+
+    v = {3, 1, 1, 1, 2, 2, 1, 2, 1, 2, 1, 3};
+    EXPECT_EQ(12U, v.size());
+    EXPECT_FALSE(v.removeLastMatching([] (int) { return false; }));
+    EXPECT_EQ(12U, v.size());
+    EXPECT_FALSE(v.removeLastMatching([] (int value) { return value < 0; }));
+    EXPECT_EQ(12U, v.size());
+    EXPECT_TRUE(v.removeLastMatching([] (int value) { return value < 3; }));
+    EXPECT_EQ(11U, v.size());
+    EXPECT_TRUE(v == Vector<int>({3, 1, 1, 1, 2, 2, 1, 2, 1, 2, 3}));
+    EXPECT_TRUE(v.removeLastMatching([] (int value) { return value > 2; }));
+    EXPECT_EQ(10U, v.size());
+    EXPECT_TRUE(v == Vector<int>({3, 1, 1, 1, 2, 2, 1, 2, 1, 2}));
+    EXPECT_TRUE(v.removeLastMatching([] (int value) { return value > 2; }, 10));
+    EXPECT_EQ(9U, v.size());
+    EXPECT_TRUE(v == Vector<int>({1, 1, 1, 2, 2, 1, 2, 1, 2}));
+    EXPECT_TRUE(v.removeLastMatching([] (int value) { return value == 1; }, 7));
+    EXPECT_EQ(8U, v.size());
+    EXPECT_TRUE(v == Vector<int>({1, 1, 1, 2, 2, 1, 2, 2}));
+    EXPECT_TRUE(v.removeLastMatching([] (int value) { return value == 1; }, 4));
+    EXPECT_EQ(7U, v.size());
+    EXPECT_TRUE(v == Vector<int>({1, 1, 2, 2, 1, 2, 2}));
+    EXPECT_FALSE(v.removeLastMatching([] (int value) { return value == 2; }, 1));
     EXPECT_EQ(7U, v.size());
 }
 
@@ -1215,6 +1284,106 @@ TEST(WTF_Vector, CompactMapLambdaReturnOptionalRefPtr)
     EXPECT_EQ(5, mapped[2]->value);
     EXPECT_EQ(7, mapped[3]->value);
     EXPECT_EQ(nullptr, mapped[4]);
+}
+
+struct CopyCountingObject {
+    constexpr CopyCountingObject(int identifier)
+        : identifier { identifier }
+    {
+    }
+
+    CopyCountingObject(const CopyCountingObject& other)
+        : identifier { other.identifier }
+    {
+        ++copyCount;
+    }
+    CopyCountingObject(CopyCountingObject&& other)
+        : identifier { other.identifier }
+    {
+    }
+    CopyCountingObject& operator=(const CopyCountingObject& other)
+    {
+        identifier = other.identifier;
+        ++copyCount;
+        return *this;
+    }
+    CopyCountingObject& operator=(CopyCountingObject&& other)
+    {
+        identifier = other.identifier;
+        return *this;
+    }
+
+    int identifier { 0 };
+    static int copyCount;
+};
+
+constexpr bool operator==(const CopyCountingObject& a, int b) { return a.identifier == b; }
+constexpr bool operator==(int a, const CopyCountingObject& b) { return a == b.identifier; }
+
+int CopyCountingObject::copyCount;
+
+TEST(WTF_Vector, MapMinimalCopy)
+{
+    std::array<CopyCountingObject, 5> array { 1, 2, 3, 4, 5 };
+    Vector<CopyCountingObject> vector { 1, 2, 3, 4, 5 };
+
+    CopyCountingObject::copyCount = 0;
+    auto allCopiedFromVector = vector.map([](const auto& object) -> CopyCountingObject {
+        return object;
+    });
+    EXPECT_EQ(5U, allCopiedFromVector.size());
+    EXPECT_EQ(1, allCopiedFromVector[0]);
+    EXPECT_EQ(2, allCopiedFromVector[1]);
+    EXPECT_EQ(3, allCopiedFromVector[2]);
+    EXPECT_EQ(4, allCopiedFromVector[3]);
+    EXPECT_EQ(5, allCopiedFromVector[4]);
+    EXPECT_EQ(5, CopyCountingObject::copyCount);
+
+    CopyCountingObject::copyCount = 0;
+    auto allCopied = WTF::map(array, [](const auto& object) -> CopyCountingObject {
+        return object;
+    });
+    EXPECT_EQ(5U, allCopied.size());
+    EXPECT_EQ(1, allCopied[0]);
+    EXPECT_EQ(2, allCopied[1]);
+    EXPECT_EQ(3, allCopied[2]);
+    EXPECT_EQ(4, allCopied[3]);
+    EXPECT_EQ(5, allCopied[4]);
+    EXPECT_EQ(5, CopyCountingObject::copyCount);
+
+    CopyCountingObject::copyCount = 0;
+    auto allMoved = WTF::map(WTFMove(array), [](auto&& object) -> CopyCountingObject {
+        return WTFMove(object);
+    });
+    EXPECT_EQ(5U, allMoved.size());
+    EXPECT_EQ(1, allMoved[0]);
+    EXPECT_EQ(2, allMoved[1]);
+    EXPECT_EQ(3, allMoved[2]);
+    EXPECT_EQ(4, allMoved[3]);
+    EXPECT_EQ(5, allMoved[4]);
+    EXPECT_EQ(0, CopyCountingObject::copyCount);
+
+    CopyCountingObject::copyCount = 0;
+    auto evensCopied = WTF::compactMap(array, [](const auto& object) -> std::optional<CopyCountingObject> {
+        if (object.identifier % 2)
+            return std::nullopt;
+        return object;
+    });
+    EXPECT_EQ(2U, evensCopied.size());
+    EXPECT_EQ(2, evensCopied[0]);
+    EXPECT_EQ(4, evensCopied[1]);
+    EXPECT_EQ(2, CopyCountingObject::copyCount);
+
+    CopyCountingObject::copyCount = 0;
+    auto evensMoved = WTF::compactMap(WTFMove(array), [](auto&& object) -> std::optional<CopyCountingObject> {
+        if (object.identifier % 2)
+            return std::nullopt;
+        return WTFMove(object);
+    });
+    EXPECT_EQ(2U, evensMoved.size());
+    EXPECT_EQ(2, evensMoved[0]);
+    EXPECT_EQ(4, evensMoved[1]);
+    EXPECT_EQ(0, CopyCountingObject::copyCount);
 }
 
 TEST(WTF_Vector, CopyToVector)

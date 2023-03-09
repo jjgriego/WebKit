@@ -30,9 +30,18 @@
 #include "config.h"
 #include "CSSTransformValue.h"
 
-#if ENABLE(CSS_TYPED_OM)
-
+#include "CSSFunctionValue.h"
+#include "CSSMatrixComponent.h"
+#include "CSSPerspective.h"
+#include "CSSRotate.h"
+#include "CSSScale.h"
+#include "CSSSkew.h"
+#include "CSSSkewX.h"
+#include "CSSSkewY.h"
 #include "CSSTransformComponent.h"
+#include "CSSTransformListValue.h"
+#include "CSSTranslate.h"
+#include "CSSValueKeywords.h"
 #include "DOMMatrix.h"
 #include "ExceptionOr.h"
 #include <wtf/Algorithms.h>
@@ -42,6 +51,63 @@
 namespace WebCore {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(CSSTransformValue);
+
+static ExceptionOr<Ref<CSSTransformComponent>> createTransformComponent(CSSFunctionValue& functionValue)
+{
+    auto makeTransformComponent = [&](auto exceptionOrTransformComponent) -> ExceptionOr<Ref<CSSTransformComponent>> {
+        if (exceptionOrTransformComponent.hasException())
+            return exceptionOrTransformComponent.releaseException();
+        return Ref<CSSTransformComponent> { exceptionOrTransformComponent.releaseReturnValue() };
+    };
+
+    switch (functionValue.name()) {
+    case CSSValueTranslateX:
+    case CSSValueTranslateY:
+    case CSSValueTranslateZ:
+    case CSSValueTranslate:
+    case CSSValueTranslate3d:
+        return makeTransformComponent(CSSTranslate::create(functionValue));
+    case CSSValueScaleX:
+    case CSSValueScaleY:
+    case CSSValueScaleZ:
+    case CSSValueScale:
+    case CSSValueScale3d:
+        return makeTransformComponent(CSSScale::create(functionValue));
+    case CSSValueRotateX:
+    case CSSValueRotateY:
+    case CSSValueRotateZ:
+    case CSSValueRotate:
+    case CSSValueRotate3d:
+        return makeTransformComponent(CSSRotate::create(functionValue));
+    case CSSValueSkewX:
+        return makeTransformComponent(CSSSkewX::create(functionValue));
+    case CSSValueSkewY:
+        return makeTransformComponent(CSSSkewY::create(functionValue));
+    case CSSValueSkew:
+        return makeTransformComponent(CSSSkew::create(functionValue));
+    case CSSValuePerspective:
+        return makeTransformComponent(CSSPerspective::create(functionValue));
+    case CSSValueMatrix:
+    case CSSValueMatrix3d:
+        return makeTransformComponent(CSSMatrixComponent::create(functionValue));
+    default:
+        return Exception { TypeError, "Unexpected function value type"_s };
+    }
+}
+
+ExceptionOr<Ref<CSSTransformValue>> CSSTransformValue::create(const CSSTransformListValue& list)
+{
+    Vector<RefPtr<CSSTransformComponent>> components;
+    for (auto& value : list) {
+        if (!is<CSSFunctionValue>(value))
+            return Exception { TypeError, "Expected only function values in a transform list."_s };
+        auto component = createTransformComponent(downcast<CSSFunctionValue>(const_cast<CSSValue&>(value)));
+        if (component.hasException())
+            return component.releaseException();
+        components.append(component.releaseReturnValue());
+    }
+    return adoptRef(*new CSSTransformValue(WTFMove(components)));
+}
 
 ExceptionOr<Ref<CSSTransformValue>> CSSTransformValue::create(Vector<RefPtr<CSSTransformComponent>>&& transforms)
 {
@@ -82,8 +148,20 @@ bool CSSTransformValue::is2D() const
 
 ExceptionOr<Ref<DOMMatrix>> CSSTransformValue::toMatrix()
 {
-    // FIXME: add correct behavior here.
-    return DOMMatrix::fromMatrix(DOMMatrixInit { });
+    auto matrix = TransformationMatrix();
+    auto is2D = DOMMatrixReadOnly::Is2D::Yes;
+
+    for (auto component : m_components) {
+        auto componentMatrixOrException = component->toMatrix();
+        if (componentMatrixOrException.hasException())
+            return componentMatrixOrException.releaseException();
+        auto componentMatrix = componentMatrixOrException.returnValue();
+        if (!componentMatrix->is2D())
+            is2D = DOMMatrixReadOnly::Is2D::No;
+        matrix.multiply(componentMatrix->transformationMatrix());
+    }
+
+    return DOMMatrix::create(WTFMove(matrix), is2D);
 }
 
 CSSTransformValue::CSSTransformValue(Vector<RefPtr<CSSTransformComponent>>&& transforms)
@@ -101,6 +179,14 @@ void CSSTransformValue::serialize(StringBuilder& builder, OptionSet<Serializatio
     }
 }
 
-} // namespace WebCore
+RefPtr<CSSValue> CSSTransformValue::toCSSValue() const
+{
+    CSSValueListBuilder builder;
+    for (auto& component : m_components) {
+        if (auto cssComponent = component->toCSSValue())
+            builder.append(cssComponent.releaseNonNull());
+    }
+    return CSSTransformListValue::create(WTFMove(builder));
+}
 
-#endif
+} // namespace WebCore

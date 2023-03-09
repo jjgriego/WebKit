@@ -256,6 +256,14 @@ typedef NS_ENUM(NSInteger, AVExternalContentProtectionStatus) {
 @end
 #endif
 
+#if HAVE(AVCONTENTKEYREQUEST_COMPATABILITIY_MODE)
+NS_ASSUME_NONNULL_BEGIN
+@interface AVContentKeyRequest (AVContentKeyRequest_WebKitCompatibilityMode)
++ (instancetype)contentKeySessionWithLegacyWebKitCompatibilityModeAndKeySystem:(AVContentKeySystem)keySystem storageDirectoryAtURL:(NSURL *)storageURL;
+@end
+NS_ASSUME_NONNULL_END
+#endif
+
 #endif // HAVE(AVCONTENTKEYSESSION)
 
 #endif // USE(APPLE_INTERNAL_SDK)
@@ -366,6 +374,12 @@ NS_ASSUME_NONNULL_BEGIN
 NS_ASSUME_NONNULL_END
 #endif // __has_include(<AVFoundation/AVSampleBufferDisplayLayer.h>)
 
+#if HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)
+@interface AVSampleBufferDisplayLayer (Staging_94324932)
+- (nullable CVPixelBufferRef)copyDisplayedPixelBuffer;
+@end
+#endif
+
 #if __has_include(<AVFoundation/AVSampleBufferAudioRenderer.h>)
 #import <AVFoundation/AVSampleBufferAudioRenderer.h>
 NS_ASSUME_NONNULL_BEGIN
@@ -450,21 +464,6 @@ typedef NS_ENUM(NSInteger, AVPlayerResourceConservationLevel) {
 #endif
 
 #if HAVE(AVSAMPLEBUFFERVIDEOOUTPUT)
-#if USE(APPLE_INTERNAL_SDK)
-#import <AVFoundation/AVSampleBufferVideoOutput.h>
-#else
-
-NS_ASSUME_NONNULL_BEGIN
-@interface AVSampleBufferVideoOutput : NSObject
-- (CVPixelBufferRef)copyPixelBufferForSourceTime:(CMTime)sourceTime sourceTimeForDisplay:(nullable CMTime *)outSourceTimeForDisplay;
-@end
-NS_ASSUME_NONNULL_END
-
-@interface AVSampleBufferDisplayLayer (VideoOutput)
-@property (nonatomic, nullable) AVSampleBufferVideoOutput *output;
-@end
-
-#endif // USE(APPLE_INTERNAL_SDK)
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -480,3 +479,9 @@ NS_ASSUME_NONNULL_BEGIN
 NS_ASSUME_NONNULL_END
 
 #endif // HAVE(AVSAMPLEBUFFERVIDEOOUTPUT)
+
+#if USE(MEDIAPARSERD)
+@interface AVStreamDataParser (SandboxedParsing)
+@property (nonatomic) BOOL preferSandboxedParsing;
+@end
+#endif

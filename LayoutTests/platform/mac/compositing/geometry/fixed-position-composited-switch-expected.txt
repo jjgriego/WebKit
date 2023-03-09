@@ -9,8 +9,13 @@ Before (should be empty):
       (children 1
         (GraphicsLayer
           (position 495.00 30.00)
-          (bounds 300.00 100.00)
-          (contentsOpaque 1)
+          (preserves3D 1)
+          (children 1
+            (GraphicsLayer
+              (bounds 300.00 100.00)
+              (contentsOpaque 1)
+            )
+          )
         )
       )
     )
@@ -28,8 +33,13 @@ After (should not be empty):
       (children 1
         (GraphicsLayer
           (position 495.00 30.00)
-          (bounds 300.00 100.00)
-          (contentsOpaque 1)
+          (preserves3D 1)
+          (children 1
+            (GraphicsLayer
+              (bounds 300.00 100.00)
+              (contentsOpaque 1)
+            )
+          )
         )
       )
     )

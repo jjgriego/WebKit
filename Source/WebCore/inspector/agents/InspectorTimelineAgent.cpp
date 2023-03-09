@@ -191,7 +191,7 @@ void InspectorTimelineAgent::internalStart(std::optional<int>&& maxCallStackDept
 
     m_instrumentingAgents.setTrackingTimelineAgent(this);
 
-    m_environment.debugger().addObserver(*this);
+    m_environment.debugger()->addObserver(*this);
 
     m_tracking = true;
 
@@ -199,7 +199,7 @@ void InspectorTimelineAgent::internalStart(std::optional<int>&& maxCallStackDept
 
 #if PLATFORM(COCOA)
     m_frameStartObserver = makeUnique<RunLoopObserver>(static_cast<CFIndex>(RunLoopObserver::WellKnownRunLoopOrders::InspectorFrameBegin), [this]() {
-        if (!m_tracking || m_environment.debugger().isPaused())
+        if (!m_tracking || m_environment.debugger()->isPaused())
             return;
 
         if (!m_runLoopNestingLevel)
@@ -207,8 +207,9 @@ void InspectorTimelineAgent::internalStart(std::optional<int>&& maxCallStackDept
         m_runLoopNestingLevel++;
     });
 
+    // FIXME: This won't work correctly with RemoteLayerTreeDrawingArea: webkit.org/b/249796. Detecting FrameEnd needs to be handled at the DrawingArea level.
     m_frameStopObserver = makeUnique<RunLoopObserver>(static_cast<CFIndex>(RunLoopObserver::WellKnownRunLoopOrders::InspectorFrameEnd), [this]() {
-        if (!m_tracking || m_environment.debugger().isPaused())
+        if (!m_tracking || m_environment.debugger()->isPaused())
             return;
 
         ASSERT(m_runLoopNestingLevel > 0);
@@ -232,7 +233,7 @@ void InspectorTimelineAgent::internalStart(std::optional<int>&& maxCallStackDept
     m_runLoopNestingLevel = 1;
 #elif USE(GLIB_EVENT_LOOP)
     m_runLoopObserver = makeUnique<RunLoop::Observer>([this](RunLoop::Event event, const String& name) {
-        if (!m_tracking || m_environment.debugger().isPaused())
+        if (!m_tracking || m_environment.debugger()->isPaused())
             return;
 
         switch (event) {
@@ -260,7 +261,7 @@ void InspectorTimelineAgent::internalStop()
 
     m_instrumentingAgents.setTrackingTimelineAgent(nullptr);
 
-    m_environment.debugger().removeObserver(*this, true);
+    m_environment.debugger()->removeObserver(*this, true);
 
 #if PLATFORM(COCOA)
     m_frameStartObserver = nullptr;
@@ -668,11 +669,14 @@ void InspectorTimelineAgent::captureScreenshot()
     SetForScope isTakingScreenshot(m_isCapturingScreenshot, true);
 
     auto snapshotStartTime = timestamp();
-    auto& frame = m_inspectedPage.mainFrame();
-    auto viewportRect = m_inspectedPage.mainFrame().view()->unobscuredContentRect();
-    if (auto snapshot = snapshotFrameRect(frame, viewportRect, { { }, PixelFormat::BGRA8, DestinationColorSpace::SRGB() })) {
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_inspectedPage.mainFrame());
+    if (!localMainFrame)
+        return;
+
+    auto viewportRect = localMainFrame->view()->unobscuredContentRect();
+    if (auto snapshot = snapshotFrameRect(*localMainFrame, viewportRect, { { }, PixelFormat::BGRA8, DestinationColorSpace::SRGB() })) {
         auto snapshotRecord = TimelineRecordFactory::createScreenshotData(snapshot->toDataURL("image/png"_s));
-        pushCurrentRecord(WTFMove(snapshotRecord), TimelineRecordType::Screenshot, false, &frame, snapshotStartTime);
+        pushCurrentRecord(WTFMove(snapshotRecord), TimelineRecordType::Screenshot, false, localMainFrame, snapshotStartTime);
         didCompleteCurrentRecord(TimelineRecordType::Screenshot);
     }
 }

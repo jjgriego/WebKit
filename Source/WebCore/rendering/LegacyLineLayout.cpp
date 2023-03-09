@@ -537,8 +537,10 @@ static inline void setLogicalWidthForTextRun(LegacyRootInlineBox* lineBox, BidiR
     }
 
     // Include text decoration visual overflow as part of the glyph overflow.
-    if (!renderer.style().textDecorationsInEffect().isEmpty())
-        glyphOverflow.extendTo(visualOverflowForDecorations(run->box()->lineStyle(), InlineIterator::textBoxFor(downcast<LegacyInlineTextBox>(run->box()))));
+    if (!renderer.style().textDecorationsInEffect().isEmpty()) {
+        auto textBox = InlineIterator::textBoxFor(downcast<LegacyInlineTextBox>(run->box()));
+        glyphOverflow.extendTo(visualOverflowForDecorations(textBox->lineBox(), renderer, textBox->logicalTop(), textBox->logicalBottom()));
+    }
 
     if (!glyphOverflow.isEmpty()) {
         ASSERT(run->box()->behavesLikeText());
@@ -688,10 +690,10 @@ static void updateLogicalInlinePositions(RenderBlockFlow& block, float& lineLogi
 void LegacyLineLayout::computeInlineDirectionPositionsForLine(LegacyRootInlineBox* lineBox, const LineInfo& lineInfo, BidiRun* firstRun, BidiRun* trailingSpaceRun, bool reachedEnd, GlyphOverflowAndFallbackFontsMap& textBoxDataMap, VerticalPositionCache& verticalPositionCache, WordMeasurements& wordMeasurements)
 {
     TextAlignMode textAlign = textAlignmentForLine(!reachedEnd && !lineBox->endsWithBreak());
-    
-    // CSS 2.1: "'Text-indent' only affects a line if it is the first formatted line of an element. For example, the first line of an anonymous block 
+
+    // CSS 2.1: "'Text-indent' only affects a line if it is the first formatted line of an element. For example, the first line of an anonymous block
     // box is only affected if it is the first child of its parent element."
-    // CSS3 "text-indent", "-webkit-each-line" affects the first line of the block container as well as each line after a forced line break,
+    // CSS3 "text-indent", "each-line" affects the first line of the block container as well as each line after a forced line break,
     // but does not affect lines after a soft wrap break.
     bool isFirstLine = lineInfo.isFirstLine() && !(m_flow.isAnonymousBlock() && m_flow.parent()->firstChild() != &m_flow);
     bool isAfterHardLineBreak = lineBox->prevRootBox() && lineBox->prevRootBox()->endsWithBreak();
@@ -1479,12 +1481,11 @@ void LegacyLineLayout::layoutRunsAndFloatsInRange(LineLayoutState& layoutState, 
                     layoutState.updateRepaintRangeFromBox(lineBox);
                 
                 LayoutUnit adjustment;
-                bool overflowsFragment = false;
-                
+
                 layoutState.marginInfo().setAtBeforeSideOfBlock(false);
 
                 if (paginated)
-                    m_flow.adjustLinePositionForPagination(lineBox, adjustment, overflowsFragment, layoutState.fragmentedFlow());
+                    m_flow.adjustLinePositionForPagination(lineBox, adjustment);
                 if (adjustment) {
                     IndentTextOrNot shouldIndentText = layoutState.lineInfo().isFirstLine() ? IndentText : DoNotIndentText;
                     LayoutUnit oldLineWidth = m_flow.availableLogicalWidthForLine(oldLogicalHeight, shouldIndentText);
@@ -1648,8 +1649,7 @@ void LegacyLineLayout::linkToEndLineIfNeeded(LineLayoutState& layoutState)
                 line->attachLine();
                 if (paginated) {
                     delta -= line->paginationStrut();
-                    bool overflowsFragment;
-                    m_flow.adjustLinePositionForPagination(line, delta, overflowsFragment, layoutState.fragmentedFlow());
+                    m_flow.adjustLinePositionForPagination(line, delta);
                 }
                 if (delta) {
                     layoutState.updateRepaintRangeFromBox(line, delta);
@@ -1885,8 +1885,7 @@ LegacyRootInlineBox* LegacyLineLayout::determineStartPosition(LineLayoutState& l
                     break;
                 }
                 paginationDelta -= currentLine->paginationStrut();
-                bool overflowsFragment;
-                m_flow.adjustLinePositionForPagination(currentLine, paginationDelta, overflowsFragment, layoutState.fragmentedFlow());
+                m_flow.adjustLinePositionForPagination(currentLine, paginationDelta);
                 if (paginationDelta) {
                     if (m_flow.containsFloats() || !floats.isEmpty()) {
                         // FIXME: Do better eventually. For now if we ever shift because of pagination and floats are present just go to a full layout.
@@ -1968,7 +1967,8 @@ LegacyRootInlineBox* LegacyLineLayout::determineStartPosition(LineLayoutState& l
                     if (!floatingBox)
                         continue;
                     auto* floatingObject = m_flow.insertFloatingObject(*floatingBox);
-                    ASSERT_WITH_SECURITY_IMPLICATION(!floatingObject->originatingLine());
+                    ASSERT_WITH_SECURITY_IMPLICATION(!floatingObject->originatingLine() || floatingObject->originatingLine() == line);
+                    ASSERT(!floatingObject->originatingLine());
                     floatingObject->setOriginatingLine(*line);
                     m_flow.setLogicalHeight(m_flow.logicalTopForChild(*floatingBox) - m_flow.marginBeforeForChild(*floatingBox));
                     m_flow.positionNewFloats();
@@ -2066,9 +2066,8 @@ bool LegacyLineLayout::checkPaginationAndFloatsAtEndLine(LineLayoutState& layout
                 // This isn't the real move we're going to do, so don't update the line box's pagination
                 // strut yet.
                 LayoutUnit oldPaginationStrut = lineBox->paginationStrut();
-                bool overflowsFragment;
                 lineDelta -= oldPaginationStrut;
-                m_flow.adjustLinePositionForPagination(lineBox, lineDelta, overflowsFragment, layoutState.fragmentedFlow());
+                m_flow.adjustLinePositionForPagination(lineBox, lineDelta);
                 lineBox->setPaginationStrut(oldPaginationStrut);
             }
             if (lineWidthForPaginatedLineChanged(lineBox, lineDelta, layoutState.fragmentedFlow()))

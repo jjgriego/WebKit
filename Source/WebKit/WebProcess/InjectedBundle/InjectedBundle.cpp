@@ -56,6 +56,7 @@
 #include <WebCore/ApplicationCache.h>
 #include <WebCore/ApplicationCacheStorage.h>
 #include <WebCore/CommonVM.h>
+#include <WebCore/DeprecatedGlobalSettings.h>
 #include <WebCore/Document.h>
 #include <WebCore/Frame.h>
 #include <WebCore/FrameLoader.h>
@@ -71,7 +72,6 @@
 #include <WebCore/Page.h>
 #include <WebCore/PageGroup.h>
 #include <WebCore/PrintContext.h>
-#include <WebCore/RuntimeEnabledFeatures.h>
 #include <WebCore/SWContextManager.h>
 #include <WebCore/ScriptController.h>
 #include <WebCore/SecurityOrigin.h>
@@ -138,14 +138,13 @@ void InjectedBundle::postMessage(const String& messageName, API::Object* message
 
 void InjectedBundle::postSynchronousMessage(const String& messageName, API::Object* messageBody, RefPtr<API::Object>& returnData)
 {
-    UserData returnUserData;
-
     auto& webProcess = WebProcess::singleton();
-    if (!webProcess.parentProcessConnection()->sendSync(Messages::WebProcessPool::HandleSynchronousMessage(messageName, UserData(webProcess.transformObjectsToHandles(messageBody))),
-        Messages::WebProcessPool::HandleSynchronousMessage::Reply(returnUserData), 0, IPC::Timeout::infinity(), IPC::SendSyncOption::InformPlatformProcessWillSuspend))
-        returnData = nullptr;
-    else
+    auto sendResult = webProcess.parentProcessConnection()->sendSync(Messages::WebProcessPool::HandleSynchronousMessage(messageName, UserData(webProcess.transformObjectsToHandles(messageBody))), 0);
+    if (sendResult) {
+        auto [returnUserData] = sendResult.takeReply();
         returnData = webProcess.transformHandlesToObjects(returnUserData.object());
+    } else
+        returnData = nullptr;
 }
 
 WebConnection* InjectedBundle::webConnectionToUIProcess() const
@@ -342,10 +341,14 @@ InjectedBundle::DocumentIDToURLMap InjectedBundle::liveDocumentURLs(bool exclude
 
     if (excludeDocumentsInPageGroupPages) {
         Page::forEachPage([&](Page& page) {
-            for (auto* frame = &page.mainFrame(); frame; frame = frame->tree().traverseNext()) {
-                if (!frame->document())
+            for (AbstractFrame* frame = &page.mainFrame(); frame; frame = frame->tree().traverseNext()) {
+                auto* localFrame = dynamicDowncast<LocalFrame>(frame);
+                if (!localFrame)
                     continue;
-                result.remove(frame->document()->identifier().object());
+                auto* document = localFrame->document();
+                if (!document)
+                    continue;
+                result.remove(document->identifier().object());
             }
         });
     }
@@ -361,7 +364,7 @@ void InjectedBundle::setTabKeyCyclesThroughElements(WebPage* page, bool enabled)
 void InjectedBundle::setAccessibilityIsolatedTreeEnabled(bool enabled)
 {
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-    RuntimeEnabledFeatures::sharedFeatures().setIsAccessibilityIsolatedTreeEnabled(enabled);
+    DeprecatedGlobalSettings::setIsAccessibilityIsolatedTreeEnabled(enabled);
 #endif
 }
 

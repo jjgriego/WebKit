@@ -28,7 +28,7 @@
 
 #include "ImageBufferShareableBitmapBackend.h"
 #include <WebCore/ChromeClient.h>
-#include <WebCore/ConcreteImageBuffer.h>
+#include <WebCore/ImageBuffer.h>
 
 namespace WebKit {
 using namespace WebCore;
@@ -37,13 +37,15 @@ RefPtr<WebImage> WebImage::create(const IntSize& size, ImageOptions options, con
 {
     if (client) {
         auto purpose = (options & ImageOptionsShareable) ? RenderingPurpose::ShareableSnapshot : RenderingPurpose::Snapshot;
+        purpose = (options & ImageOptionsLocal) ? RenderingPurpose::ShareableLocalSnapshot : purpose;
+        
         auto buffer = client->createImageBuffer(size, RenderingMode::Unaccelerated, purpose, 1, colorSpace, PixelFormat::BGRA8);
         if (buffer)
             return WebImage::create(buffer.releaseNonNull());
     }
 
     if (options & ImageOptionsShareable) {
-        auto buffer = ConcreteImageBuffer<ImageBufferShareableBitmapBackend>::create(size, 1, colorSpace, PixelFormat::BGRA8, RenderingPurpose::ShareableSnapshot, { });
+        auto buffer = ImageBuffer::create<ImageBufferShareableBitmapBackend>(size, 1, colorSpace, PixelFormat::BGRA8, RenderingPurpose::ShareableSnapshot, { });
         if (!buffer)
             return nullptr;
         return WebImage::create(buffer.releaseNonNull());
@@ -55,15 +57,18 @@ RefPtr<WebImage> WebImage::create(const IntSize& size, ImageOptions options, con
     return WebImage::create(buffer.releaseNonNull());
 }
 
-RefPtr<WebImage> WebImage::create(const ImageBufferBackend::Parameters& parameters, ShareableBitmap::Handle&& handle)
+RefPtr<WebImage> WebImage::create(const ImageBufferBackend::Parameters& parameters, ShareableBitmapHandle&& handle)
 {
     auto backend = ImageBufferShareableBitmapBackend::create(parameters, WTFMove(handle));
     if (!backend)
         return nullptr;
     
-    auto buffer = ConcreteImageBuffer<ImageBufferShareableBitmapBackend>::create(parameters, WTFMove(backend));
+    auto info = ImageBuffer::populateBackendInfo<ImageBufferShareableBitmapBackend>(parameters);
+
+    auto buffer = ImageBuffer::create(parameters, info, WTFMove(backend));
     if (!buffer)
         return nullptr;
+
     return WebImage::create(buffer.releaseNonNull());
 }
 
@@ -119,7 +124,7 @@ RefPtr<cairo_surface_t> WebImage::createCairoSurface()
 }
 #endif
 
-ShareableBitmap::Handle WebImage::createHandle(SharedMemory::Protection protection) const
+ShareableBitmapHandle WebImage::createHandle(SharedMemory::Protection protection) const
 {
     auto* backend = m_buffer->ensureBackendCreated();
     if (!backend)
@@ -133,7 +138,7 @@ ShareableBitmap::Handle WebImage::createHandle(SharedMemory::Protection protecti
 
     auto backendHandle = downcast<ImageBufferBackendHandleSharing>(*sharing).createBackendHandle(protection);
 
-    if (auto handle = std::get_if<ShareableBitmap::Handle>(&backendHandle))
+    if (auto handle = std::get_if<ShareableBitmapHandle>(&backendHandle))
         return WTFMove(*handle);
 
     return { };

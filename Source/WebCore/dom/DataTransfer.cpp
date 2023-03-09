@@ -31,6 +31,7 @@
 #include "CommonAtomStrings.h"
 #include "DataTransferItem.h"
 #include "DataTransferItemList.h"
+#include "DeprecatedGlobalSettings.h"
 #include "DocumentFragment.h"
 #include "DragData.h"
 #include "Editor.h"
@@ -41,9 +42,9 @@
 #include "HTMLImageElement.h"
 #include "HTMLParserIdioms.h"
 #include "Image.h"
+#include "Page.h"
 #include "PagePasteboardContext.h"
 #include "Pasteboard.h"
-#include "RuntimeEnabledFeatures.h"
 #include "Settings.h"
 #include "StaticPasteboard.h"
 #include "WebContentReader.h"
@@ -152,17 +153,21 @@ void DataTransfer::clearData(const String& type)
         m_itemList->didClearStringData(normalizedType);
 }
 
-static String readURLsFromPasteboardAsString(Pasteboard& pasteboard, Function<bool(const String&)>&& shouldIncludeURL)
+static String readURLsFromPasteboardAsString(Page* page, Pasteboard& pasteboard, Function<bool(const String&)>&& shouldIncludeURL)
 {
     StringBuilder urlList;
-    for (const auto& urlString : pasteboard.readAllStrings("text/uri-list"_s)) {
-        if (!shouldIncludeURL(urlString))
-            continue;
-        if (!urlList.isEmpty())
-            urlList.append(newlineCharacter);
-        urlList.append(urlString);
+    auto urlStrings = pasteboard.readAllStrings("text/uri-list"_s);
+    if (page) {
+        urlStrings = urlStrings.map([&](auto& string) {
+            return page->sanitizeLookalikeCharacters(string, LookalikeCharacterSanitizationTrigger::Paste);
+        });
     }
-    return urlList.toString();
+
+    urlStrings.removeAllMatching([&](auto& string) {
+        return !shouldIncludeURL(string);
+    });
+
+    return makeStringByJoining(urlStrings, "\n"_s);
 }
 
 String DataTransfer::getDataForItem(Document& document, const String& type) const
@@ -173,12 +178,12 @@ String DataTransfer::getDataForItem(Document& document, const String& type) cons
     auto lowercaseType = stripLeadingAndTrailingHTMLSpaces(type).convertToASCIILowercase();
     if (shouldSuppressGetAndSetDataToAvoidExposingFilePaths()) {
         if (lowercaseType == "text/uri-list"_s) {
-            return readURLsFromPasteboardAsString(*m_pasteboard, [] (auto& urlString) {
+            return readURLsFromPasteboardAsString(document.page(), *m_pasteboard, [] (auto& urlString) {
                 return Pasteboard::canExposeURLToDOMWhenPasteboardContainsFiles(urlString);
             });
         }
 
-        if (lowercaseType == "text/html"_s && RuntimeEnabledFeatures::sharedFeatures().customPasteboardDataEnabled()) {
+        if (lowercaseType == "text/html"_s && DeprecatedGlobalSettings::customPasteboardDataEnabled()) {
             // If the pasteboard contains files and the page requests 'text/html', we only read from rich text types to prevent file
             // paths from leaking (e.g. from plain text data on the pasteboard) since we sanitize cross-origin markup. However, if
             // custom pasteboard data is disabled, then we can't ensure that the markup we deliver is sanitized, so we fall back to
@@ -194,7 +199,7 @@ String DataTransfer::getDataForItem(Document& document, const String& type) cons
 
 String DataTransfer::readStringFromPasteboard(Document& document, const String& lowercaseType, WebContentReadingPolicy policy) const
 {
-    if (!RuntimeEnabledFeatures::sharedFeatures().customPasteboardDataEnabled())
+    if (!DeprecatedGlobalSettings::customPasteboardDataEnabled())
         return m_pasteboard->readString(lowercaseType);
 
     // StaticPasteboard is only used to stage data written by websites before being committed to the system pasteboard.
@@ -216,12 +221,16 @@ String DataTransfer::readStringFromPasteboard(Document& document, const String& 
     }
 
     if (!is<StaticPasteboard>(*m_pasteboard) && lowercaseType == "text/uri-list"_s) {
-        return readURLsFromPasteboardAsString(*m_pasteboard, [] (auto&) {
+        return readURLsFromPasteboardAsString(document.page(), *m_pasteboard, [] (auto&) {
             return true;
         });
     }
 
-    return m_pasteboard->readString(lowercaseType);
+    auto string = m_pasteboard->readString(lowercaseType);
+    if (auto* page = document.page())
+        return page->sanitizeLookalikeCharacters(string, LookalikeCharacterSanitizationTrigger::Paste);
+
+    return string;
 }
 
 String DataTransfer::getData(Document& document, const String& type) const
@@ -231,12 +240,12 @@ String DataTransfer::getData(Document& document, const String& type) const
 
 bool DataTransfer::shouldSuppressGetAndSetDataToAvoidExposingFilePaths() const
 {
-    if (!forFileDrag() && !RuntimeEnabledFeatures::sharedFeatures().customPasteboardDataEnabled())
+    if (!forFileDrag() && !DeprecatedGlobalSettings::customPasteboardDataEnabled())
         return false;
     return m_pasteboard->fileContentState() == Pasteboard::FileContentState::MayContainFilePaths;
 }
 
-void DataTransfer::setData(const String& type, const String& data)
+void DataTransfer::setData(Document& document, const String& type, const String& data)
 {
     if (!canWriteData())
         return;
@@ -245,17 +254,17 @@ void DataTransfer::setData(const String& type, const String& data)
         return;
 
     auto normalizedType = normalizeType(type);
-    setDataFromItemList(normalizedType, data);
+    setDataFromItemList(document, normalizedType, data);
     if (m_itemList)
         m_itemList->didSetStringData(normalizedType);
 }
 
-void DataTransfer::setDataFromItemList(const String& type, const String& data)
+void DataTransfer::setDataFromItemList(Document& document, const String& type, const String& data)
 {
     ASSERT(canWriteData());
     RELEASE_ASSERT(is<StaticPasteboard>(*m_pasteboard));
 
-    if (!RuntimeEnabledFeatures::sharedFeatures().customPasteboardDataEnabled()) {
+    if (!DeprecatedGlobalSettings::customPasteboardDataEnabled()) {
         m_pasteboard->writeString(type, data);
         return;
     }
@@ -269,6 +278,11 @@ void DataTransfer::setDataFromItemList(const String& type, const String& data)
             sanitizedData = url.string();
     } else if (type == textPlainContentTypeAtom())
         sanitizedData = data; // Nothing to sanitize.
+
+    if (type == "text/uri-list"_s || type == textPlainContentTypeAtom()) {
+        if (auto* page = document.page())
+            sanitizedData = page->sanitizeLookalikeCharacters(sanitizedData, LookalikeCharacterSanitizationTrigger::Copy);
+    }
 
     if (sanitizedData != data)
         downcast<StaticPasteboard>(*m_pasteboard).writeStringInCustomData(type, data);
@@ -317,10 +331,11 @@ Vector<String> DataTransfer::types(AddFilesType addFilesType) const
     if (!canReadTypes())
         return { };
     
-    if (!RuntimeEnabledFeatures::sharedFeatures().customPasteboardDataEnabled()) {
+    bool hideFilesType = !canWriteData() && !allowsFileAccess();
+    if (!DeprecatedGlobalSettings::customPasteboardDataEnabled()) {
         auto types = m_pasteboard->typesForLegacyUnsafeBindings();
         ASSERT(!types.contains("Files"_s));
-        if (m_pasteboard->fileContentState() != Pasteboard::FileContentState::NoFileOrImageData && addFilesType == AddFilesType::Yes)
+        if (!hideFilesType && m_pasteboard->fileContentState() != Pasteboard::FileContentState::NoFileOrImageData && addFilesType == AddFilesType::Yes)
             types.append("Files"_s);
         return types;
     }
@@ -333,7 +348,7 @@ Vector<String> DataTransfer::types(AddFilesType addFilesType) const
     auto fileContentState = m_pasteboard->fileContentState();
     if (hasFileBackedItem || fileContentState != Pasteboard::FileContentState::NoFileOrImageData) {
         Vector<String> types;
-        if (addFilesType == AddFilesType::Yes)
+        if (!hideFilesType && addFilesType == AddFilesType::Yes)
             types.append("Files"_s);
 
         if (fileContentState != Pasteboard::FileContentState::MayContainFilePaths) {
@@ -343,7 +358,7 @@ Vector<String> DataTransfer::types(AddFilesType addFilesType) const
 
         if (safeTypes.contains("text/uri-list"_s))
             types.append("text/uri-list"_s);
-        if (safeTypes.contains("text/html"_s) && RuntimeEnabledFeatures::sharedFeatures().customPasteboardDataEnabled())
+        if (safeTypes.contains("text/html"_s) && DeprecatedGlobalSettings::customPasteboardDataEnabled())
             types.append("text/html"_s);
         return types;
     }
@@ -356,7 +371,7 @@ Vector<Ref<File>> DataTransfer::filesFromPasteboardAndItemList(ScriptExecutionCo
 {
     bool addedFilesFromPasteboard = false;
     Vector<Ref<File>> files;
-    if ((!forDrag() || forFileDrag()) && m_pasteboard->fileContentState() != Pasteboard::FileContentState::NoFileOrImageData) {
+    if (allowsFileAccess() && m_pasteboard->fileContentState() != Pasteboard::FileContentState::NoFileOrImageData) {
         WebCorePasteboardFileReader reader(context);
         m_pasteboard->read(reader);
         files = WTFMove(reader.files);
@@ -449,7 +464,7 @@ void DataTransfer::commitToPasteboard(Pasteboard& nativePasteboard)
     }
 
     auto customData = staticPasteboard.takeCustomData();
-    if (RuntimeEnabledFeatures::sharedFeatures().customPasteboardDataEnabled()) {
+    if (DeprecatedGlobalSettings::customPasteboardDataEnabled()) {
         customData.setOrigin(m_originIdentifier);
         nativePasteboard.writeCustomData({ customData });
         return;
@@ -571,7 +586,7 @@ DragImageRef DataTransfer::createDragImage(IntPoint& location) const
     location = m_dragLocation;
 
     if (m_dragImage)
-        return createDragImageFromImage(m_dragImage->image(), ImageOrientation::None);
+        return createDragImageFromImage(m_dragImage->image(), ImageOrientation::Orientation::None);
 
     if (m_dragImageElement) {
         if (Frame* frame = m_dragImageElement->document().frame())

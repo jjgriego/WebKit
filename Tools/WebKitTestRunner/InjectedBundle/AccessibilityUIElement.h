@@ -42,6 +42,7 @@
 OBJC_CLASS NSArray;
 OBJC_CLASS NSString;
 #include <wtf/RetainPtr.h>
+#include <wtf/WeakObjCPtr.h>
 using PlatformUIElement = id;
 #elif USE(ATSPI)
 namespace WebCore {
@@ -73,7 +74,7 @@ public:
     ~AccessibilityUIElement();
 
 #if PLATFORM(COCOA)
-    id platformUIElement() { return m_element.get(); }
+    id platformUIElement() { return m_element.getAutoreleased(); }
 #elif USE(ATSPI)
     PlatformUIElement platformUIElement() { return m_element.get(); }
 #else
@@ -117,10 +118,16 @@ public:
     void syncPress();
     void asyncIncrement();
     void asyncDecrement();
+    RefPtr<AccessibilityUIElement> focusableAncestor();
+    RefPtr<AccessibilityUIElement> editableAncestor();
+    RefPtr<AccessibilityUIElement> highestEditableAncestor();
 #else
     void syncPress() { press(); }
     void asyncIncrement() { }
     void asyncDecrement() { };
+    RefPtr<AccessibilityUIElement> focusableAncestor() { return nullptr; }
+    RefPtr<AccessibilityUIElement> editableAncestor() { return nullptr; }
+    RefPtr<AccessibilityUIElement> highestEditableAncestor() { return nullptr; }
 #endif
 
     // Attributes - platform-independent implementations
@@ -235,6 +242,7 @@ public:
     int columnCount();
     JSValueRef rowHeaders() const;
     JSValueRef columnHeaders() const;
+    JSRetainPtr<JSStringRef> customContent() const;
 
     // Tree/Outline specific attributes
     RefPtr<AccessibilityUIElement> selectedRowAtIndex(unsigned);
@@ -242,17 +250,19 @@ public:
     RefPtr<AccessibilityUIElement> disclosedRowAtIndex(unsigned);
     RefPtr<AccessibilityUIElement> rowAtIndex(unsigned);
 
-    JSValueRef detailsElements() const;
-    JSValueRef errorMessageElements() const;
     // ARIA specific
     RefPtr<AccessibilityUIElement> ariaOwnsElementAtIndex(unsigned);
     RefPtr<AccessibilityUIElement> ariaFlowToElementAtIndex(unsigned);
     RefPtr<AccessibilityUIElement> ariaControlsElementAtIndex(unsigned);
 #if PLATFORM(COCOA) || USE(ATSPI)
+    JSValueRef detailsElements() const;
     RefPtr<AccessibilityUIElement> ariaDetailsElementAtIndex(unsigned);
+    JSValueRef errorMessageElements() const;
     RefPtr<AccessibilityUIElement> ariaErrorMessageElementAtIndex(unsigned);
 #else
+    JSValueRef detailsElements() const { return { }; }
     RefPtr<AccessibilityUIElement> ariaDetailsElementAtIndex(unsigned) { return nullptr; }
+    JSValueRef errorMessageElements() const { return { }; }
     RefPtr<AccessibilityUIElement> ariaErrorMessageElementAtIndex(unsigned) { return nullptr; }
 #endif
 
@@ -343,6 +353,7 @@ public:
     bool attributedStringForTextMarkerRangeContainsAttribute(JSStringRef, AccessibilityTextMarkerRange*);
     int indexForTextMarker(AccessibilityTextMarker*);
     bool isTextMarkerValid(AccessibilityTextMarker*);
+    bool isTextMarkerNull(AccessibilityTextMarker*);
     RefPtr<AccessibilityTextMarker> textMarkerForIndex(int);
     RefPtr<AccessibilityTextMarker> startTextMarker();
     RefPtr<AccessibilityTextMarker> endTextMarker();
@@ -378,7 +389,6 @@ public:
     int elementTextPosition();
     int elementTextLength();
     JSRetainPtr<JSStringRef> stringForSelection();
-    JSValueRef elementsForRange(unsigned location, unsigned length);
     void increaseTextSelection();
     void decreaseTextSelection();
     RefPtr<AccessibilityUIElement> linkedElement();
@@ -401,6 +411,13 @@ public:
     RefPtr<AccessibilityUIElement> fieldsetAncestorElement();
 
     bool isIsolatedObject() const;
+    
+    bool isInsertion() const;
+    bool isDeletion() const;
+    bool isFirstItemInSuggestion() const;
+    bool isLastItemInSuggestion() const;
+    
+    bool isMarkAnnotation() const;
 private:
     AccessibilityUIElement(PlatformUIElement);
     AccessibilityUIElement(const AccessibilityUIElement&);
@@ -422,7 +439,7 @@ private:
     // A retained, platform specific object used to help manage notifications for this object.
 #if ENABLE(ACCESSIBILITY)
 #if PLATFORM(COCOA)
-    RetainPtr<id> m_element;
+    WeakObjCPtr<id> m_element;
     RetainPtr<id> m_notificationHandler;
     static RefPtr<AccessibilityController> s_controller;
 

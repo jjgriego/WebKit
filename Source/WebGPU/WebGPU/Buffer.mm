@@ -268,7 +268,7 @@ void Buffer::mapAsync(WGPUMapModeFlags mode, size_t offset, size_t size, Complet
 
     m_mapMode = mode;
 
-    m_device->getQueue().onSubmittedWorkDone(0, [protectedThis = Ref { *this }, offset, rangeSize, callback = WTFMove(callback)](WGPUQueueWorkDoneStatus status) mutable {
+    m_device->getQueue().onSubmittedWorkDone([protectedThis = Ref { *this }, offset, rangeSize, callback = WTFMove(callback)](WGPUQueueWorkDoneStatus status) mutable {
         if (protectedThis->m_state == State::MappingPending) {
             protectedThis->m_state = State::Mapped;
 
@@ -329,6 +329,7 @@ void Buffer::unmap()
 #endif
 
     m_state = State::Unmapped;
+    m_mappedRanges = MappedRanges();
 }
 
 void Buffer::setLabel(String&& label)
@@ -355,9 +356,30 @@ const void* wgpuBufferGetConstMappedRange(WGPUBuffer buffer, size_t offset, size
     return WebGPU::fromAPI(buffer).getConstMappedRange(offset, size);
 }
 
+WGPUBufferMapState wgpuBufferGetMapState(WGPUBuffer buffer)
+{
+    switch (WebGPU::fromAPI(buffer).state()) {
+    case WebGPU::Buffer::State::Mapped:
+        return WGPUBufferMapState_Mapped;
+    case WebGPU::Buffer::State::MappedAtCreation:
+        return WGPUBufferMapState_Mapped;
+    case WebGPU::Buffer::State::MappingPending:
+        return WGPUBufferMapState_Pending;
+    case WebGPU::Buffer::State::Unmapped:
+        return WGPUBufferMapState_Unmapped;
+    case WebGPU::Buffer::State::Destroyed:
+        return WGPUBufferMapState_Unmapped;
+    }
+}
+
 void* wgpuBufferGetMappedRange(WGPUBuffer buffer, size_t offset, size_t size)
 {
     return WebGPU::fromAPI(buffer).getMappedRange(offset, size);
+}
+
+uint64_t wgpuBufferGetSize(WGPUBuffer buffer)
+{
+    return WebGPU::fromAPI(buffer).size();
 }
 
 void wgpuBufferMapAsync(WGPUBuffer buffer, WGPUMapModeFlags mode, size_t offset, size_t size, WGPUBufferMapCallback callback, void* userdata)
@@ -369,7 +391,7 @@ void wgpuBufferMapAsync(WGPUBuffer buffer, WGPUMapModeFlags mode, size_t offset,
 
 void wgpuBufferMapAsyncWithBlock(WGPUBuffer buffer, WGPUMapModeFlags mode, size_t offset, size_t size, WGPUBufferMapBlockCallback callback)
 {
-    WebGPU::fromAPI(buffer).mapAsync(mode, offset, size, [callback = WTFMove(callback)](WGPUBufferMapAsyncStatus status) {
+    WebGPU::fromAPI(buffer).mapAsync(mode, offset, size, [callback = WebGPU::fromAPI(WTFMove(callback))](WGPUBufferMapAsyncStatus status) {
         callback(status);
     });
 }
@@ -382,4 +404,10 @@ void wgpuBufferUnmap(WGPUBuffer buffer)
 void wgpuBufferSetLabel(WGPUBuffer buffer, const char* label)
 {
     WebGPU::fromAPI(buffer).setLabel(WebGPU::fromAPI(label));
+}
+
+WGPUBufferUsage wgpuBufferGetUsage(WGPUBuffer buffer)
+{
+    // FIXME: this shouldn't need a cast - https://github.com/webgpu-native/webgpu-headers/issues/172
+    return static_cast<WGPUBufferUsage>(WebGPU::fromAPI(buffer).usage());
 }

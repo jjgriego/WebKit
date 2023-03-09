@@ -53,24 +53,6 @@ InitState DetermineInitState(const Context *context, Buffer *unpackBuffer, const
 }
 }  // namespace
 
-bool IsMipmapFiltered(GLenum minFilterMode)
-{
-    switch (minFilterMode)
-    {
-        case GL_NEAREST:
-        case GL_LINEAR:
-            return false;
-        case GL_NEAREST_MIPMAP_NEAREST:
-        case GL_LINEAR_MIPMAP_NEAREST:
-        case GL_NEAREST_MIPMAP_LINEAR:
-        case GL_LINEAR_MIPMAP_LINEAR:
-            return true;
-        default:
-            UNREACHABLE();
-            return false;
-    }
-}
-
 GLenum ConvertToNearestFilterMode(GLenum filterMode)
 {
     switch (filterMode)
@@ -809,14 +791,10 @@ Texture::~Texture()
     SafeDelete(mTexture);
 }
 
-void Texture::setLabel(const Context *context, const std::string &label)
+angle::Result Texture::setLabel(const Context *context, const std::string &label)
 {
     mState.mLabel = label;
-
-    if (mTexture)
-    {
-        mTexture->onLabelUpdate();
-    }
+    return mTexture->onLabelUpdate(context);
 }
 
 const std::string &Texture::getLabel() const
@@ -826,8 +804,11 @@ const std::string &Texture::getLabel() const
 
 void Texture::setSwizzleRed(const Context *context, GLenum swizzleRed)
 {
-    mState.mSwizzleState.swizzleRed = swizzleRed;
-    signalDirtyState(DIRTY_BIT_SWIZZLE_RED);
+    if (mState.mSwizzleState.swizzleRed != swizzleRed)
+    {
+        mState.mSwizzleState.swizzleRed = swizzleRed;
+        signalDirtyState(DIRTY_BIT_SWIZZLE_RED);
+    }
 }
 
 GLenum Texture::getSwizzleRed() const
@@ -837,8 +818,11 @@ GLenum Texture::getSwizzleRed() const
 
 void Texture::setSwizzleGreen(const Context *context, GLenum swizzleGreen)
 {
-    mState.mSwizzleState.swizzleGreen = swizzleGreen;
-    signalDirtyState(DIRTY_BIT_SWIZZLE_GREEN);
+    if (mState.mSwizzleState.swizzleGreen != swizzleGreen)
+    {
+        mState.mSwizzleState.swizzleGreen = swizzleGreen;
+        signalDirtyState(DIRTY_BIT_SWIZZLE_GREEN);
+    }
 }
 
 GLenum Texture::getSwizzleGreen() const
@@ -848,8 +832,11 @@ GLenum Texture::getSwizzleGreen() const
 
 void Texture::setSwizzleBlue(const Context *context, GLenum swizzleBlue)
 {
-    mState.mSwizzleState.swizzleBlue = swizzleBlue;
-    signalDirtyState(DIRTY_BIT_SWIZZLE_BLUE);
+    if (mState.mSwizzleState.swizzleBlue != swizzleBlue)
+    {
+        mState.mSwizzleState.swizzleBlue = swizzleBlue;
+        signalDirtyState(DIRTY_BIT_SWIZZLE_BLUE);
+    }
 }
 
 GLenum Texture::getSwizzleBlue() const
@@ -859,8 +846,11 @@ GLenum Texture::getSwizzleBlue() const
 
 void Texture::setSwizzleAlpha(const Context *context, GLenum swizzleAlpha)
 {
-    mState.mSwizzleState.swizzleAlpha = swizzleAlpha;
-    signalDirtyState(DIRTY_BIT_SWIZZLE_ALPHA);
+    if (mState.mSwizzleState.swizzleAlpha != swizzleAlpha)
+    {
+        mState.mSwizzleState.swizzleAlpha = swizzleAlpha;
+        signalDirtyState(DIRTY_BIT_SWIZZLE_ALPHA);
+    }
 }
 
 GLenum Texture::getSwizzleAlpha() const
@@ -1706,15 +1696,15 @@ angle::Result Texture::setStorageExternalMemory(Context *context,
     egl::RefCountObjectReleaser<egl::Image> releaseImage;
     ANGLE_TRY(orphanImages(context, &releaseImage));
 
+    ANGLE_TRY(mTexture->setStorageExternalMemory(context, type, levels, internalFormat, size,
+                                                 memoryObject, offset, createFlags, usageFlags,
+                                                 imageCreateInfoPNext));
+
     mState.mImmutableFormat = true;
     mState.mImmutableLevels = static_cast<GLuint>(levels);
     mState.clearImageDescs();
     mState.setImageDescChain(0, static_cast<GLuint>(levels - 1), size, Format(internalFormat),
                              InitState::Initialized);
-
-    ANGLE_TRY(mTexture->setStorageExternalMemory(context, type, levels, internalFormat, size,
-                                                 memoryObject, offset, createFlags, usageFlags,
-                                                 imageCreateInfoPNext));
 
     // Changing the texture to immutable can trigger a change in the base and max levels:
     // GLES 3.0.4 section 3.8.10 pg 158:
@@ -2127,7 +2117,7 @@ const OffsetBindingPointer<Buffer> &Texture::getBuffer() const
     return mState.mBuffer;
 }
 
-void Texture::onAttach(const Context *context, rx::Serial framebufferSerial)
+void Texture::onAttach(const Context *context, rx::UniqueSerial framebufferSerial)
 {
     addRef();
 
@@ -2141,7 +2131,7 @@ void Texture::onAttach(const Context *context, rx::Serial framebufferSerial)
     }
 }
 
-void Texture::onDetach(const Context *context, rx::Serial framebufferSerial)
+void Texture::onDetach(const Context *context, rx::UniqueSerial framebufferSerial)
 {
     // Erase first instance. If there are multiple bindings, leave the others.
     ASSERT(isBoundToFramebuffer(framebufferSerial));
@@ -2430,6 +2420,22 @@ GLenum Texture::getImplementationColorReadFormat(const Context *context) const
 GLenum Texture::getImplementationColorReadType(const Context *context) const
 {
     return mTexture->getColorReadType(context);
+}
+
+bool Texture::isCompressedFormatEmulated(const Context *context,
+                                         TextureTarget target,
+                                         GLint level) const
+{
+    if (!getFormat(target, level).info->compressed)
+    {
+        // If it isn't compressed, the remaining logic won't work
+        return false;
+    }
+
+    GLenum implFormat = getImplementationColorReadFormat(context);
+
+    // Check against the list of formats used to emulate compressed textures
+    return IsEmulatedCompressedFormat(implFormat);
 }
 
 angle::Result Texture::getTexImage(const Context *context,

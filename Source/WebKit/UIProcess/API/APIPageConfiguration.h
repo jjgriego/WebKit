@@ -49,6 +49,10 @@ class WebURLSchemeHandler;
 class WebUserContentControllerProxy;
 class WebsiteDataStore;
 
+#if ENABLE(WK_WEB_EXTENSIONS)
+class WebExtensionController;
+#endif
+
 #if PLATFORM(IOS_FAMILY)
 enum class AttributionOverrideTesting : uint8_t {
     NoOverride,
@@ -82,6 +86,14 @@ public:
     WebKit::WebUserContentControllerProxy* userContentController();
     void setUserContentController(WebKit::WebUserContentControllerProxy*);
 
+#if ENABLE(WK_WEB_EXTENSIONS)
+    WebKit::WebExtensionController* webExtensionController();
+    void setWebExtensionController(WebKit::WebExtensionController*);
+
+    WebKit::WebExtensionController* weakWebExtensionController();
+    void setWeakWebExtensionController(WebKit::WebExtensionController*);
+#endif
+
     WebKit::WebPageGroup* pageGroup();
     void setPageGroup(WebKit::WebPageGroup*);
 
@@ -90,6 +102,9 @@ public:
 
     WebKit::WebPageProxy* relatedPage() const;
     void setRelatedPage(WebKit::WebPageProxy*);
+
+    WebKit::WebPageProxy* pageToCloneSessionStorageFrom() const;
+    void setPageToCloneSessionStorageFrom(WebKit::WebPageProxy*);
 
     WebKit::VisitedLinkStore* visitedLinkStore();
     void setVisitedLinkStore(WebKit::VisitedLinkStore*);
@@ -144,7 +159,10 @@ public:
 
     const Vector<WTF::String>& corsDisablingPatterns() const { return m_corsDisablingPatterns; }
     void setCORSDisablingPatterns(Vector<WTF::String>&& patterns) { m_corsDisablingPatterns = WTFMove(patterns); }
-    
+
+    const HashSet<WTF::String>& maskedURLSchemes() const { return m_maskedURLSchemes; }
+    void setMaskedURLSchemes(HashSet<WTF::String>&& schemes) { m_maskedURLSchemes = WTFMove(schemes); }
+
     bool userScriptsShouldWaitUntilNotification() const { return m_userScriptsShouldWaitUntilNotification; }
     void setUserScriptsShouldWaitUntilNotification(bool value) { m_userScriptsShouldWaitUntilNotification = value; }
 
@@ -190,8 +208,11 @@ public:
     void setRequiresUserActionForEditingControlsManager(bool value) { m_requiresUserActionForEditingControlsManager = value; }
 #endif
 
-    bool isCaptivePortalModeExplicitlySet() const;
-    bool captivePortalModeEnabled() const;
+    bool isLockdownModeExplicitlySet() const;
+    bool lockdownModeEnabled() const;
+    
+    void setAllowTestOnlyIPC(bool enabled) { m_allowTestOnlyIPC = enabled; }
+    bool allowTestOnlyIPC() const { return m_allowTestOnlyIPC; }
 
     void setContentSecurityPolicyModeForExtension(WebCore::ContentSecurityPolicyModeForExtension mode) { m_contentSecurityPolicyModeForExtension = mode; }
     WebCore::ContentSecurityPolicyModeForExtension contentSecurityPolicyModeForExtension() const { return m_contentSecurityPolicyModeForExtension; }
@@ -200,9 +221,14 @@ private:
 
     RefPtr<WebKit::WebProcessPool> m_processPool;
     RefPtr<WebKit::WebUserContentControllerProxy> m_userContentController;
+#if ENABLE(WK_WEB_EXTENSIONS)
+    RefPtr<WebKit::WebExtensionController> m_webExtensionController;
+    WeakPtr<WebKit::WebExtensionController> m_weakWebExtensionController;
+#endif
     RefPtr<WebKit::WebPageGroup> m_pageGroup;
     RefPtr<WebKit::WebPreferences> m_preferences;
     RefPtr<WebKit::WebPageProxy> m_relatedPage;
+    WeakPtr<WebKit::WebPageProxy> m_pageToCloneSessionStorageFrom;
     RefPtr<WebKit::VisitedLinkStore> m_visitedLinkStore;
 
     RefPtr<WebKit::WebsiteDataStore> m_websiteDataStore;
@@ -217,6 +243,7 @@ private:
     bool m_waitsForPaintAfterViewDidMoveToWindow { true };
     bool m_drawsBackground { true };
     bool m_controlledByAutomation { false };
+    bool m_allowTestOnlyIPC { false };
     std::optional<double> m_cpuLimit;
 
     WTF::String m_overrideContentSecurityPolicy;
@@ -231,6 +258,7 @@ private:
 
     HashMap<WTF::String, Ref<WebKit::WebURLSchemeHandler>> m_urlSchemeHandlers;
     Vector<WTF::String> m_corsDisablingPatterns;
+    HashSet<WTF::String> m_maskedURLSchemes;
     bool m_userScriptsShouldWaitUntilNotification { true };
     bool m_crossOriginAccessControlCheckEnabled { true };
     WTF::String m_processDisplayName;

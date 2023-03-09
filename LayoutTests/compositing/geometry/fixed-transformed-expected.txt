@@ -8,10 +8,15 @@
       (children 1
         (GraphicsLayer
           (position -100.00 100.00)
-          (bounds 220.00 120.00)
-          (contentsOpaque 1)
-          (drawsContent 1)
-          (transform [1.00 0.00 0.00 0.00] [0.00 1.00 0.00 0.00] [0.00 0.00 1.00 0.00] [100.00 0.00 0.00 1.00])
+          (preserves3D 1)
+          (children 1
+            (GraphicsLayer
+              (bounds 220.00 120.00)
+              (contentsOpaque 1)
+              (drawsContent 1)
+              (transform [1.00 0.00 0.00 0.00] [0.00 1.00 0.00 0.00] [0.00 0.00 1.00 0.00] [100.00 0.00 0.00 1.00])
+            )
+          )
         )
       )
     )

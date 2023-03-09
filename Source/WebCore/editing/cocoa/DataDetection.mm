@@ -35,7 +35,7 @@
 #import "CommonAtomStrings.h"
 #import "DataDetectionResultsStorage.h"
 #import "Editing.h"
-#import "ElementAncestorIterator.h"
+#import "ElementAncestorIteratorInlines.h"
 #import "ElementRareData.h"
 #import "ElementTraversal.h"
 #import "FrameView.h"
@@ -54,6 +54,7 @@
 #import "Text.h"
 #import "TextIterator.h"
 #import "TextRecognitionResult.h"
+#import "TypedElementDescendantIteratorInlines.h"
 #import "VisiblePosition.h"
 #import "VisibleUnits.h"
 #import <pal/spi/ios/DataDetectorsUISPI.h>
@@ -498,8 +499,12 @@ NSArray *DataDetection::detectContentInRange(const SimpleRange& contextRange, Op
         for (auto& result : allResults) {
             DDQueryRange queryRange = PAL::softLink_DataDetectorsCore_DDResultGetQueryRangeForURLification(result.get());
             CFIndex iteratorTargetAdvanceCount = (CFIndex)PAL::softLink_DataDetectorsCore_DDScanQueryGetFragmentMetaData(scanQuery.get(), queryRange.start.queryIndex);
-            for (; iteratorCount < iteratorTargetAdvanceCount; ++iteratorCount)
+            for (; iteratorCount < iteratorTargetAdvanceCount && !iterator.atEnd(); ++iteratorCount)
                 iterator.advance();
+            if (iterator.atEnd()) {
+                ASSERT_NOT_REACHED();
+                return nil;
+            }
 
             Vector<SimpleRange> fragmentRanges;
             CFIndex fragmentIndex = queryRange.start.queryIndex;
@@ -517,8 +522,12 @@ NSArray *DataDetection::detectContentInRange(const SimpleRange& contextRange, Op
             while (fragmentIndex < queryRange.end.queryIndex) {
                 ++fragmentIndex;
                 iteratorTargetAdvanceCount = (CFIndex)PAL::softLink_DataDetectorsCore_DDScanQueryGetFragmentMetaData(scanQuery.get(), fragmentIndex);
-                for (; iteratorCount < iteratorTargetAdvanceCount; ++iteratorCount)
+                for (; iteratorCount < iteratorTargetAdvanceCount && !iterator.atEnd(); ++iteratorCount)
                     iterator.advance();
+                if (iterator.atEnd()) {
+                    ASSERT_NOT_REACHED();
+                    return nil;
+                }
 
                 auto fragmentRange = iterator.range();
                 if (fragmentIndex == queryRange.end.queryIndex)
@@ -538,7 +547,7 @@ NSArray *DataDetection::detectContentInRange(const SimpleRange& contextRange, Op
     RefPtr<Text> lastTextNodeToUpdate;
     String lastNodeContent;
     unsigned contentOffset = 0;
-    DDQueryOffset lastModifiedQueryOffset = { -1, 0 };
+    DDQueryOffset lastModifiedQueryOffset = { .queryIndex = -1, .offset = 0 };
 
     // For each result add the link.
     // Since there could be multiple results in the same text node, the node is only modified when
@@ -619,7 +628,7 @@ NSArray *DataDetection::detectContentInRange(const SimpleRange& contextRange, Op
                         auto underlineColor = convertColor<SRGBA<uint8_t>>(hsla);
 
                         anchorElement->setInlineStyleProperty(CSSPropertyColor, CSSValueCurrentcolor);
-                        anchorElement->setInlineStyleProperty(CSSPropertyTextDecorationColor, serializationForCSS(underlineColor));
+                        anchorElement->setInlineStyleProperty(CSSPropertyTextDecorationColor, serializationForCSS(static_cast<Color>(underlineColor)));
                     }
                 }
             }

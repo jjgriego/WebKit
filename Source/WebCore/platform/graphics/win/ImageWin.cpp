@@ -25,12 +25,9 @@
 
 #include "config.h"
 #include "Image.h"
+
 #include "BitmapImage.h"
-
 #include "SharedBuffer.h"
-
-// This function loads resources from WebKit
-RefPtr<WebCore::FragmentedSharedBuffer> loadResourceIntoBuffer(const char*);
 
 namespace WebCore {
 
@@ -40,9 +37,7 @@ void BitmapImage::invalidatePlatformData()
 
 Ref<Image> Image::loadPlatformResource(const char *name)
 {
-    auto buffer = loadResourceIntoBuffer(name);
     auto img = BitmapImage::create();
-    img->setData(WTFMove(buffer), true);
     return img;
 }
 

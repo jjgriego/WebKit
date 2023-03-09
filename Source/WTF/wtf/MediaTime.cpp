@@ -304,13 +304,10 @@ MediaTime MediaTime::operator*(int32_t rhs) const
         return positiveInfiniteTime();
     }
 
+    if (hasDoubleValue())
+        return MediaTime::createWithDouble(m_timeValueAsDouble * rhs);
+
     MediaTime a = *this;
-
-    if (a.hasDoubleValue()) {
-        a.m_timeValueAsDouble *= rhs;
-        return a;
-    }
-
     while (!safeMultiply(a.m_timeValue, rhs, a.m_timeValue)) {
         if (a.m_timeScale == 1)
             return signum(a.m_timeValue) == signum(rhs) ? positiveInfiniteTime() : negativeInfiniteTime();
@@ -553,10 +550,10 @@ void MediaTime::dump(PrintStream& out) const
 
 String MediaTime::toString() const
 {
-    const char* invalid = isInvalid() ? ", invalid" : "";
+    auto invalid = isInvalid() ? ", invalid"_s : ""_s;
     if (hasDoubleValue())
         return makeString('{', toDouble(), invalid, '}');
-    return makeString('{', m_timeValue, '/', m_timeScale, " = ", toDouble(), invalid, '}');
+    return makeString('{', m_timeValue, '/', m_timeScale, " = "_s, toDouble(), invalid, '}');
 }
 
 Ref<JSON::Object> MediaTime::toJSONObject() const

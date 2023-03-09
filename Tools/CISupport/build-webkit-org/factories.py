@@ -38,11 +38,13 @@ class Factory(factory.BuildFactory):
             self.addStep(KillOldProcesses())
         self.addStep(CleanBuildIfScheduled())
         self.addStep(DeleteStaleBuildFiles())
+        if platform.startswith('mac'):
+            self.addStep(PruneCoreSymbolicationdCacheIfTooLarge())
         if platform == "win":
             self.addStep(InstallWin32Dependencies())
         if platform == "gtk" and "--no-experimental-features" not in (additionalArguments or []):
             self.addStep(InstallGtkDependencies())
-        if platform == "wpe":
+        if platform == "wpe" and "--no-experimental-features" not in (additionalArguments or []):
             self.addStep(InstallWpeDependencies())
 
 
@@ -127,7 +129,6 @@ class TestFactory(Factory):
                 self.addStep(RunWebDriverTests())
         if platform == "wpe":
             self.addStep(RunWPEAPITests())
-            self.addStep(RunWebDriverTests())
 
 
 class BuildAndTestFactory(TestFactory):
@@ -175,7 +176,7 @@ class BuildAndTestAllButJSCFactory(BuildAndTestFactory):
     JSCTestClass = None
 
     def __init__(self, platform, configuration, architectures, triggers=None, additionalArguments=None, device_model=None, **kwargs):
-        BuildAndTestFactory.__init__(self, platform, configuration, architectures, additionalArguments, device_model, **kwargs)
+        BuildAndTestFactory.__init__(self, platform, configuration, architectures, triggers, additionalArguments, device_model, **kwargs)
         self.addStep(RunWebDriverTests())
 
 

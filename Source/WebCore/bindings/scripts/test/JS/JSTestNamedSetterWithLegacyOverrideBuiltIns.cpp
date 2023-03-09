@@ -106,7 +106,7 @@ template<> void JSTestNamedSetterWithLegacyOverrideBuiltInsDOMConstructor::initi
 
 static const HashTableValue JSTestNamedSetterWithLegacyOverrideBuiltInsPrototypeTableValues[] =
 {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsTestNamedSetterWithLegacyOverrideBuiltInsConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestNamedSetterWithLegacyOverrideBuiltInsConstructor, 0 } },
 };
 
 const ClassInfo JSTestNamedSetterWithLegacyOverrideBuiltInsPrototype::s_info = { "TestNamedSetterWithLegacyOverrideBuiltIns"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestNamedSetterWithLegacyOverrideBuiltInsPrototype) };
@@ -274,9 +274,9 @@ JSC::GCClient::IsoSubspace* JSTestNamedSetterWithLegacyOverrideBuiltIns::subspac
 {
     return WebCore::subspaceForImpl<JSTestNamedSetterWithLegacyOverrideBuiltIns, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForTestNamedSetterWithLegacyOverrideBuiltIns.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForTestNamedSetterWithLegacyOverrideBuiltIns = WTFMove(space); },
+        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForTestNamedSetterWithLegacyOverrideBuiltIns = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForTestNamedSetterWithLegacyOverrideBuiltIns.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForTestNamedSetterWithLegacyOverrideBuiltIns = WTFMove(space); }
+        [] (auto& spaces, auto&& space) { spaces.m_subspaceForTestNamedSetterWithLegacyOverrideBuiltIns = std::forward<decltype(space)>(space); }
     );
 }
 
@@ -285,7 +285,7 @@ void JSTestNamedSetterWithLegacyOverrideBuiltIns::analyzeHeap(JSCell* cell, Heap
     auto* thisObject = jsCast<JSTestNamedSetterWithLegacyOverrideBuiltIns*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, "url "_s + thisObject->scriptExecutionContext()->url().string());
     Base::analyzeHeap(cell, analyzer);
 }
 

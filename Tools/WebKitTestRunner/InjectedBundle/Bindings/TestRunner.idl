@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -74,12 +74,14 @@ interface TestRunner {
     boolean hasDOMCache(DOMString origin);
     unsigned long domCacheSize(DOMString origin);
     undefined setAllowStorageQuotaIncrease(boolean value);
+    undefined setQuota(unsigned long long quota);
 
     // Special options.
     undefined keepWebHistory();
     undefined setAcceptsEditing(boolean value);
     undefined preventPopupWindows();
     undefined setCustomPolicyDelegate(boolean enabled, boolean permissive);
+    undefined skipPolicyDelegateNotifyDone();
     undefined addOriginAccessAllowListEntry(DOMString sourceOrigin, DOMString destinationProtocol, DOMString destinationHost, boolean allowDestinationSubdomains);
     undefined removeOriginAccessAllowListEntry(DOMString sourceOrigin, DOMString destinationProtocol, DOMString destinationHost, boolean allowDestinationSubdomains);
     undefined setUserStyleSheetEnabled(boolean value);
@@ -193,6 +195,7 @@ interface TestRunner {
     // Cookies testing
     undefined setAlwaysAcceptCookies(boolean accept);
     undefined setOnlyAcceptFirstPartyCookies(boolean accept);
+    undefined removeAllCookies(object callback);
 
     // Page Visibility API
     undefined setPageVisibility(DOMString state);
@@ -216,6 +219,9 @@ interface TestRunner {
     undefined setMockGeolocationPosition(double latitude, double longitude, double accuracy, optional double? altitude, optional double? altitudeAccuracy, optional double? heading, optional double? speed, optional double? floorLevel);
     undefined setMockGeolocationPositionUnavailableError(DOMString errorMessage);
     boolean isGeolocationProviderActive();
+
+    // Screen Wake Lock
+    undefined setScreenWakeLockPermission(boolean value);
 
     // MediaStream
     undefined setUserMediaPermission(boolean value);
@@ -247,6 +253,7 @@ interface TestRunner {
     undefined setAuthenticationPassword(DOMString password);
 
     undefined setAllowsAnySSLCertificate(boolean value);
+    undefined setBackgroundFetchPermission(boolean value);
 
     undefined setShouldSwapToEphemeralSessionOnNextNavigation(boolean value);
     undefined setShouldSwapToDefaultSessionOnNextNavigation(boolean value);
@@ -281,10 +288,9 @@ interface TestRunner {
 
     // Contextual menu actions
     undefined setAllowedMenuActions(object actions);
-    undefined installCustomMenuAction(DOMString name, boolean dismissesAutomatically, object callback);
 
     // Gamepad
-    undefined setMockGamepadDetails(unsigned long index, DOMString id, DOMString mapping, unsigned long axisCount, unsigned long buttonCount);
+    undefined setMockGamepadDetails(unsigned long index, DOMString id, DOMString mapping, unsigned long axisCount, unsigned long buttonCount, boolean supportsDualRumble);
     undefined setMockGamepadAxisValue(unsigned long index, unsigned long axisIndex, double value);
     undefined setMockGamepadButtonValue(unsigned long index, unsigned long buttonIndex, double value);
     undefined connectMockGamepad(unsigned long index);
@@ -347,6 +353,8 @@ interface TestRunner {
     undefined statisticsSetThirdPartyCNAMEDomain(DOMString cnameURLString, object callback);
     undefined loadedSubresourceDomains(object callback);
 
+    undefined reloadFromOrigin();
+
     // Injected bundle form client.
     undefined installTextDidChangeInTextFieldCallback(object callback);
     undefined installTextFieldDidBeginEditingCallback(object callback);
@@ -385,16 +393,20 @@ interface TestRunner {
     undefined addMockScreenDevice(DOMString persistentId, DOMString label);
     undefined clearMockMediaDevices();
     undefined removeMockMediaDevice(DOMString persistentId);
+    undefined setMockMediaDeviceIsEphemeral(DOMString persistentId, boolean isEphemeral);
     undefined resetMockMediaDevices();
     undefined setMockCameraOrientation(unsigned long orientation);
     boolean isMockRealtimeMediaSourceCenterEnabled();
     undefined setMockCaptureDevicesInterrupted(boolean isCameraInterrupted, boolean isMicrophoneInterrupted);
+    undefined triggerMockMicrophoneConfigurationChange();
 
     boolean hasAppBoundSession();
     undefined clearAppBoundSession();
     undefined setAppBoundDomains(object originsArray, object callback);
     boolean didLoadAppInitiatedRequest();
     boolean didLoadNonAppInitiatedRequest();
+
+    undefined setManagedDomains(object originsArray, object callback);
 
     undefined injectUserScript(DOMString string);
     readonly attribute unsigned long userScriptInjectedCount;
@@ -431,4 +443,7 @@ interface TestRunner {
     undefined setIsMediaKeySystemPermissionGranted(boolean value);
 
     undefined takeViewPortSnapshot(object callback);
+
+    // Reporting API
+    undefined generateTestReport(DOMString message, DOMString group);
 };

@@ -29,8 +29,13 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class _WKHitTestResult;
+
 WK_CLASS_AVAILABLE(macos(10.12))
 @interface _WKContextMenuElementInfo : NSObject <NSCopying>
+
+@property (nonatomic, readonly, copy) _WKHitTestResult *hitTestResult WK_API_AVAILABLE(macos(13.3));
+@property (nonatomic, readonly, copy, nullable) NSString *qrCodePayloadString WK_API_AVAILABLE(macos(WK_MAC_TBA));
 
 @end
 

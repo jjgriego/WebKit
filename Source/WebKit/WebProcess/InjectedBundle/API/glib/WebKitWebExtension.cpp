@@ -130,7 +130,7 @@ struct _WebKitWebExtensionPrivate {
 
 static guint signals[LAST_SIGNAL] = { 0, };
 
-WEBKIT_DEFINE_TYPE(WebKitWebExtension, webkit_web_extension, G_TYPE_OBJECT)
+WEBKIT_DEFINE_FINAL_TYPE(WebKitWebExtension, webkit_web_extension, G_TYPE_OBJECT, GObject)
 
 static void webkit_web_extension_class_init(WebKitWebExtensionClass* klass)
 {
@@ -196,13 +196,6 @@ private:
         if (m_extension->priv->garbageCollectOnPageDestroy)
             WebCore::GCController::singleton().garbageCollectNow();
 #endif
-    }
-
-    void didReceiveMessageToPage(InjectedBundle&, WebPage& page, const String& messageName, API::Object* messageBody) override
-    {
-        ASSERT(messageBody->type() == API::Object::Type::Dictionary);
-        if (auto* webPage = m_extension->priv->pages.get(&page))
-            webkitWebPageDidReceiveMessage(webPage, messageName, *static_cast<API::Dictionary*>(messageBody));
     }
 
     WebKitWebExtension* m_extension;

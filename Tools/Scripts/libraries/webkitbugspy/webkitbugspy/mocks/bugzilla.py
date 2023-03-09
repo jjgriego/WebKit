@@ -1,4 +1,4 @@
-# Copyright (C) 2021-2022 Apple Inc. All rights reserved.
+# Copyright (C) 2021-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -29,6 +29,7 @@ import urllib
 from .base import Base
 
 from webkitbugspy import User, Issue
+from webkitbugspy.mocks.radar import Radar as RadarMock
 from webkitcorepy import mocks
 
 
@@ -145,6 +146,35 @@ class Bugzilla(Base, mocks.Requests):
             if data.get('version'):
                 issue['version'] = data['version']
 
+            if not issue.get('watchers', None):
+                issue['watchers'] = []
+            for candidate in data.get('cc', {}).get('add', []):
+                if candidate in [u.emails for u in issue['watchers']]:
+                    continue
+                candidate = self.users.get(candidate)
+                if not candidate:
+                    continue
+                issue['watchers'].append(candidate)
+                if 'Radar' not in candidate.name or 'Bug Importer' not in candidate.name or 'InRadar' in data.get('keywords', {}).get('add', []):
+                    continue
+                radar_id = issue['id']
+                if RadarMock.top:
+                    radar_id = RadarMock.top.add(dict(
+                        title='{} ({})'.format(issue['description'], issue['id']),
+                        timestamp=time.time(),
+                        opened=True,
+                        creator=candidate,
+                        assignee=user,
+                        description='From <https://{}/show_bug.cgi?id={}>:\n\n{}'.format(self.hosts[0], issue['id'], issue['description']),
+                        project=issue.get('project'),
+                        component=issue.get('component'),
+                        watchers=[candidate, user],
+                        keywords=issue.get('keywords', []),
+                    ))
+                issue['comments'].append(
+                    Issue.Comment(user=candidate, timestamp=int(time.time()), content='<rdar://problem/{}>'.format(radar_id)),
+                )
+
         return mocks.Response.fromJson(dict(
             bugs=[dict(
                 id=id,
@@ -156,6 +186,7 @@ class Bugzilla(Base, mocks.Requests):
                 product=issue.get('project'),
                 component=issue.get('component'),
                 version=issue.get('version'),
+                keywords=issue.get('keywords', []),
                 creator_detail=dict(
                     email=issue['creator'].email,
                     name=self.users[issue['creator'].name].username,
@@ -310,6 +341,7 @@ class Bugzilla(Base, mocks.Requests):
             project=data.get('product'),
             component=data.get('component'),
             version=data.get('version'),
+            keywords=[],
             comments=[], watchers=[user, assignee] if assignee else [user],
         )
 

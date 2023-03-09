@@ -75,6 +75,7 @@ IGNORE_WARNINGS_END
 @property (readonly) BOOL isLowConfidence;
 @end
 
+#if !HAVE(NSTEXTLIST_MARKER_FORMATS)
 @interface NSParagraphStyle ()
 - (NSArray *)textLists;
 @end
@@ -83,6 +84,7 @@ IGNORE_WARNINGS_END
 @property NSInteger startingItemNumber;
 @property (readonly, copy) NSString *markerFormat;
 @end
+#endif
 
 WTF_EXTERN_C_BEGIN
 
@@ -128,9 +130,11 @@ WTF_EXTERN_C_END
 - (void)setNextPreviousItemsVisible:(BOOL)visible;
 @end
 
+#if !HAVE(UIKIT_BAR_BUTTON_LAYOUT_CUSTOMIZATION)
 @interface UIBarButtonItemGroup ()
 @property (nonatomic, readwrite, assign, getter=_isHidden, setter=_setHidden:) BOOL hidden;
 @end
+#endif
 
 @protocol UITextInputMultiDocument <NSObject>
 @optional
@@ -212,9 +216,9 @@ typedef NS_ENUM(NSInteger, UIWKGestureType) {
     UIWKGestureLoupe
 };
 
+@class RVItem;
 @protocol UIWKInteractionViewProtocol
 - (void)pasteWithCompletionHandler:(void (^)(void))completionHandler;
-- (void)requestRectsToEvadeForSelectionCommandsWithCompletionHandler:(void(^)(NSArray<NSValue *> *rects))completionHandler;
 - (void)requestAutocorrectionRectsForString:(NSString *)input withCompletionHandler:(void (^)(UIWKAutocorrectionRects *rectsForInput))completionHandler;
 - (void)requestAutocorrectionContextWithCompletionHandler:(void (^)(UIWKAutocorrectionContext *autocorrectionContext))completionHandler;
 - (void)selectWordBackward;
@@ -230,6 +234,7 @@ typedef NS_ENUM(NSInteger, UIWKGestureType) {
 
 @optional
 - (void)insertTextPlaceholderWithSize:(CGSize)size completionHandler:(void (^)(UITextPlaceholder *))completionHandler;
+- (void)prepareSelectionForContextMenuWithLocationInView:(CGPoint)locationInView completionHandler:(void(^)(BOOL shouldPresentMenu, RVItem * rvItem))completionHandler;
 - (void)removeTextPlaceholder:(UITextPlaceholder *)placeholder willInsertText:(BOOL)willInsertText completionHandler:(void (^)(void))completionHandler;
 @end
 
@@ -252,10 +257,19 @@ IGNORE_WARNINGS_END
 @property (nonatomic, readonly) CGRect _referenceBounds;
 @end
 
+typedef NS_ENUM(NSInteger, _UIDataOwner) {
+    _UIDataOwnerUndefined,
+    _UIDataOwnerUser,
+    _UIDataOwnerEnterprise,
+    _UIDataOwnerShared,
+};
+
 @interface UIResponder (UIKitSPI)
 - (UIResponder *)firstResponder;
 - (void)makeTextWritingDirectionNatural:(id)sender;
 @property (nonatomic, setter=_setSuppressSoftwareKeyboard:) BOOL _suppressSoftwareKeyboard;
+@property (nonatomic, setter=_setDataOwnerForCopy:) _UIDataOwner _dataOwnerForCopy;
+@property (nonatomic, setter=_setDataOwnerForPaste:) _UIDataOwner _dataOwnerForPaste;
 @end
 
 @interface UIKeyboardImpl : UIView
@@ -282,10 +296,25 @@ IGNORE_WARNINGS_END
 
 @interface UIWKTextInteractionAssistant : UITextInteractionAssistant
 - (void)lookup:(NSString *)textWithContext withRange:(NSRange)range fromRect:(CGRect)presentationRect;
+- (void)selectionChanged;
 @end
 
-@interface UIAction ()
-- (void)_performActionWithSender:(id)sender;
+typedef NS_ENUM(NSInteger, _UITextSearchMatchMethod) {
+    _UITextSearchMatchMethodContains,
+    _UITextSearchMatchMethodStartsWith,
+    _UITextSearchMatchMethodFullWord,
+};
+
+@protocol _UITextSearching <NSObject>
+
+@optional
+- (void)didBeginTextSearchOperation;
+- (void)didEndTextSearchOperation;
+@end
+
+
+@interface _UIFindInteraction : NSObject <UIInteraction>
+@property (nonatomic, strong) id<_UITextSearching> searchableObject;
 @end
 
 #endif // USE(APPLE_INTERNAL_SDK)
@@ -356,5 +385,19 @@ typedef NS_ENUM(NSUInteger, _UIClickInteractionEvent) {
 - (void)willInsertFinalDictationResult;
 - (void)didInsertFinalDictationResult;
 @end
+
+@protocol UIWKInteractionViewProtocol_Staging_95652872 <UIWKInteractionViewProtocol_Staging_91919121>
+#if HAVE(UI_EDIT_MENU_INTERACTION)
+- (void)requestPreferredArrowDirectionForEditMenuWithCompletionHandler:(void (^)(UIEditMenuArrowDirection))completionHandler;
+#endif
+@end
+
+#if HAVE(UIFINDINTERACTION)
+@interface UITextSearchOptions ()
+@property (nonatomic, readwrite) UITextSearchMatchMethod wordMatchMethod;
+@property (nonatomic, readwrite) NSStringCompareOptions stringCompareOptions;
+@end
+
+#endif
 
 #endif // PLATFORM(IOS_FAMILY)

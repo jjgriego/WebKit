@@ -32,6 +32,9 @@
 
 namespace WebCore {
 
+enum class DocumentMarkerLineStyleMode : uint8_t;
+
+struct AttachmentLayout;
 class BorderData;
 class Element;
 class FileList;
@@ -68,10 +71,20 @@ public:
     // "border" are set, or if the appearance is not supported by the theme.
     void adjustStyle(RenderStyle&, const Element*, const RenderStyle* userAgentAppearanceStyle);
 
-    // This method is called to paint the widget as a background of the RenderObject.  A widget's foreground, e.g., the
-    // text of a button, is always rendered by the engine itself.  The boolean return value indicates
+    virtual bool canCreateControlPartForRenderer(const RenderObject&) const { return false; }
+    virtual bool canCreateControlPartForBorderOnly(const RenderObject&) const { return false; }
+    virtual bool canCreateControlPartForDecorations(const RenderObject&) const { return false; }
+    RefPtr<ControlPart> createControlPart(const RenderObject&) const;
+
+    OptionSet<ControlStyle::State> extractControlStyleStatesForRenderer(const RenderObject&) const;
+    ControlStyle extractControlStyleForRenderer(const RenderBox&) const;
+
+    // These methods are called to paint the widget as a background of the RenderObject. A widget's foreground, e.g., the
+    // text of a button, is always rendered by the engine itself. The boolean return value indicates
     // whether the CSS border/background should also be painted.
+    bool paint(const RenderBox&, ControlPart&, const PaintInfo&, const LayoutRect&);
     bool paint(const RenderBox&, ControlStates&, const PaintInfo&, const LayoutRect&);
+    
     bool paintBorderOnly(const RenderBox&, const PaintInfo&, const LayoutRect&);
     void paintDecorations(const RenderBox&, const PaintInfo&, const LayoutRect&);
 
@@ -92,9 +105,6 @@ public:
     virtual String mediaControlsFormattedStringForDuration(double) { return String(); }
 #endif // ENABLE(MODERN_MEDIA_CONTROLS)
 #endif // ENABLE(VIDEO)
-#if ENABLE(FULLSCREEN_API)
-    virtual String extraFullScreenStyleSheet() { return String(); }
-#endif
 #if ENABLE(ATTACHMENT_ELEMENT)
     virtual String attachmentStyleSheet() const;
 #endif
@@ -114,7 +124,7 @@ public:
 
     // A method for asking if a control is a container or not.  Leaf controls have to have some special behavior (like
     // the baseline position API above).
-    bool isControlContainer(ControlPart) const;
+    bool isControlContainer(StyleAppearance) const;
 
     // A method asking if the control changes its tint when the window has focus or not.
     virtual bool controlSupportsTints(const RenderObject&) const { return false; }
@@ -148,6 +158,9 @@ public:
 
     virtual bool supportsBoxShadow(const RenderStyle&) const { return false; }
 
+    virtual bool useFormSemanticContext() const { return false; }
+    virtual bool supportsLargeFormControls() const { return false; }
+
     // Text selection colors.
     Color activeSelectionBackgroundColor(OptionSet<StyleColorOptions>) const;
     Color inactiveSelectionBackgroundColor(OptionSet<StyleColorOptions>) const;
@@ -156,8 +169,8 @@ public:
     Color inactiveSelectionForegroundColor(OptionSet<StyleColorOptions>) const;
 
     // List box selection colors
-    Color activeListBoxSelectionBackgroundColor(OptionSet<StyleColorOptions>) const;
-    Color activeListBoxSelectionForegroundColor(OptionSet<StyleColorOptions>) const;
+    WEBCORE_EXPORT Color activeListBoxSelectionBackgroundColor(OptionSet<StyleColorOptions>) const;
+    WEBCORE_EXPORT Color activeListBoxSelectionForegroundColor(OptionSet<StyleColorOptions>) const;
     Color inactiveListBoxSelectionBackgroundColor(OptionSet<StyleColorOptions>) const;
     Color inactiveListBoxSelectionForegroundColor(OptionSet<StyleColorOptions>) const;
 
@@ -171,7 +184,7 @@ public:
 
     Color datePlaceholderTextColor(const Color& textColor, const Color& backgroundColor) const;
 
-    virtual Color disabledTextColor(const Color& textColor, const Color& backgroundColor) const;
+    Color documentMarkerLineColor(DocumentMarkerLineStyleMode, OptionSet<StyleColorOptions>) const;
 
     WEBCORE_EXPORT Color focusRingColor(OptionSet<StyleColorOptions>) const;
     virtual Color platformFocusRingColor(OptionSet<StyleColorOptions>) const { return Color::black; }
@@ -197,16 +210,16 @@ public:
     virtual bool popupOptionSupportsTextIndent() const { return false; }
     virtual PopupMenuStyle::PopupMenuSize popupMenuSize(const RenderStyle&, IntRect&) const { return PopupMenuStyle::PopupMenuSizeNormal; }
 
-    virtual ScrollbarControlSize scrollbarControlSizeForPart(ControlPart) { return ScrollbarControlSize::Regular; }
+    virtual ScrollbarControlSize scrollbarControlSizeForPart(StyleAppearance) { return ScrollbarControlSize::Regular; }
 
     // Returns the repeat interval of the animation for the progress bar.
     virtual Seconds animationRepeatIntervalForProgressBar(const RenderProgress&) const;
     // Returns the duration of the animation for the progress bar.
     virtual Seconds animationDurationForProgressBar(const RenderProgress&) const;
-    virtual IntRect progressBarRectForBounds(const RenderObject&, const IntRect&) const;
+    virtual IntRect progressBarRectForBounds(const RenderProgress&, const IntRect&) const;
 
-    virtual IntSize meterSizeForBounds(const RenderMeter&, const IntRect&) const;
-    virtual bool supportsMeter(ControlPart, const HTMLMeterElement&) const;
+    virtual FloatSize meterSizeForBounds(const RenderMeter&, const FloatRect&) const;
+    virtual bool supportsMeter(StyleAppearance, const HTMLMeterElement&) const;
 
 #if ENABLE(DATALIST_ELEMENT)
     // Returns the threshold distance for snapping to a slider tick mark.
@@ -246,15 +259,12 @@ public:
     enum class InnerSpinButtonLayout { Vertical, HorizontalUpLeft, HorizontalUpRight };
     virtual InnerSpinButtonLayout innerSpinButtonLayout(const RenderObject&) const { return InnerSpinButtonLayout::Vertical; }
 
-    virtual bool shouldMockBoldSystemFontForAccessibility() const { return false; }
-    virtual void setShouldMockBoldSystemFontForAccessibility(bool) { }
-
 #if USE(SYSTEM_PREVIEW)
     virtual void paintSystemPreviewBadge(Image&, const PaintInfo&, const FloatRect&);
 #endif
 
 protected:
-    virtual bool canPaint(const PaintInfo&, const Settings&) const { return true; }
+    virtual bool canPaint(const PaintInfo&, const Settings&, StyleAppearance) const { return true; }
 
     // The platform selection color.
     virtual Color platformActiveSelectionBackgroundColor(OptionSet<StyleColorOptions>) const;
@@ -271,6 +281,11 @@ protected:
     virtual Color platformAnnotationHighlightColor(OptionSet<StyleColorOptions>) const;
 
     virtual Color platformDefaultButtonTextColor(OptionSet<StyleColorOptions>) const;
+
+    virtual Color platformSpellingMarkerColor(OptionSet<StyleColorOptions>) const;
+    virtual Color platformDictationAlternativesMarkerColor(OptionSet<StyleColorOptions>) const;
+    virtual Color platformAutocorrectionReplacementMarkerColor(OptionSet<StyleColorOptions>) const;
+    virtual Color platformGrammarMarkerColor(OptionSet<StyleColorOptions>) const;
 
     virtual bool supportsSelectionForegroundColors(OptionSet<StyleColorOptions>) const { return true; }
     virtual bool supportsListBoxSelectionForegroundColors(OptionSet<StyleColorOptions>) const { return true; }
@@ -335,6 +350,7 @@ protected:
 
 #if ENABLE(ATTACHMENT_ELEMENT)
     virtual bool paintAttachment(const RenderObject&, const PaintInfo&, const IntRect&);
+    virtual void paintAttachmentText(GraphicsContext&, AttachmentLayout*) { }
 #endif
 
 #if ENABLE(DATALIST_ELEMENT)
@@ -345,7 +361,7 @@ protected:
 #if ENABLE(SERVICE_CONTROLS)
     virtual void adjustImageControlsButtonStyle(RenderStyle&, const Element*) const;
     virtual bool paintImageControlsButton(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool isImageControl(const Element&) const { return false; }
+    virtual bool isImageControlsButton(const Element&) const { return false; }
 #endif
 
     virtual void adjustProgressBarStyle(RenderStyle&, const Element*) const;
@@ -377,7 +393,7 @@ protected:
 public:
     void updateControlStatesForRenderer(const RenderBox&, ControlStates&) const;
     OptionSet<ControlStates::States> extractControlStatesForRenderer(const RenderObject&) const;
-    bool isActive(const RenderObject&) const;
+    bool isWindowActive(const RenderObject&) const;
     bool isChecked(const RenderObject&) const;
     bool isIndeterminate(const RenderObject&) const;
     bool isEnabled(const RenderObject&) const;
@@ -389,6 +405,10 @@ public:
     bool isPresenting(const RenderObject&) const;
     bool isReadOnlyControl(const RenderObject&) const;
     bool isDefault(const RenderObject&) const;
+#if ENABLE(DATALIST_ELEMENT)
+    bool hasListButton(const RenderObject&) const;
+    bool hasListButtonPressed(const RenderObject&) const;
+#endif
 
 protected:
     struct ColorCache {
@@ -414,13 +434,23 @@ protected:
         Color annotationHighlightColor;
 
         Color defaultButtonTextColor;
+
+        Color spellingMarkerColor;
+        Color dictationAlternativesMarkerColor;
+        Color autocorrectionReplacementMarkerColor;
+        Color grammarMarkerColor;
     };
 
     virtual ColorCache& colorCache(OptionSet<StyleColorOptions>) const;
 
 private:
-    ControlPart autoAppearanceForElement(const Element*) const;
-    ControlPart adjustAppearanceForElement(RenderStyle&, const Element*, ControlPart) const;
+    StyleAppearance autoAppearanceForElement(RenderStyle&, const Element*) const;
+    StyleAppearance adjustAppearanceForElement(RenderStyle&, const Element*, StyleAppearance) const;
+
+    Color spellingMarkerColor(OptionSet<StyleColorOptions>) const;
+    Color dictationAlternativesMarkerColor(OptionSet<StyleColorOptions>) const;
+    Color autocorrectionReplacementMarkerColor(OptionSet<StyleColorOptions>) const;
+    Color grammarMarkerColor(OptionSet<StyleColorOptions>) const;
 
     mutable HashMap<uint8_t, ColorCache, DefaultHash<uint8_t>, WTF::UnsignedWithZeroKeyHashTraits<uint8_t>> m_colorCacheMap;
 };

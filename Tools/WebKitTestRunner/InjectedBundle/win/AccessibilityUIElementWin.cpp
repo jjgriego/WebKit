@@ -196,6 +196,12 @@ JSRetainPtr<JSStringRef> AccessibilityUIElement::currentStateValue() const
     return nullptr;
 }
 
+JSRetainPtr<JSStringRef> AccessibilityUIElement::sortDirection() const
+{
+    notImplemented();
+    return nullptr;
+}
+
 JSRetainPtr<JSStringRef> AccessibilityUIElement::stringDescriptionOfAttributeValue(JSStringRef)
 {
     notImplemented();
@@ -1037,6 +1043,32 @@ JSRetainPtr<JSStringRef> AccessibilityUIElement::domIdentifier() const
 {
     notImplemented();
     return nullptr;
+}
+
+bool AccessibilityUIElement::isInsertion() const
+{
+    notImplemented();
+    return false;
+}
+
+bool AccessibilityUIElement::isDeletion() const
+{
+    notImplemented();
+    return false;
+}
+
+
+bool AccessibilityUIElement::isFirstItemInSuggestion() const
+{
+    notImplemented();
+    return false;
+}
+
+
+bool AccessibilityUIElement::isLastItemInSuggestion() const
+{
+    notImplemented();
+    return false;
 }
 
 } // namespace  WTF

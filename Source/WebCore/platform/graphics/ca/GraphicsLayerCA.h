@@ -26,6 +26,7 @@
 #pragma once
 
 #include "GraphicsLayer.h"
+#include "GraphicsLayerContentsDisplayDelegate.h"
 #include "PlatformCAAnimation.h"
 #include "PlatformCALayer.h"
 #include "PlatformCALayerClient.h"
@@ -44,6 +45,7 @@ class InMemoryDisplayList;
 }
 
 class FloatRoundedRect;
+class HTMLVideoElement;
 class Image;
 class NativeImage;
 class TransformState;
@@ -104,7 +106,6 @@ public:
     WEBCORE_EXPORT void setBackgroundColor(const Color&) override;
 
     WEBCORE_EXPORT void setContentsOpaque(bool) override;
-    WEBCORE_EXPORT void setSupportsSubpixelAntialiasedText(bool) override;
 
     WEBCORE_EXPORT void setBackfaceVisibility(bool) override;
 
@@ -128,7 +129,6 @@ public:
     WEBCORE_EXPORT void setContentsRect(const FloatRect&) override;
     WEBCORE_EXPORT void setContentsClippingRect(const FloatRoundedRect&) override;
     WEBCORE_EXPORT void setContentsRectClipsDescendants(bool) override;
-    WEBCORE_EXPORT void setMasksToBoundsRect(const FloatRoundedRect&) override;
 
     WEBCORE_EXPORT void setShapeLayerPath(const Path&) override;
     WEBCORE_EXPORT void setShapeLayerWindRule(WindRule) override;
@@ -150,6 +150,8 @@ public:
     WEBCORE_EXPORT PlatformLayer* contentsLayerForMedia() const override;
 #endif
     WEBCORE_EXPORT void setContentsToPlatformLayer(PlatformLayer*, ContentsLayerPurpose) override;
+    WEBCORE_EXPORT void setContentsToPlatformLayerHost(LayerHostingContextIdentifier) override;
+    WEBCORE_EXPORT void setContentsToVideoElement(HTMLVideoElement&, ContentsLayerPurpose) override;
     WEBCORE_EXPORT void setContentsDisplayDelegate(RefPtr<GraphicsLayerContentsDisplayDelegate>&&, ContentsLayerPurpose) override;
 
     WEBCORE_EXPORT void setContentsToSolidColor(const Color&) override;
@@ -171,6 +173,7 @@ public:
     WEBCORE_EXPORT void setCustomAppearance(CustomAppearance) override;
 
     WEBCORE_EXPORT void deviceOrPageScaleFactorChanged() override;
+    void setShouldUpdateRootRelativeScaleFactor(bool value) override { m_shouldUpdateRootRelativeScaleFactor = value; }
 
     FloatSize pixelAlignmentOffset() const override { return m_pixelAlignmentOffset; }
 
@@ -196,6 +199,8 @@ public:
     WEBCORE_EXPORT Vector<std::pair<String, double>> acceleratedAnimationsForTesting() const final;
 
     constexpr static CompositingCoordinatesOrientation defaultContentsOrientation = CompositingCoordinatesOrientation::TopDown;
+
+    WEBCORE_EXPORT RefPtr<GraphicsLayerAsyncContentsDisplayDelegate> createAsyncContentsDisplayDelegate() override;
 
 private:
     bool isGraphicsLayerCA() const override { return true; }
@@ -225,7 +230,9 @@ private:
     WEBCORE_EXPORT bool platformCALayerShouldAggressivelyRetainTiles(PlatformCALayer*) const override;
     WEBCORE_EXPORT bool platformCALayerShouldTemporarilyRetainTileCohorts(PlatformCALayer*) const override;
     WEBCORE_EXPORT bool platformCALayerUseGiantTiles() const override;
+    WEBCORE_EXPORT bool platformCALayerUseCSS3DTransformInteroperability() const override;
     WEBCORE_EXPORT void platformCALayerLogFilledVisibleFreshTile(unsigned) override;
+    bool platformCALayerContainsBitmapOnly(const PlatformCALayer*) const override { return client().layerContainsBitmapOnly(this); }
 
     bool isCommittingChanges() const override { return m_isCommittingChanges; }
     bool isUsingDisplayListDrawing(PlatformCALayer*) const override { return m_usesDisplayListDrawing; }
@@ -255,19 +262,21 @@ private:
 #if ENABLE(MODEL_ELEMENT)
     virtual Ref<PlatformCALayer> createPlatformCALayer(Ref<WebCore::Model>, PlatformCALayerClient* owner);
 #endif
+    virtual Ref<PlatformCALayer> createPlatformCALayerHost(LayerHostingContextIdentifier, PlatformCALayerClient*);
+    WEBCORE_EXPORT virtual Ref<PlatformCALayer> createPlatformVideoLayer(HTMLVideoElement&, PlatformCALayerClient* owner);
     virtual Ref<PlatformCAAnimation> createPlatformCAAnimation(PlatformCAAnimation::AnimationType, const String& keyPath);
 
     PlatformCALayer* primaryLayer() const { return m_structuralLayer.get() ? m_structuralLayer.get() : m_layer.get(); }
     PlatformCALayer* hostLayerForSublayers() const;
     PlatformCALayer* layerForSuperlayer() const;
-    PlatformCALayer* animatedLayer(AnimatedPropertyID) const;
+    PlatformCALayer* animatedLayer(AnimatedProperty) const;
 
     typedef String CloneID; // Identifier for a given clone, based on original/replica branching down the tree.
     static bool isReplicatedRootClone(const CloneID& cloneID) { return cloneID[0U] & 1; }
 
     typedef HashMap<CloneID, RefPtr<PlatformCALayer>> LayerMap;
     LayerMap* primaryLayerClones() const;
-    LayerMap* animatedLayerClones(AnimatedPropertyID) const;
+    LayerMap* animatedLayerClones(AnimatedProperty) const;
     static void clearClones(LayerMap&);
 
     bool createAnimationFromKeyframes(const KeyframeValueList&, const Animation*, const String& animationName, Seconds timeOffset, bool keyframesShouldUseAnimationWideTimingFunction);
@@ -285,11 +294,11 @@ private:
     bool setAnimationEndpoints(const KeyframeValueList&, const Animation*, PlatformCAAnimation*);
     bool setAnimationKeyframes(const KeyframeValueList&, const Animation*, PlatformCAAnimation*, bool keyframesShouldUseAnimationWideTimingFunction);
 
-    bool setTransformAnimationEndpoints(const KeyframeValueList&, const Animation*, PlatformCAAnimation*, int functionIndex, TransformOperation::OperationType, bool isMatrixAnimation, const FloatSize& boxSize);
-    bool setTransformAnimationKeyframes(const KeyframeValueList&, const Animation*, PlatformCAAnimation*, int functionIndex, TransformOperation::OperationType, bool isMatrixAnimation, const FloatSize& boxSize, bool keyframesShouldUseAnimationWideTimingFunction);
+    bool setTransformAnimationEndpoints(const KeyframeValueList&, const Animation*, PlatformCAAnimation*, int functionIndex, TransformOperation::Type, bool isMatrixAnimation, const FloatSize& boxSize);
+    bool setTransformAnimationKeyframes(const KeyframeValueList&, const Animation*, PlatformCAAnimation*, int functionIndex, TransformOperation::Type, bool isMatrixAnimation, const FloatSize& boxSize, bool keyframesShouldUseAnimationWideTimingFunction);
     
-    bool setFilterAnimationEndpoints(const KeyframeValueList&, const Animation*, PlatformCAAnimation*, int functionIndex, int internalFilterPropertyIndex);
-    bool setFilterAnimationKeyframes(const KeyframeValueList&, const Animation*, PlatformCAAnimation*, int functionIndex, int internalFilterPropertyIndex, FilterOperation::OperationType, bool keyframesShouldUseAnimationWideTimingFunction);
+    bool setFilterAnimationEndpoints(const KeyframeValueList&, const Animation*, PlatformCAAnimation*, int functionIndex);
+    bool setFilterAnimationKeyframes(const KeyframeValueList&, const Animation*, PlatformCAAnimation*, int functionIndex, FilterOperation::Type, bool keyframesShouldUseAnimationWideTimingFunction);
 
     bool isRunningTransformAnimation() const;
 
@@ -314,6 +323,8 @@ private:
     WEBCORE_EXPORT void setReplicatedByLayer(RefPtr<GraphicsLayer>&&) override;
 
     WEBCORE_EXPORT void getDebugBorderInfo(Color&, float& width) const override;
+    virtual WEBCORE_EXPORT Color pageTiledBackingBorderColor() const;
+
     WEBCORE_EXPORT void dumpAdditionalProperties(WTF::TextStream&, OptionSet<LayerTreeAsTextOptions>) const override;
     void dumpInnerLayer(WTF::TextStream&, PlatformCALayer*, OptionSet<PlatformLayerTreeAsTextFlags>) const;
     const char *purposeNameForInnerLayer(PlatformCALayer&) const;
@@ -341,10 +352,15 @@ private:
     const FloatRect& coverageRect() const { return m_coverageRect; }
 
     void setVisibleAndCoverageRects(const VisibleAndCoverageRects&);
-    
+
+    void adjustContentsScaleLimitingFactor();
+    void setContentsScaleLimitingFactor(float);
+
     bool recursiveVisibleRectChangeRequiresFlush(const CommitState&, const TransformState&) const;
-    
+
+    bool isTiledBackingLayer() const { return type() == Type::TiledBacking; }
     bool isPageTiledBackingLayer() const { return type() == Type::PageTiledBacking; }
+    bool isStructuralLayer() const { return type() == Type::Structural; }
 
     // Used to track the path down the tree for replica layers.
     struct ReplicaState {
@@ -401,7 +417,7 @@ private:
     RefPtr<PlatformCALayer> fetchCloneLayers(GraphicsLayer* replicaRoot, ReplicaState&, CloneLevel);
     
     Ref<PlatformCALayer> cloneLayer(PlatformCALayer *, CloneLevel);
-    RefPtr<PlatformCALayer> findOrMakeClone(CloneID, PlatformCALayer *, LayerMap&, CloneLevel);
+    RefPtr<PlatformCALayer> findOrMakeClone(const CloneID&, PlatformCALayer *, LayerMap&, CloneLevel);
 
     void ensureCloneLayers(CloneID, RefPtr<PlatformCALayer>& primaryLayer, RefPtr<PlatformCALayer>& structuralLayer,
         RefPtr<PlatformCALayer>& contentsLayer, RefPtr<PlatformCALayer>& contentsClippingLayer, RefPtr<PlatformCALayer>& contentsShapeMaskLayer,
@@ -432,7 +448,6 @@ private:
     void updateContentsPlatformLayer();
     void updateContentsColorLayer();
     void updateContentsRects();
-    void updateMasksToBoundsRect();
     void updateEventRegion();
 #if ENABLE(SCROLLING_THREAD)
     void updateScrollingNode();
@@ -443,9 +458,9 @@ private:
     void updateAnimations();
     void updateContentsNeedsDisplay();
     void updateAcceleratesDrawing();
-    void updateSupportsSubpixelAntialiasedText();
     void updateDebugIndicators();
     void updateTiles();
+    void updateRootRelativeScale();
     void updateContentsScale(float pageScaleFactor);
     void updateCustomAppearance();
 
@@ -483,16 +498,15 @@ private:
     // a single transition or keyframe animation, so index is used to distinguish these.
     enum class PlayState { Playing, PlayPending, Paused, PausePending };
     struct LayerPropertyAnimation {
-        LayerPropertyAnimation(Ref<PlatformCAAnimation>&& caAnimation, const String& animationName, AnimatedPropertyID property, int index, int subIndex, Seconds timeOffset)
+        LayerPropertyAnimation(Ref<PlatformCAAnimation>&& caAnimation, const String& animationName, AnimatedProperty property, int index, Seconds timeOffset)
             : m_animation(WTFMove(caAnimation))
             , m_name(animationName)
             , m_property(property)
             , m_index(index)
-            , m_subIndex(subIndex)
             , m_timeOffset(timeOffset)
         { }
 
-        String animationIdentifier() const { return makeString(m_name, '_', static_cast<unsigned>(m_property), '_', m_index, '_', m_subIndex); }
+        String animationIdentifier() const { return makeString(m_name, '_', static_cast<unsigned>(m_property), '_', m_index); }
         std::optional<Seconds> computedBeginTime() const
         {
             if (m_beginTime)
@@ -502,9 +516,8 @@ private:
 
         RefPtr<PlatformCAAnimation> m_animation;
         String m_name;
-        AnimatedPropertyID m_property;
+        AnimatedProperty m_property;
         int m_index;
-        int m_subIndex;
         Seconds m_timeOffset { 0_s };
         std::optional<Seconds> m_beginTime;
         PlayState m_playState { PlayState::PlayPending };
@@ -530,7 +543,7 @@ private:
         moveOrCopyAnimations(Copy, fromLayer, toLayer);
     }
 
-    bool appendToUncommittedAnimations(const KeyframeValueList&, const TransformOperation::OperationType, const Animation*, const String& animationName, const FloatSize& boxSize, unsigned animationIndex, Seconds timeOffset, bool isMatrixAnimation, bool keyframesShouldUseAnimationWideTimingFunction);
+    bool appendToUncommittedAnimations(const KeyframeValueList&, const TransformOperation::Type, const Animation*, const String& animationName, const FloatSize& boxSize, unsigned animationIndex, Seconds timeOffset, bool isMatrixAnimation, bool keyframesShouldUseAnimationWideTimingFunction);
     bool appendToUncommittedAnimations(const KeyframeValueList&, const FilterOperation*, const Animation*, const String& animationName, int animationIndex, Seconds timeOffset, bool keyframesShouldUseAnimationWideTimingFunction);
 
     enum LayerChange : uint64_t {
@@ -553,38 +566,36 @@ private:
         ContentsPlatformLayerChanged            = 1LLU << 16,
         ContentsColorLayerChanged               = 1LLU << 17,
         ContentsRectsChanged                    = 1LLU << 18,
-        MasksToBoundsRectChanged                = 1LLU << 19,
         MaskLayerChanged                        = 1LLU << 20,
         ReplicatedLayerChanged                  = 1LLU << 21,
         ContentsNeedsDisplay                    = 1LLU << 22,
         AcceleratesDrawingChanged               = 1LLU << 23,
-        SupportsSubpixelAntialiasedTextChanged  = 1LLU << 24,
-        ContentsScaleChanged                    = 1LLU << 25,
-        ContentsVisibilityChanged               = 1LLU << 26,
-        CoverageRectChanged                     = 1LLU << 27,
-        FiltersChanged                          = 1LLU << 28,
-        BackdropFiltersChanged                  = 1LLU << 29,
-        BackdropFiltersRectChanged              = 1LLU << 30,
-        TilingAreaChanged                       = 1LLU << 31,
-        DebugIndicatorsChanged                  = 1LLU << 32,
-        CustomAppearanceChanged                 = 1LLU << 33,
-        BlendModeChanged                        = 1LLU << 34,
-        ShapeChanged                            = 1LLU << 35,
-        WindRuleChanged                         = 1LLU << 36,
-        UserInteractionEnabledChanged           = 1LLU << 37,
-        NeedsComputeVisibleAndCoverageRect      = 1LLU << 38,
-        EventRegionChanged                      = 1LLU << 39,
+        ContentsScaleChanged                    = 1LLU << 24,
+        ContentsVisibilityChanged               = 1LLU << 25,
+        CoverageRectChanged                     = 1LLU << 26,
+        FiltersChanged                          = 1LLU << 27,
+        BackdropFiltersChanged                  = 1LLU << 28,
+        BackdropFiltersRectChanged              = 1LLU << 29,
+        TilingAreaChanged                       = 1LLU << 30,
+        DebugIndicatorsChanged                  = 1LLU << 31,
+        CustomAppearanceChanged                 = 1LLU << 32,
+        BlendModeChanged                        = 1LLU << 33,
+        ShapeChanged                            = 1LLU << 34,
+        WindRuleChanged                         = 1LLU << 35,
+        UserInteractionEnabledChanged           = 1LLU << 36,
+        NeedsComputeVisibleAndCoverageRect      = 1LLU << 37,
+        EventRegionChanged                      = 1LLU << 38,
 #if ENABLE(SCROLLING_THREAD)
-        ScrollingNodeChanged                    = 1LLU << 40,
+        ScrollingNodeChanged                    = 1LLU << 39,
 #endif
 #if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
-        SeparatedChanged                        = 1LLU << 41,
+        SeparatedChanged                        = 1LLU << 40,
 #if HAVE(CORE_ANIMATION_SEPARATED_PORTALS)
-        SeparatedPortalChanged                  = 1LLU << 42,
-        DescendentOfSeparatedPortalChanged      = 1LLU << 43,
+        SeparatedPortalChanged                  = 1LLU << 41,
+        DescendentOfSeparatedPortalChanged      = 1LLU << 42,
 #endif
 #endif
-        ContentsScalingFiltersChanged           = 1LLU << 44,
+        ContentsScalingFiltersChanged           = 1LLU << 43,
     };
     typedef uint64_t LayerChangeFlags;
     static const char* layerChangeAsString(LayerChange);
@@ -657,15 +668,21 @@ private:
 
     std::unique_ptr<DisplayList::InMemoryDisplayList> m_displayList;
 
+    float m_contentsScaleLimitingFactor { 1 };
+    float m_rootRelativeScaleFactor { 1.0f };
+
     ContentsLayerPurpose m_contentsLayerPurpose { ContentsLayerPurpose::None };
     bool m_isCommittingChanges { false };
-
+    bool m_shouldUpdateRootRelativeScaleFactor : 1 { false };
     bool m_needsFullRepaint : 1;
     bool m_allowsBackingStoreDetaching : 1;
     bool m_intersectsCoverageRect : 1;
     bool m_hasEverPainted : 1;
     bool m_hasDescendantsWithRunningTransformAnimations : 1;
     bool m_hasDescendantsWithUncommittedChanges : 1;
+#if ENABLE(AVKIT)
+    uint32_t m_layerHostingContextID { 0 };
+#endif
 };
 
 } // namespace WebCore

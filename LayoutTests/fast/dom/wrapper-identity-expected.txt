@@ -1,3 +1,4 @@
+CONSOLE MESSAGE: Window 'showModalDialog' function is deprecated and will be removed soon.
 This tests wrapper identity for JavaScript
 
 On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
@@ -113,7 +114,6 @@ PASS var object = window['focus']; isEqualJS(object, object); is true
 PASS var object = window['frameElement']; isEqualJS(object, object); is true
 PASS var object = window['frames']; isEqualJS(object, object); is true
 PASS var object = window['getComputedStyle']; isEqualJS(object, object); is true
-PASS var object = window['getMatchedCSSRules']; isEqualJS(object, object); is true
 PASS var object = window['getSelection']; isEqualJS(object, object); is true
 PASS var object = window['history']; isEqualJS(object, object); is true
 PASS var object = window['location']; isEqualJS(object, object); is true

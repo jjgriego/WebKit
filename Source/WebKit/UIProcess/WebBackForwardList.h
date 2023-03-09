@@ -32,6 +32,10 @@
 #include <wtf/Ref.h>
 #include <wtf/Vector.h>
 
+namespace API {
+class Array;
+}
+
 namespace WebKit {
 
 struct BackForwardListState;
@@ -58,6 +62,9 @@ public:
     WebBackForwardListItem* backItem() const;
     WebBackForwardListItem* forwardItem() const;
     WebBackForwardListItem* itemAtIndex(int) const;
+
+    WebBackForwardListItem* goBackItemSkippingItemsWithoutUserGesture() const;
+    WebBackForwardListItem* goForwardItemSkippingItemsWithoutUserGesture() const;
 
     const BackForwardListItemVector& entries() const { return m_entries; }
 

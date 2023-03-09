@@ -1,13 +1,13 @@
-CONSOLE MESSAGE: SyntaxError: Unexpected identifier 'assert'. Expected a ';' following a targeted import declaration.
-CONSOLE MESSAGE: SyntaxError: Unexpected identifier 'assert'. Expected a ';' following a targeted import declaration.
-CONSOLE MESSAGE: SyntaxError: Unexpected identifier 'assert'. Expected a ';' following a targeted import declaration.
-CONSOLE MESSAGE: SyntaxError: Unexpected identifier 'assert'. Expected a ';' following a targeted import declaration.
-CONSOLE MESSAGE: SyntaxError: Unexpected identifier 'assert'. Expected a ';' following a targeted import declaration.
-CONSOLE MESSAGE: SyntaxError: Unexpected identifier 'assert'. Expected a ';' following a targeted import declaration.
-CONSOLE MESSAGE: SyntaxError: Unexpected identifier 'assert'. Expected a ';' following a targeted import declaration.
-CONSOLE MESSAGE: SyntaxError: Unexpected identifier 'assert'. Expected a ';' following a targeted import declaration.
+CONSOLE MESSAGE: TypeError: Import assertion type "css" is not valid
+CONSOLE MESSAGE: TypeError: Import assertion type "css" is not valid
+CONSOLE MESSAGE: TypeError: Import assertion type "css" is not valid
+CONSOLE MESSAGE: TypeError: Import assertion type "css" is not valid
+CONSOLE MESSAGE: TypeError: Import assertion type "css" is not valid
+CONSOLE MESSAGE: TypeError: Import assertion type "css" is not valid
+CONSOLE MESSAGE: TypeError: Import assertion type "css" is not valid
+CONSOLE MESSAGE: TypeError: Import assertion type "css" is not valid
 
-Harness Error (FAIL), message = SyntaxError: Unexpected identifier 'assert'. Expected a ';' following a targeted import declaration.
+Harness Error (FAIL), message = TypeError: Import assertion type "css" is not valid
 
 NOTRUN inline, 200, parser-inserted
 NOTRUN inline, 404, parser-inserted

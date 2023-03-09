@@ -168,7 +168,7 @@ void JIT::emit_op_instanceof(const JSInstruction* currentInstruction)
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
     JITInstanceOfGenerator gen(
         nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex),
-        RegisterSet::stubUnavailableRegisters(),
+        RegisterSetBuilder::stubUnavailableRegisters(),
         resultJSR.payloadGPR(),
         valueJSR.payloadGPR(),
         protoJSR.payloadGPR(),
@@ -726,7 +726,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::op_throw_handlerGenerator(VM& vm)
     jit.jumpToExceptionHandler(vm);
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
-    patchBuffer.link(operation, FunctionPtr<OperationPtrTag>(operationThrow));
+    patchBuffer.link<OperationPtrTag>(operation, operationThrow);
     return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Baseline: op_throw_handler");
 }
 
@@ -1190,6 +1190,19 @@ void JIT::emit_op_neq_null(const JSInstruction* currentInstruction)
     emitPutVirtualRegister(dst, jsRegT10);
 }
 
+void JIT::emitGetScope(VirtualRegister destination)
+{
+    emitGetFromCallFrameHeaderPtr(CallFrameSlot::callee, regT0);
+    loadPtr(Address(regT0, JSFunction::offsetOfScopeChain()), regT0);
+    boxCell(regT0, jsRegT10);
+    emitPutVirtualRegister(destination, jsRegT10);
+}
+
+void JIT::emitCheckTraps()
+{
+    addSlowCase(branchTest32(NonZero, AbsoluteAddress(m_vm->traps().trapBitsAddress()), TrustedImm32(VMTraps::AsyncEvents)));
+}
+
 void JIT::emit_op_enter(const JSInstruction*)
 {
     // Even though CTI doesn't use them, we initialize our constant
@@ -1207,6 +1220,9 @@ void JIT::emit_op_enter(const JSInstruction*)
     move(TrustedImm32(canBeOptimized()), canBeOptimizedGPR);
     move(TrustedImm32(localsToInit), localsToInitGPR);
     emitNakedNearCall(vm().getCTIStub(op_enter_handlerGenerator).retaggedCode<NoPtrTag>());
+
+    emitGetScope(m_profiledCodeBlock->scopeRegister());
+    emitCheckTraps();
 }
 
 MacroAssemblerCodeRef<JITThunkPtrTag> JIT::op_enter_handlerGenerator(VM& vm)
@@ -1227,19 +1243,32 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::op_enter_handlerGenerator(VM& vm)
         size_t startLocal = CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters();
         int startOffset = virtualRegisterForLocal(startLocal).offset();
         ASSERT(startOffset <= 0);
-        jit.subPtr(GPRInfo::callFrameRegister, TrustedImm32(-startOffset * sizeof(Register)), iteratorGPR);
+        jit.subPtr(GPRInfo::callFrameRegister, TrustedImm32((-startOffset - 1) * sizeof(Register)), endGPR);
         jit.mul32(TrustedImm32(sizeof(Register)), localsToInitGPR, localsToInitGPR);
-        jit.subPtr(iteratorGPR, localsToInitGPR, endGPR);
+        jit.subPtr(endGPR, localsToInitGPR, iteratorGPR);
         jit.moveTrustedValue(jsUndefined(), undefinedJSR);
 
+#if CPU(ARM64)
+        auto evenCase = jit.branchTest32(Zero, localsToInitGPR, TrustedImm32(sizeof(Register)));
+        jit.store64(undefinedJSR.payloadGPR(), PostIndexAddress(iteratorGPR, sizeof(Register)));
+        evenCase.link(&jit);
         auto initLoop = jit.label();
-        Jump initDone = jit.branch32(LessThanOrEqual, iteratorGPR, endGPR);
+        Jump initDone = jit.branch32(GreaterThanOrEqual, iteratorGPR, endGPR);
         {
-            jit.storeValue(undefinedJSR, Address(iteratorGPR));
-            jit.subPtr(TrustedImm32(sizeof(Register)), iteratorGPR);
+            jit.storePair64(undefinedJSR.payloadGPR(), undefinedJSR.payloadGPR(), PostIndexAddress(iteratorGPR, sizeof(Register) * 2));
             jit.jump(initLoop);
         }
         initDone.link(&jit);
+#else
+        auto initLoop = jit.label();
+        Jump initDone = jit.branch32(GreaterThanOrEqual, iteratorGPR, endGPR);
+        {
+            jit.storeValue(undefinedJSR, Address(iteratorGPR));
+            jit.addPtr(TrustedImm32(sizeof(Register)), iteratorGPR);
+            jit.jump(initLoop);
+        }
+        initDone.link(&jit);
+#endif
     }
 
     // emitWriteBarrier(m_codeBlock).
@@ -1311,10 +1340,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::op_enter_handlerGenerator(VM& vm)
     jit.ret();
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
-    patchBuffer.link(operationWriteBarrierCall, FunctionPtr<OperationPtrTag>(operationWriteBarrierSlowPath));
+    patchBuffer.link<OperationPtrTag>(operationWriteBarrierCall, operationWriteBarrierSlowPath);
 #if ENABLE(DFG_JIT)
     if (Options::useDFGJIT())
-        patchBuffer.link(operationOptimizeCall, FunctionPtr<OperationPtrTag>(operationOptimize));
+        patchBuffer.link<OperationPtrTag>(operationOptimizeCall, operationOptimize);
 #endif
     return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Baseline: op_enter_handler");
 }
@@ -1322,11 +1351,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::op_enter_handlerGenerator(VM& vm)
 void JIT::emit_op_get_scope(const JSInstruction* currentInstruction)
 {
     auto bytecode = currentInstruction->as<OpGetScope>();
-    VirtualRegister dst = bytecode.m_dst;
-    emitGetFromCallFrameHeaderPtr(CallFrameSlot::callee, regT0);
-    loadPtr(Address(regT0, JSFunction::offsetOfScopeChain()), regT0);
-    boxCell(regT0, jsRegT10);
-    emitPutVirtualRegister(dst, jsRegT10);
+    emitGetScope(bytecode.m_dst);
 }
 
 void JIT::emit_op_to_this(const JSInstruction* currentInstruction)
@@ -1458,6 +1483,7 @@ void JIT::emit_op_loop_hint(const JSInstruction* instruction)
         auto skipEarlyReturn = branchPtr(Below, regT0, TrustedImmPtr(Options::earlyReturnFromInfiniteLoopsLimit()));
 
         loadGlobalObject(returnValueJSR.payloadGPR());
+        loadPtr(Address(returnValueJSR.payloadGPR(), JSGlobalObject::offsetOfGlobalThis()), returnValueJSR.payloadGPR());
         boxCell(returnValueJSR.payloadGPR(), returnValueJSR);
 
         checkStackPointerAlignment();
@@ -1507,7 +1533,7 @@ void JIT::emitSlow_op_loop_hint(const JSInstruction* currentInstruction, Vector<
 
 void JIT::emit_op_check_traps(const JSInstruction*)
 {
-    addSlowCase(branchTest32(NonZero, AbsoluteAddress(m_vm->traps().trapBitsAddress()), TrustedImm32(VMTraps::AsyncEvents)));
+    emitCheckTraps();
 }
 
 void JIT::emit_op_nop(const JSInstruction*)
@@ -1522,6 +1548,11 @@ void JIT::emit_op_super_sampler_begin(const JSInstruction*)
 void JIT::emit_op_super_sampler_end(const JSInstruction*)
 {
     sub32(TrustedImm32(1), AbsoluteAddress(bitwise_cast<void*>(&g_superSamplerCount)));
+}
+
+void JIT::emitSlow_op_enter(const JSInstruction*, Vector<SlowCaseEntry>::iterator& iter)
+{
+    emitSlow_op_check_traps(nullptr, iter);
 }
 
 void JIT::emitSlow_op_check_traps(const JSInstruction*, Vector<SlowCaseEntry>::iterator& iter)
@@ -1559,7 +1590,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::op_check_traps_handlerGenerator(VM& v
     Jump exceptionCheck = jit.jump();
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
-    patchBuffer.link(operation, FunctionPtr<OperationPtrTag>(operationHandleTraps));
+    patchBuffer.link<OperationPtrTag>(operation, operationHandleTraps);
     patchBuffer.link(exceptionCheck, CodeLocationLabel(vm.getCTIStub(checkExceptionGenerator).retaggedCode<NoPtrTag>()));
     return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Baseline: op_check_traps_handler");
 }

@@ -34,6 +34,7 @@
 #import "UIKitSPI.h"
 #import "WKActionSheetAssistant.h"
 #import "WKKeyboardScrollingAnimator.h"
+#import "WKScrollView.h"
 #import "WKUIDelegatePrivate.h"
 #import "WKWebEvent.h"
 #import "WKWebViewIOS.h"
@@ -192,7 +193,7 @@
 
     UIColor *backgroundColor = PDFHostViewController.backgroundColor;
     self.backgroundColor = backgroundColor;
-    webView.scrollView.backgroundColor = backgroundColor;
+    [webView._wkScrollView _setBackgroundColorInternal:backgroundColor];
 
     _keyboardScrollingAnimator = adoptNS([[WKKeyboardScrollViewAnimator alloc] initWithScrollView:webView.scrollView]);
 
@@ -639,6 +640,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     WebCore::ShareDataWithParsedURL shareData;
     shareData.url = { url };
+    shareData.originator = WebCore::ShareDataOriginator::User;
     
     [_shareSheet dismiss];
 
@@ -790,9 +792,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     return pageCount;
 }
 
-- (CGPDFDocumentRef)_wk_printedDocument
+- (void)_wk_requestDocumentForPrintFormatter:(_WKWebViewPrintFormatter *)printFormatter
 {
-    return [self _ensureDocumentForPrinting];
+    [printFormatter _setPrintedDocument:[self _ensureDocumentForPrinting]];
 }
 
 @end

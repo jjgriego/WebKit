@@ -29,6 +29,7 @@
 
 #include "MediaPlayerPrivate.h"
 #include "SourceBufferPrivateClient.h"
+#include "VideoFrameMetadata.h"
 #include <CoreMedia/CMTime.h>
 #include <wtf/Deque.h>
 #include <wtf/Function.h>
@@ -41,7 +42,6 @@ OBJC_CLASS AVAsset;
 OBJC_CLASS AVSampleBufferAudioRenderer;
 OBJC_CLASS AVSampleBufferDisplayLayer;
 OBJC_CLASS AVSampleBufferRenderSynchronizer;
-OBJC_CLASS AVSampleBufferVideoOutput;
 OBJC_CLASS AVStreamSession;
 
 typedef struct OpaqueCMTimebase* CMTimebaseRef;
@@ -50,11 +50,14 @@ typedef struct __CVBuffer *CVOpenGLTextureRef;
 
 namespace WebCore {
 
+class AudioTrackPrivate;
 class CDMSessionMediaSourceAVFObjC;
 class EffectiveRateChangedListener;
+class InbandTextTrackPrivate;
 class MediaSourcePrivateAVFObjC;
 class PixelBufferConformerCV;
 class VideoLayerManagerObjC;
+class VideoTrackPrivate;
 class WebCoreDecompressionSession;
 
 
@@ -78,6 +81,10 @@ public:
     void addAudioRenderer(AVSampleBufferAudioRenderer*);
     void removeAudioRenderer(AVSampleBufferAudioRenderer*);
     ALLOW_NEW_API_WITHOUT_GUARDS_END
+    
+    void removeAudioTrack(AudioTrackPrivate&);
+    void removeVideoTrack(VideoTrackPrivate&);
+    void removeTextTrack(InbandTextTrackPrivate&);
 
     MediaPlayer::NetworkState networkState() const override;
     MediaPlayer::ReadyState readyState() const override;
@@ -147,6 +154,8 @@ public:
     const Vector<ContentType>& mediaContentTypesRequiringHardwareSupport() const;
     bool shouldCheckHardwareSupport() const;
 
+    void needsVideoLayerChanged();
+
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_logger.get(); }
     const char* logClassName() const override { return "MediaPlayerPrivateMediaSourceAVFObjC"; }
@@ -158,6 +167,7 @@ public:
 #endif
 
     enum SeekState {
+        WaitingToSeek,
         Seeking,
         WaitingForAvailableFame,
         SeekCompleted,
@@ -222,6 +232,9 @@ private:
     bool updateLastImage();
     void paint(GraphicsContext&, const FloatRect&) override;
     void paintCurrentFrameInContext(GraphicsContext&, const FloatRect&) override;
+#if PLATFORM(COCOA) && !HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)
+    void willBeAskedToPaintGL() final;
+#endif
     RefPtr<VideoFrame> videoFrameForCurrentTime() final;
     DestinationColorSpace colorSpace() final;
 
@@ -230,10 +243,13 @@ private:
     void acceleratedRenderingStateChanged() override;
     void notifyActiveSourceBuffersChanged() override;
 
+    void setPresentationSize(const IntSize&) final;
+
+    void updateDisplayLayerAndDecompressionSession();
+
     // NOTE: Because the only way for MSE to recieve data is through an ArrayBuffer provided by
     // javascript running in the page, the video will, by necessity, always be CORS correct and
     // in the page's origin.
-    bool hasSingleSecurityOrigin() const override { return true; }
     bool didPassCORSAccessCheck() const override { return true; }
 
     MediaPlayer::MovieLoadType movieLoadType() const override;
@@ -265,8 +281,6 @@ private:
 
     bool shouldBePlaying() const;
 
-    bool isVideoOutputAvailable() const;
-
     bool setCurrentTimeDidChangeCallback(MediaPlayer::CurrentTimeDidChangeCallback&&) final;
 
 #if HAVE(AVSAMPLEBUFFERRENDERSYNCHRONIZER_RATEATHOSTTIME)
@@ -283,6 +297,11 @@ private:
 
     void checkNewVideoFrameMetadata(CMTime);
     MediaTime clampTimeToLastSeekTime(const MediaTime&) const;
+
+    bool shouldEnsureLayer() const;
+
+    void setShouldDisableHDR(bool) final;
+    void playerContentBoxRectChanged(const LayoutRect&) final;
 
     friend class MediaSourcePrivateAVFObjC;
 
@@ -305,9 +324,6 @@ private:
     RefPtr<MediaSourcePrivateAVFObjC> m_mediaSourcePrivate;
     RetainPtr<AVAsset> m_asset;
     RetainPtr<AVSampleBufferDisplayLayer> m_sampleBufferDisplayLayer;
-#if HAVE(AVSAMPLEBUFFERVIDEOOUTPUT)
-    RetainPtr<AVSampleBufferVideoOutput> m_videoOutput;
-#endif
 
     struct AudioRendererProperties {
         bool hasAudibleSample { false };
@@ -338,10 +354,12 @@ private:
     FloatSize m_naturalSize;
     double m_rate;
     bool m_playing;
-    bool m_seeking;
+    bool m_synchronizerSeeking;
     SeekState m_seekCompleted { SeekCompleted };
     mutable bool m_loadingProgressed;
+#if !HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)
     bool m_hasBeenAskedToPaintGL { false };
+#endif
     bool m_hasAvailableVideoFrame { false };
     bool m_allRenderersHaveAvailableSamples { false };
     bool m_visible { false };

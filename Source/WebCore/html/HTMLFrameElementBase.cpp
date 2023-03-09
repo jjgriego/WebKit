@@ -3,7 +3,7 @@
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2000 Simon Hausmann (hausmann@kde.org)
  *           (C) 2001 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2004-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2023 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -26,6 +26,7 @@
 
 #include "Document.h"
 #include "ElementInlines.h"
+#include "EventLoop.h"
 #include "FocusController.h"
 #include "Frame.h"
 #include "FrameLoader.h"
@@ -90,30 +91,29 @@ void HTMLFrameElementBase::openURL(LockHistory lockHistory, LockBackForwardList 
     if (m_frameURL.isEmpty())
         m_frameURL = AtomString { aboutBlankURL().string() };
 
-    if (shouldLoadFrameLazily())
-        return;
-
     RefPtr<Frame> parentFrame = document().frame();
     if (!parentFrame)
         return;
-
-    document().willLoadFrameElement(document().completeURL(m_frameURL));
 
     auto frameName = getNameAttribute();
     if (frameName.isNull() && UNLIKELY(document().settings().needsFrameNameFallbackToIdQuirk()))
         frameName = getIdAttribute();
 
+    if (shouldLoadFrameLazily()) {
+        parentFrame->loader().subframeLoader().createFrameIfNecessary(*this, frameName);
+        return;
+    }
+
+    document().willLoadFrameElement(document().completeURL(m_frameURL));
     parentFrame->loader().subframeLoader().requestFrame(*this, m_frameURL, frameName, lockHistory, lockBackForwardList);
 }
 
 void HTMLFrameElementBase::parseAttribute(const QualifiedName& name, const AtomString& value)
 {
     if (name == srcdocAttr) {
-        if (value.isNull()) {
-            const AtomString& srcValue = attributeWithoutSynchronization(srcAttr);
-            if (!srcValue.isNull())
-                setLocation(stripLeadingAndTrailingHTMLSpaces(srcValue));
-        } else
+        if (value.isNull())
+            setLocation(stripLeadingAndTrailingHTMLSpaces(attributeWithoutSynchronization(srcAttr)));
+        else
             setLocation("about:srcdoc"_s);
     } else if (name == srcAttr && !hasAttributeWithoutSynchronization(srcdocAttr))
         setLocation(stripLeadingAndTrailingHTMLSpaces(value));
@@ -143,22 +143,28 @@ void HTMLFrameElementBase::didFinishInsertingNode()
 
     if (!renderer())
         invalidateStyleAndRenderersForSubtree();
-    openURL();
+
+    auto work = [this, weakThis = WeakPtr { *this }] {
+        if (!weakThis)
+            return;
+        Ref<HTMLFrameElementBase> protectedThis { *this };
+        m_openingURLAfterInserting = true;
+        if (isConnected())
+            openURL();
+        m_openingURLAfterInserting = false;
+    };
+    if (!m_openingURLAfterInserting)
+        work();
+    else
+        document().eventLoop().queueTask(TaskSource::DOMManipulation, WTFMove(work));
 }
 
 void HTMLFrameElementBase::didAttachRenderers()
 {
     if (RenderWidget* part = renderWidget()) {
-        if (RefPtr<Frame> frame = contentFrame())
+        if (RefPtr frame = dynamicDowncast<LocalFrame>(contentFrame()))
             part->setWidget(frame->view());
     }
-}
-
-URL HTMLFrameElementBase::location() const
-{
-    if (hasAttributeWithoutSynchronization(srcdocAttr))
-        return aboutSrcDocURL();
-    return document().completeURL(attributeWithoutSynchronization(srcAttr));
 }
 
 void HTMLFrameElementBase::setLocation(const String& str)
@@ -193,7 +199,7 @@ void HTMLFrameElementBase::setFocus(bool received, FocusVisibility visibility)
     if (Page* page = document().page()) {
         CheckedRef focusController { page->focusController() };
         if (received)
-            focusController->setFocusedFrame(contentFrame());
+            focusController->setFocusedFrame(dynamicDowncast<LocalFrame>(contentFrame()));
         else if (focusController->focusedFrame() == contentFrame()) // Focus may have already been given to another frame, don't take it away.
             focusController->setFocusedFrame(nullptr);
     }
@@ -207,22 +213,6 @@ bool HTMLFrameElementBase::isURLAttribute(const Attribute& attribute) const
 bool HTMLFrameElementBase::isHTMLContentAttribute(const Attribute& attribute) const
 {
     return attribute.name() == srcdocAttr || HTMLFrameOwnerElement::isHTMLContentAttribute(attribute);
-}
-
-int HTMLFrameElementBase::width()
-{
-    document().updateLayoutIgnorePendingStylesheets();
-    if (!renderBox())
-        return 0;
-    return renderBox()->width();
-}
-
-int HTMLFrameElementBase::height()
-{
-    document().updateLayoutIgnorePendingStylesheets();
-    if (!renderBox())
-        return 0;
-    return renderBox()->height();
 }
 
 ScrollbarMode HTMLFrameElementBase::scrollingMode() const

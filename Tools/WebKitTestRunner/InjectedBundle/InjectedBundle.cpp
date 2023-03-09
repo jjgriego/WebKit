@@ -203,27 +203,31 @@ void InjectedBundle::didReceiveMessageToPage(WKBundlePageRef page, WKStringRef m
     if (WKStringIsEqualToUTF8CString(messageName, "Reset")) {
         ASSERT(messageBody);
         auto messageBodyDictionary = dictionaryValue(messageBody);
+
+        bool beforeTest = false;
+        if (auto options = stringValue(messageBodyDictionary, "ResetStage"))
+            beforeTest = toWTFString(options) == "BeforeTest"_s;
+
         if (auto options = stringValue(messageBodyDictionary, "JSCOptions"))
             JSC::Options::setOptions(toWTFString(options).utf8().data());
+
         if (booleanValue(messageBodyDictionary, "ShouldGC"))
             WKBundleGarbageCollectJavaScriptObjects(m_bundle.get());
 
-        auto allowedHostsValue = value(messageBodyDictionary, "AllowedHosts");
-        if (allowedHostsValue && WKGetTypeID(allowedHostsValue) == WKArrayGetTypeID()) {
-            m_allowedHosts.clear();
-            auto array = static_cast<WKArrayRef>(allowedHostsValue);
-            for (size_t i = 0, size = WKArrayGetSize(array); i < size; ++i)
-                m_allowedHosts.append(toWTFString(WKArrayGetItemAtIndex(array, i)));
+        if (!beforeTest) {
+            setAllowedHosts(messageBodyDictionary);
+
+            m_state = Idle;
+            m_dumpPixels = false;
+            m_pixelResultIsPending = false;
+            // Needed for pixel result pending mode, otherwise a no-op.
+            InjectedBundle::page()->stopLoading();
+
+            setlocale(LC_ALL, "");
+            TestRunner::removeAllWebNotificationPermissions();
+
+            InjectedBundle::page()->resetAfterTest();
         }
-
-        m_state = Idle;
-        m_dumpPixels = false;
-        m_pixelResultIsPending = false;
-
-        setlocale(LC_ALL, "");
-        TestRunner::removeAllWebNotificationPermissions();
-
-        InjectedBundle::page()->resetAfterTest();
         return;
     }
 
@@ -388,6 +392,11 @@ void InjectedBundle::didReceiveMessageToPage(WKBundlePageRef page, WKStringRef m
         m_testRunner->statisticsCallDidSetHasHadUserInteractionCallback();
         return;
     }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "CallDidRemoveAllCookies")) {
+        m_testRunner->callRemoveAllCookiesCallback();
+        return;
+    }
     
     if (WKStringIsEqualToUTF8CString(messageName, "CallDidReceiveAllStorageAccessEntries")) {
         ASSERT(messageBody);
@@ -470,13 +479,13 @@ void InjectedBundle::didReceiveMessageToPage(WKBundlePageRef page, WKStringRef m
         return;
     }
 
-    if (WKStringIsEqualToUTF8CString(messageName, "PerformCustomMenuAction")) {
-        m_testRunner->performCustomMenuAction();
+    if (WKStringIsEqualToUTF8CString(messageName, "CallDidSetAppBoundDomains")) {
+        m_testRunner->didSetAppBoundDomainsCallback();
         return;
     }
 
-    if (WKStringIsEqualToUTF8CString(messageName, "CallDidSetAppBoundDomains")) {
-        m_testRunner->didSetAppBoundDomainsCallback();
+    if (WKStringIsEqualToUTF8CString(messageName, "CallDidSetManagedDomains")) {
+        m_testRunner->didSetManagedDomainsCallback();
         return;
     }
 
@@ -495,6 +504,17 @@ void InjectedBundle::didReceiveMessageToPage(WKBundlePageRef page, WKStringRef m
     postPageMessage("Error", "Unknown");
 }
 
+void InjectedBundle::setAllowedHosts(WKDictionaryRef settings)
+{
+    auto allowedHostsValue = value(settings, "AllowedHosts");
+    if (allowedHostsValue && WKGetTypeID(allowedHostsValue) == WKArrayGetTypeID()) {
+        m_allowedHosts.clear();
+        auto array = static_cast<WKArrayRef>(allowedHostsValue);
+        for (size_t i = 0, size = WKArrayGetSize(array); i < size; ++i)
+            m_allowedHosts.append(toWTFString(WKArrayGetItemAtIndex(array, i)));
+    }
+}
+
 void InjectedBundle::beginTesting(WKDictionaryRef settings, BegingTestingMode testingMode)
 {
     m_state = Testing;
@@ -505,6 +525,8 @@ void InjectedBundle::beginTesting(WKDictionaryRef settings, BegingTestingMode te
 
     m_pixelResult.clear();
     m_repaintRects.clear();
+
+    setAllowedHosts(settings);
 
     m_testRunner = TestRunner::create();
     m_gcController = GCController::create();
@@ -554,7 +576,10 @@ void InjectedBundle::done()
 
     m_useWorkQueue = false;
 
-    page()->stopLoading();
+    // Postpone page load stop if pixel result is still pending since
+    // cancelled image loads will paint as broken images.
+    if (!m_pixelResultIsPending)
+        page()->stopLoading();
     setTopLoadingFrame(0);
 
 #if ENABLE(ACCESSIBILITY)
@@ -579,6 +604,12 @@ void InjectedBundle::clearResourceLoadStatistics()
     WKBundleClearResourceLoadStatistics(m_bundle.get());
 }
 
+void InjectedBundle::reloadFromOrigin()
+{
+    m_useWorkQueue = true;
+    postPageMessage("ReloadFromOrigin");
+}
+
 void InjectedBundle::dumpBackForwardListsForAllPages(StringBuilder& stringBuilder)
 {
     size_t size = m_pages.size();
@@ -593,7 +624,7 @@ void InjectedBundle::dumpToStdErr(const String& output)
     if (output.isEmpty())
         return;
     // FIXME: Do we really have to convert to UTF-8 instead of using toWK?
-    auto string = output.tryGetUtf8();
+    auto string = output.tryGetUTF8();
     postPageMessage("DumpToStdErr", string ? string->data() : "Out of memory\n");
 }
 
@@ -604,7 +635,7 @@ void InjectedBundle::outputText(StringView output, IsFinalTestOutput isFinalTest
     if (output.isEmpty())
         return;
     // FIXME: Do we really have to convert to UTF-8 instead of using toWK?
-    auto string = output.tryGetUtf8();
+    auto string = output.tryGetUTF8();
     // We use WKBundlePagePostMessageIgnoringFullySynchronousMode() instead of WKBundlePagePostMessage() to make sure that all text output
     // is done via asynchronous IPC, even if the connection is in fully synchronous mode due to a WKBundlePagePostSynchronousMessageForTesting()
     // call. Otherwise, messages logged via sync and async IPC may end up out of order and cause flakiness.
@@ -684,6 +715,11 @@ void InjectedBundle::postSetAddsVisitedLinks(bool addsVisitedLinks)
 void InjectedBundle::setGeolocationPermission(bool enabled)
 {
     postPageMessage("SetGeolocationPermission", adoptWK(WKBooleanCreate(enabled)));
+}
+
+void InjectedBundle::setScreenWakeLockPermission(bool enabled)
+{
+    postPageMessage("SetScreenWakeLockPermission", adoptWK(WKBooleanCreate(enabled)));
 }
 
 void InjectedBundle::setMockGeolocationPosition(double latitude, double longitude, double accuracy, std::optional<double> altitude, std::optional<double> altitudeAccuracy, std::optional<double> heading, std::optional<double> speed, std::optional<double> floorLevel)

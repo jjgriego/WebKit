@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if ENABLE(CSS_TYPED_OM)
-
 #include "CSSPropertyNames.h"
 #include "CSSValue.h"
 #include "ScriptWrappable.h"
@@ -44,7 +42,7 @@ enum class CSSStyleValueType : uint8_t {
     CSSStyleValue,
     CSSStyleImageValue,
     CSSTransformValue,
-    CSSNumericValue,
+    CSSMathClamp,
     CSSMathInvert,
     CSSMathMin,
     CSSMathMax,
@@ -59,7 +57,7 @@ enum class CSSStyleValueType : uint8_t {
 inline bool isCSSNumericValue(CSSStyleValueType type)
 {
     switch (type) {
-    case CSSStyleValueType::CSSNumericValue:
+    case CSSStyleValueType::CSSMathClamp:
     case CSSStyleValueType::CSSMathInvert:
     case CSSStyleValueType::CSSMathMin:
     case CSSStyleValueType::CSSMathMax:
@@ -81,6 +79,7 @@ inline bool isCSSNumericValue(CSSStyleValueType type)
 inline bool isCSSMathValue(CSSStyleValueType type)
 {
     switch (type) {
+    case CSSStyleValueType::CSSMathClamp:
     case CSSStyleValueType::CSSMathInvert:
     case CSSStyleValueType::CSSMathMin:
     case CSSStyleValueType::CSSMathMax:
@@ -88,7 +87,6 @@ inline bool isCSSMathValue(CSSStyleValueType type)
     case CSSStyleValueType::CSSMathProduct:
     case CSSStyleValueType::CSSMathSum:
         return true;
-    case CSSStyleValueType::CSSNumericValue:
     case CSSStyleValueType::CSSUnitValue:
     case CSSStyleValueType::CSSStyleValue:
     case CSSStyleValueType::CSSStyleImageValue:
@@ -110,7 +108,11 @@ class CSSStyleValue : public RefCounted<CSSStyleValue>, public ScriptWrappable {
 public:
     String toString() const;
     virtual void serialize(StringBuilder&, OptionSet<SerializationArguments> = { }) const;
+
+IGNORE_GCC_WARNINGS_BEGIN("mismatched-new-delete")
+    // https://webkit.org/b/241516
     virtual ~CSSStyleValue() = default;
+IGNORE_GCC_WARNINGS_END
 
     virtual CSSStyleValueType getType() const { return CSSStyleValueType::CSSStyleValue; }
 
@@ -119,6 +121,9 @@ public:
 
     static Ref<CSSStyleValue> create(RefPtr<CSSValue>&&, String&& = String());
     static Ref<CSSStyleValue> create();
+
+    virtual RefPtr<CSSValue> toCSSValue() const { return m_propertyValue; }
+    virtual RefPtr<CSSValue> toCSSValueWithProperty(CSSPropertyID) const { return toCSSValue(); }
 
 protected:
     CSSStyleValue(RefPtr<CSSValue>&&, String&& = String());
@@ -129,5 +134,3 @@ protected:
 };
 
 } // namespace WebCore
-
-#endif

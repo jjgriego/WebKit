@@ -67,8 +67,8 @@ JSC_DEFINE_HOST_FUNCTION(constructSet, (JSGlobalObject* globalObject, CallFrame*
     RETURN_IF_EXCEPTION(scope, { });
 
     JSValue iterable = callFrame->argument(0);
-    if (iterable.isUndefinedOrNull()) 
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSSet::create(globalObject, vm, setStructure)));
+    if (iterable.isUndefinedOrNull())
+        return JSValue::encode(JSSet::create(vm, setStructure));
 
     bool canPerformFastAdd = JSSet::isAddFastAndNonObservable(setStructure);
     if (auto* iterableSet = jsDynamicCast<JSSet*>(iterable)) {
@@ -76,8 +76,7 @@ JSC_DEFINE_HOST_FUNCTION(constructSet, (JSGlobalObject* globalObject, CallFrame*
             RELEASE_AND_RETURN(scope, JSValue::encode(iterableSet->clone(globalObject, vm, setStructure)));
     }
 
-    JSSet* set = JSSet::create(globalObject, vm, setStructure);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    JSSet* set = JSSet::create(vm, setStructure);
 
     JSValue adderFunction;
     CallData adderFunctionCallData;
@@ -135,6 +134,16 @@ JSC_DEFINE_HOST_FUNCTION(setPrivateFuncSetBucketKey, (JSGlobalObject*, CallFrame
     auto* bucket = jsCast<JSSet::BucketType*>(callFrame->uncheckedArgument(0));
     ASSERT(bucket);
     return JSValue::encode(bucket->key());
+}
+
+JSC_DEFINE_HOST_FUNCTION(setPrivateFuncClone, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    ASSERT(jsDynamicCast<JSSet*>(callFrame->argument(0)));
+    JSSet* set = jsCast<JSSet*>(callFrame->uncheckedArgument(0));
+    RELEASE_AND_RETURN(scope, JSValue::encode(set->clone(globalObject, vm, globalObject->setStructure())));
 }
 
 }

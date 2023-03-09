@@ -1,4 +1,4 @@
-# Copyright (C) 2021 Apple Inc. All rights reserved.
+# Copyright (C) 2021-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -27,14 +27,22 @@ USERS = User.Mapping()
 USERS.create(
     name='Tim Contributor',
     emails=['tcontributor@example.com'],
+    username='tcontributor@example.com',
 )
 USERS.create(
     name='Felix Filer',
     emails=['ffiler@example.com'],
+    username='ffiler@example.com',
 )
 USERS.create(
     name='Wilma Watcher',
     emails=['wwatcher@example.com'],
+    username='wwatcher@example.com',
+)
+USERS.create(
+    name='Radar WebKit Bug Importer',
+    emails=['webkit-bug-importer@group.apple.com'],
+    username='webkit-bug-importer@group.apple.com',
 )
 
 ISSUES = [
@@ -48,6 +56,8 @@ ISSUES = [
         project='WebKit',
         component='Text',
         version='Other',
+        milestone='October',
+        keywords=['Keyword A'],
         comments=[
             Issue.Comment(
                 user=USERS['Felix Filer'],
@@ -69,6 +79,8 @@ ISSUES = [
         project='WebKit',
         component='Scrolling',
         version='Safari 15',
+        milestone='October',
+        keywords=['Keyword A'],
         comments=[
             Issue.Comment(
                 user=USERS['Tim Contributor'],
@@ -87,6 +99,8 @@ ISSUES = [
         project='WebKit',
         component='SVG',
         version='WebKit Local Build',
+        milestone='October',
+        keywords=['Keyword B'],
         comments=[
             Issue.Comment(
                 user=USERS['Tim Contributor'],

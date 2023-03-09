@@ -92,17 +92,19 @@ public:
     void didSetHasHadUserInteraction();
     void didReceiveAllStorageAccessEntries(Vector<String>&& domains);
     void didReceiveLoadedSubresourceDomains(Vector<String>&& domains);
+    void didRemoveAllCookies();
 
     void didRemoveAllSessionCredentials();
 
     void didSetAppBoundDomains();
+
+    void didSetManagedDomains();
 
     void dumpResourceLoadStatistics();
 
     bool canOpenWindows() const { return m_canOpenWindows; }
 
     void dumpPrivateClickMeasurement();
-    void performCustomMenuAction();
 
     void willCreateNewPage();
 
@@ -125,7 +127,7 @@ private:
     enum class SnapshotResultType { WebView, WebContents };
     void dumpPixelsAndCompareWithExpected(SnapshotResultType, WKArrayRef repaintRects, WKImageRef = nullptr);
     void dumpAudio(WKDataRef);
-    bool compareActualHashToExpectedAndDumpResults(const char[33]);
+    bool compareActualHashToExpectedAndDumpResults(const std::string&);
 
     static void forceRepaintDoneCallback(WKErrorRef, void* context);
     
@@ -147,8 +149,8 @@ private:
     
     WKRetainPtr<WKURLRef> m_url;
     String m_urlString;
-    RunLoop::Timer<TestInvocation> m_waitToDumpWatchdogTimer;
-    RunLoop::Timer<TestInvocation> m_waitForPostDumpWatchdogTimer;
+    RunLoop::Timer m_waitToDumpWatchdogTimer;
+    RunLoop::Timer m_waitForPostDumpWatchdogTimer;
 
     std::string m_expectedPixelHash;
 

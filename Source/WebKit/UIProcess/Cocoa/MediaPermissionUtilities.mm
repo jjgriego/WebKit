@@ -114,10 +114,10 @@ static NSString* visibleDomain(const String& host)
 
 NSString *applicationVisibleNameFromOrigin(const WebCore::SecurityOriginData& origin)
 {
-    if (origin.protocol != "http"_s && origin.protocol != "https"_s)
+    if (origin.protocol() != "http"_s && origin.protocol() != "https"_s)
         return nil;
 
-    return visibleDomain(origin.host);
+    return visibleDomain(origin.host());
 }
 
 NSString *applicationVisibleName()
@@ -148,7 +148,7 @@ static NSString *alertMessageText(MediaPermissionReason reason, const WebCore::S
     case MediaPermissionReason::Geolocation:
         return [NSString stringWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to use your current location?", @"Message for geolocation prompt"), visibleOrigin];
     case MediaPermissionReason::SpeechRecognition:
-        return [NSString stringWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to capture your audio and use it for speech recognition?", @"Message for spechrecognition prompt"), visibleDomain(origin.host)];
+        return [NSString stringWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to capture your audio and use it for speech recognition?", @"Message for spechrecognition prompt"), visibleDomain(origin.host())];
     }
 }
 
@@ -190,6 +190,8 @@ static NSString *doNotAllowButtonText(MediaPermissionReason reason)
 
 void alertForPermission(WebPageProxy& page, MediaPermissionReason reason, const WebCore::SecurityOriginData& origin, CompletionHandler<void(bool)>&& completionHandler)
 {
+    ASSERT(isMainRunLoop());
+
 #if PLATFORM(IOS_FAMILY)
     if (reason == MediaPermissionReason::DeviceOrientation) {
         if (auto& userPermissionHandler = page.deviceOrientationUserPermissionHandlerForTesting())
@@ -287,10 +289,12 @@ void requestSpeechRecognitionAccess(CompletionHandler<void(bool authorized)>&& c
 MediaPermissionResult checkSpeechRecognitionServiceAccess()
 {
     auto authorizationStatus = [PAL::getSFSpeechRecognizerClass() authorizationStatus];
+IGNORE_WARNINGS_BEGIN("deprecated-enum-compare")
     if (authorizationStatus == SFSpeechRecognizerAuthorizationStatusDenied || authorizationStatus == SFSpeechRecognizerAuthorizationStatusRestricted)
         return MediaPermissionResult::Denied;
     if (authorizationStatus == SFSpeechRecognizerAuthorizationStatusAuthorized)
         return MediaPermissionResult::Granted;
+IGNORE_WARNINGS_END
     return MediaPermissionResult::Unknown;
 }
 

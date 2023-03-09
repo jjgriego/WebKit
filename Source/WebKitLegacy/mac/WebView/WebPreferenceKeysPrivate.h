@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,8 +44,8 @@
 #define WebKitUsesEncodingDetectorPreferenceKey @"WebKitUsesEncodingDetector"
 #define WebKitUserStyleSheetEnabledPreferenceKey @"WebKitUserStyleSheetEnabledPreferenceKey"
 #define WebKitUserStyleSheetLocationPreferenceKey @"WebKitUserStyleSheetLocationPreferenceKey"
-#if !TARGET_OS_IPHONE
 #define WebKitShouldPrintBackgroundsPreferenceKey @"WebKitShouldPrintBackgroundsPreferenceKey"
+#if !TARGET_OS_IPHONE
 #define WebKitTextAreasAreResizablePreferenceKey @"WebKitTextAreasAreResizable"
 #endif
 #define WebKitShrinksStandaloneImagesToFitPreferenceKey @"WebKitShrinksStandaloneImagesToFit"
@@ -116,7 +116,6 @@
 #define WebKitFrameFlatteningPreferenceKey @"WebKitFrameFlattening"
 #define WebKitAsyncFrameScrollingEnabledPreferenceKey @"WebKitAsyncFrameScrollingEnabled"
 #define WebKitSpatialNavigationEnabledPreferenceKey @"WebKitSpatialNavigationEnabled"
-#define WebKitPaginateDuringLayoutEnabledPreferenceKey @"WebKitPaginateDuringLayoutEnabled"
 #define WebKitDNSPrefetchingEnabledPreferenceKey @"WebKitDNSPrefetchingEnabled"
 #define WebKitFullScreenEnabledPreferenceKey @"WebKitFullScreenEnabled"
 #define WebKitAsynchronousSpellCheckingEnabledPreferenceKey @"WebKitAsynchronousSpellCheckingEnabled"
@@ -235,7 +234,6 @@
 #define WebKitPictureInPictureAPIEnabledKey @"WebKitPictureInPictureAPIEnabled"
 #define WebKitAllowMediaContentTypesRequiringHardwareSupportAsFallbackKey @"WebKitAllowMediaContentTypesRequiringHardwareSupportAsFallback"
 #define WebKitMediaCapabilitiesEnabledPreferenceKey @"WebKitMediaCapabilitiesEnabled"
-#define WebKitCSSLogicalEnabledPreferenceKey @"WebKitCSSLogicalEnabled"
 #define WebKitLineHeightUnitsEnabledPreferenceKey @"WebKitLineHeightUnitsEnabled"
 #define WebKitDebugInAppBrowserPrivacyEnabledPreferenceKey @"WebKitDebugInAppBrowserPrivacyEnabled"
 
@@ -252,9 +250,7 @@
 #define WebKitCSSOMViewSmoothScrollingEnabledPreferenceKey @"WebKitCSSOMViewSmoothScrollingEnabled"
 #define WebKitWebAnimationsCompositeOperationsEnabledPreferenceKey @"WebKitWebAnimationsCompositeOperationsEnabled"
 #define WebKitWebAnimationsMutableTimelinesEnabledPreferenceKey @"WebKitWebAnimationsMutableTimelinesEnabled"
-#define WebKitWebGL2EnabledPreferenceKey @"WebKitWebGL2Enabled"
 #define WebKitMaskWebGLStringsEnabledPreferenceKey @"WebKitMaskWebGLStringsEnabled"
-#define WebKitAccessibilityObjectModelEnabledPreferenceKey @"WebKitAccessibilityObjectModelEnabled"
 #define WebKitServerTimingEnabledPreferenceKey @"WebKitServerTimingEnabled"
 #define WebKitCSSCustomPropertiesAndValuesEnabledPreferenceKey @"WebKitCSSCustomPropertiesAndValuesEnabled"
 #define WebKitResizeObserverEnabledPreferenceKey @"WebKitResizeObserverEnabled"

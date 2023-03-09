@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007, 2011 Apple Inc.  All rights reserved.
+ * Copyright (C) 2007-2022 Apple Inc.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,6 +31,8 @@
 
 #import "DumpRenderTree.h"
 #import "TestRunner.h"
+#import <JavaScriptCore/RegularExpression.h>
+#import <WebCore/ProtectionSpaceCocoa.h>
 #import <WebKit/WebDataSourcePrivate.h>
 #import <WebKit/WebKitLegacy.h>
 #import <wtf/Assertions.h>
@@ -142,6 +144,11 @@ BOOL isAllowedHost(NSString *host)
     return gTestRunner->allowedHosts().count(host.UTF8String);
 }
 
+BOOL canAuthenticateServerTrustAgainstProtectionSpace(NSString *host)
+{
+    return isLocalhost(host) || gTestRunner->localhostAliases().contains(host.UTF8String) || (gTestRunner->allowAnyHTTPSCertificateForAllowedHosts() && isAllowedHost(host));
+}
+
 -(NSURLRequest *)webView: (WebView *)wv resource:identifier willSendRequest: (NSURLRequest *)request redirectResponse:(NSURLResponse *)redirectResponse fromDataSource:(WebDataSource *)dataSource
 {
     if (!done && gTestRunner->dumpResourceLoadCallbacks()) {
@@ -167,7 +174,10 @@ BOOL isAllowedHost(NSString *host)
         if ([lowercaseTestURL hasPrefix:@"http:"] || [lowercaseTestURL hasPrefix:@"https:"])
             testHost = [[NSURL URLWithString:testURL] host];
         if (!isLocalhost(host) && !hostIsUsedBySomeTestsToGenerateError(host) && !isAllowedHost(host) && (!testHost || isLocalhost(testHost))) {
-            printf("Blocked access to external URL %s\n", [[url absoluteString] cStringUsingEncoding:NSUTF8StringEncoding]);
+            String blockedURL = [url absoluteString];
+            replace(blockedURL, JSC::Yarr::RegularExpression("&key=[^&]+&"_s), "&key=GENERATED_KEY&"_s);
+            replace(blockedURL, JSC::Yarr::RegularExpression("reportID=[-0123456789abcdefABCDEF]+"_s), "reportID=GENERATED_REPORT_ID"_s);
+            printf("Blocked access to external URL %s\n", blockedURL.utf8().data());
             return nil;
         }
     }
@@ -194,6 +204,14 @@ BOOL isAllowedHost(NSString *host)
 
         [[challenge sender] rejectProtectionSpaceAndContinueWithChallenge:challenge];
         return;
+    }
+
+    if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
+        if (gTestRunner->allowsAnySSLCertificate()) {
+            [[challenge sender] useCredential:[NSURLCredential credentialWithUser:@"accept server trust" password:@"" persistence:NSURLCredentialPersistenceNone]
+                forAuthenticationChallenge:challenge];
+            return;
+        }
     }
 
     if (!gTestRunner->handlesAuthenticationChallenges()) {
@@ -275,4 +293,21 @@ BOOL isAllowedHost(NSString *host)
 
     return gTestRunner->shouldPaintBrokenImage();
 }
+
+-(BOOL)webView:(WebView *)webView resource:(id)identifier canAuthenticateAgainstProtectionSpace:(NSURLProtectionSpace *)protectionSpaceNS forDataSource:(WebDataSource *)dataSource
+{
+    if (!done && gTestRunner->dumpResourceLoadCallbacks()) {
+        NSString *string = [NSString stringWithFormat:@"%@ - canAuthenticateAgainstProtectionSpace", identifier];
+        printf("%s\n", [string UTF8String]);
+    }
+
+    WebCore::ProtectionSpace protectionSpace(protectionSpaceNS);
+
+    auto scheme = protectionSpace.authenticationScheme();
+    if (scheme == WebCore::ProtectionSpaceBase::AuthenticationScheme::ServerTrustEvaluationRequested)
+        return canAuthenticateServerTrustAgainstProtectionSpace(protectionSpaceNS.host);
+
+    return scheme <= WebCore::ProtectionSpaceBase::AuthenticationScheme::HTTPDigest || scheme == WebCore::ProtectionSpaceBase::AuthenticationScheme::OAuth;
+}
+
 @end

@@ -1,0 +1,16 @@
+# Test expectations for macOS with --use-gpu-process --remote-layer-tree.
+
+# The direct image codepath is not used with the remote layer tree.
+compositing/images/direct-image-object-fit.html [ Skip ]
+compositing/reflections/direct-image-object-fit-reflected.html [ Skip ]
+
+# rdar://102067140 WebXR tests crash
+http/wpt/webxr [ Skip ]
+imported/w3c/web-platform-tests/webxr [ Skip ]
+webxr [ Skip ]
+
+# rdar://102572503
+compositing/backgrounds/fixed-backgrounds.html [ ImageOnlyFailure ]
+
+# rdar://102588345
+[ Ventura ] fast/text/international/system-language/han-text-style.html [ ImageOnlyFailure ]

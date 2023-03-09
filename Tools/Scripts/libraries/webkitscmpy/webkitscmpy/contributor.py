@@ -1,4 +1,4 @@
-# Copyright (C) 2020, 2021 Apple Inc. All rights reserved.
+# Copyright (C) 2020-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -22,16 +22,18 @@
 
 import json
 import re
+import sys
 
 from collections import defaultdict
 from webkitcorepy import string_utils
 
 
 class Contributor(object):
-    GIT_AUTHOR_RE = re.compile(r'Author: (?P<author>.*) <(?P<email>[^@]+@[^@]+)(@.*)?>')
+    GIT_AUTHOR_RE = re.compile(r'Author: (?P<author>.*) <(?P<email>[^@,]+@[^@,]+)(@.*)?>')
     AUTOMATED_CHECKIN_RE = re.compile(r'Author: (?P<author>.*) <devnull>')
     UNKNOWN_AUTHOR = re.compile(r'Author: (?P<author>.*) <None>')
     EMPTY_AUTHOR = re.compile(r'Author: (?P<author>.*) <>')
+    MULTIPLE_EMAIL_RE = re.compile(r'Author: (?P<author>.*) <(?P<emails>([^@ ,]+@[^@ , ]+[, ]\s?)+[^@ ,]+@[^@ , ]+)>')
     SVN_AUTHOR_RE = re.compile(r'r(?P<revision>\d+) \| (?P<email>.*) \| (?P<date>.*) \| \d+ lines?')
     SVN_AUTHOR_Q_RE = re.compile(r'r(?P<revision>\d+) \| (?P<email>.*) \| (?P<date>.*)')
     SVN_PATCH_FROM_RE = re.compile(r'Patch by (?P<author>.*) <(?P<email>.*)> on \d+-\d+-\d+')
@@ -111,6 +113,10 @@ class Contributor(object):
                 raise ValueError("'{}' is not a Contributor object".format(type(contributor)))
 
             result = self.create(contributor.name, *contributor.emails)
+            if not result:
+                sys.stderr.write("Failed to create contributor {} ({})\n".format(contributor.name, ', '.join(contributor.emails)))
+                return None
+
             result.status = contributor.status or result.status
             result.github = contributor.github or result.github
             result.bitbucket = contributor.bitbucket or result.bitbucket
@@ -155,7 +161,7 @@ class Contributor(object):
         def __iter__(self):
             yielded = set()
             for contributor in self.values():
-                if contributor.name in yielded:
+                if contributor and contributor.name in yielded:
                     continue
                 yielded.add(contributor.name)
                 yield contributor
@@ -163,7 +169,7 @@ class Contributor(object):
 
     @classmethod
     def from_scm_log(cls, line, contributors=None):
-        email = None
+        emails = []
         author = None
 
         for expression in [
@@ -174,6 +180,7 @@ class Contributor(object):
             cls.UNKNOWN_AUTHOR,
             cls.EMPTY_AUTHOR,
             cls.SVN_AUTHOR_Q_RE,
+            cls.MULTIPLE_EMAIL_RE,
         ]:
             match = expression.match(line)
             if match:
@@ -182,19 +189,23 @@ class Contributor(object):
                     if '(no author)' in author or 'Automated Checkin' in author or 'Unknown' in author:
                         author = None
                 if 'email' in expression.groupindex:
-                    email = match.group('email')
-                    if '(no author)' in email:
-                        email = None
+                    if '(no author)' not in match.group('email'):
+                        emails.append(match.group('email'))
+                if 'emails' in expression.groupindex:
+                    candidates = [email.rstrip().lstrip() for email in match.group('emails').split(',')]
+                    for candidate in candidates:
+                        if '(no author)' not in candidate:
+                            emails.append(candidate)
                 break
         else:
             raise ValueError("'{}' does not match a known SCM log".format(line))
 
-        if not email and not author:
+        if not emails and not author:
             return None
 
         if contributors is not None:
-            return contributors.create(author, email)
-        return cls(author or email, emails=[email])
+            return contributors.create(author, *emails)
+        return cls(author or emails[0], emails=emails)
 
     def __init__(self, name, emails=None, status=None, github=None, bitbucket=None):
         self.name = string_utils.decode(name)
@@ -210,7 +221,7 @@ class Contributor(object):
         return self.emails[0]
 
     def __repr__(self):
-        return u'{} <{}>'.format(self.name, self.email)
+        return u'{} <{}>'.format(self.name, self.email or '?')
 
     def __hash__(self):
         return hash(self.name)
@@ -224,8 +235,9 @@ class Contributor(object):
             ref_value = ''
         else:
             raise ValueError('Cannot compare {} with {}'.format(Contributor, type(other)))
-        if self.name == ref_value:
-            return 0
+        for part in [self.name, self.emails, self.github, self.bitbucket]:
+            if part == ref_value:
+                return 0
         return 1 if self.name > ref_value else -1
 
     def __eq__(self, other):

@@ -36,14 +36,13 @@ SourceBrush::SourceBrush(const Color& color, std::optional<Brush>&& brush)
 
 const AffineTransform& SourceBrush::gradientSpaceTransform() const
 {
-    static NeverDestroyed<AffineTransform> identity;
     if (!m_brush)
-        return identity.get();
+        return identity;
 
     if (auto* gradient = std::get_if<Brush::LogicalGradient>(&m_brush->brush))
         return gradient->spaceTransform;
 
-    return identity.get();
+    return identity;
 }
 
 Gradient* SourceBrush::gradient() const
@@ -78,8 +77,10 @@ WTF::TextStream& operator<<(TextStream& ts, const SourceBrush& brush)
 {
     ts.dumpProperty("color", brush.color());
 
-    if (auto gradient = brush.gradient())
-        ts.dumpProperty("gradient", gradient);
+    if (auto gradient = brush.gradient()) {
+        ts.dumpProperty("gradient", *gradient);
+        ts.dumpProperty("gradient-space-transform", brush.gradientSpaceTransform());
+    }
 
     if (auto pattern = brush.pattern())
         ts.dumpProperty("pattern", pattern);

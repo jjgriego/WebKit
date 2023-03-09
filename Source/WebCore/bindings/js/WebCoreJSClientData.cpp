@@ -27,6 +27,7 @@
 #include "WebCoreJSClientData.h"
 
 #include "DOMGCOutputConstraint.h"
+#include "DocumentInlines.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSAudioWorkletGlobalScope.h"
@@ -36,6 +37,7 @@
 #include "JSDOMWindowProperties.h"
 #include "JSDedicatedWorkerGlobalScope.h"
 #include "JSIDBSerializationGlobalObject.h"
+#include "JSObservableArray.h"
 #include "JSPaintWorkletGlobalScope.h"
 #include "JSRemoteDOMWindow.h"
 #include "JSServiceWorkerGlobalScope.h"
@@ -60,8 +62,11 @@
 namespace WebCore {
 using namespace JSC;
 
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSHeapData);
+
 JSHeapData::JSHeapData(Heap& heap)
     : m_runtimeArrayHeapCellType(JSC::IsoHeapCellType::Args<RuntimeArray>())
+    , m_observableArrayHeapCellType(JSC::IsoHeapCellType::Args<JSObservableArray>())
     , m_runtimeObjectHeapCellType(JSC::IsoHeapCellType::Args<JSC::Bindings::RuntimeObject>())
     , m_windowProxyHeapCellType(JSC::IsoHeapCellType::Args<JSWindowProxy>())
     , m_heapCellTypeForJSDOMWindow(JSC::IsoHeapCellType::Args<JSDOMWindow>())
@@ -86,6 +91,7 @@ JSHeapData::JSHeapData(Heap& heap)
     , m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)
     , m_domWindowPropertiesSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMWindowProperties)
     , m_runtimeArraySpace ISO_SUBSPACE_INIT(heap, m_runtimeArrayHeapCellType, RuntimeArray)
+    , m_observableArraySpace ISO_SUBSPACE_INIT(heap, m_observableArrayHeapCellType, JSObservableArray)
     , m_runtimeMethodSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, RuntimeMethod) // Hash:0xf70c4a85
     , m_runtimeObjectSpace ISO_SUBSPACE_INIT(heap, m_runtimeObjectHeapCellType, JSC::Bindings::RuntimeObject)
     , m_windowProxySpace ISO_SUBSPACE_INIT(heap, m_windowProxyHeapCellType, JSWindowProxy)
@@ -109,6 +115,8 @@ JSHeapData* JSHeapData::ensureHeapData(Heap& heap)
 
 #define CLIENT_ISO_SUBSPACE_INIT(subspace) subspace(m_heapData->subspace)
 
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
+
 JSVMClientData::JSVMClientData(VM& vm)
     : m_builtinFunctions(vm)
     , m_builtinNames(vm)
@@ -118,6 +126,7 @@ JSVMClientData::JSVMClientData(VM& vm)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domWindowPropertiesSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_runtimeArraySpace)
+    , CLIENT_ISO_SUBSPACE_INIT(m_observableArraySpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_runtimeMethodSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_runtimeObjectSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_windowProxySpace)
@@ -180,6 +189,25 @@ void JSVMClientData::initNormalWorld(VM* vm, WorkerThreadType type)
 
     clientData->m_normalWorld = DOMWrapperWorld::create(*vm, DOMWrapperWorld::Type::Normal);
     vm->m_typedArrayController = adoptRef(new WebCoreTypedArrayController(type == WorkerThreadType::DedicatedWorker || type == WorkerThreadType::Worklet));
+}
+
+String JSVMClientData::overrideSourceURL(const JSC::StackFrame& frame, const String& originalSourceURL) const
+{
+    if (originalSourceURL.isEmpty())
+        return nullString();
+
+    auto* codeBlock = frame.codeBlock();
+    RELEASE_ASSERT(codeBlock);
+
+    auto* globalObject = codeBlock->globalObject();
+    if (!globalObject->inherits<JSDOMWindowBase>())
+        return nullString();
+
+    auto* document = jsCast<const JSDOMWindowBase*>(globalObject)->wrapped().document();
+    if (!document)
+        return nullString();
+
+    return document->maskedURLForBindingsIfNeeded(URL(originalSourceURL)).string();
 }
 
 } // namespace WebCore

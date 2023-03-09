@@ -27,6 +27,9 @@
 #import "RenderThemeCocoa.h"
 
 #import "ApplePayLogoSystemImage.h"
+#import "AttachmentLayout.h"
+#import "DrawGlyphsRecorder.h"
+#import "FloatRoundedRect.h"
 #import "FontCacheCoreText.h"
 #import "GraphicsContextCG.h"
 #import "HTMLInputElement.h"
@@ -34,8 +37,10 @@
 #import "RenderText.h"
 #import "UserAgentScripts.h"
 #import "UserAgentStyleSheets.h"
+#import <CoreGraphics/CoreGraphics.h>
 #import <algorithm>
 #import <pal/spi/cf/CoreTextSPI.h>
+#import <pal/spi/cocoa/FeatureFlagsSPI.h>
 #import <wtf/Language.h>
 
 #if ENABLE(VIDEO)
@@ -62,6 +67,11 @@
 
 namespace WebCore {
 
+constexpr int kThumbnailBorderStrokeWidth = 1;
+constexpr int kThumbnailBorderCornerRadius = 1;
+constexpr int kVisibleBackgroundImageWidth = 1;
+constexpr int kMultipleThumbnailShrinkSize = 2;
+
 RenderThemeCocoa& RenderThemeCocoa::singleton()
 {
     return static_cast<RenderThemeCocoa&>(RenderTheme::singleton());
@@ -83,6 +93,45 @@ bool RenderThemeCocoa::shouldHaveCapsLockIndicator(const HTMLInputElement& eleme
     return element.isPasswordField();
 }
 
+Color RenderThemeCocoa::pictureFrameColor(const RenderObject& buttonRenderer)
+{
+    return systemColor(CSSValueAppleSystemControlBackground, buttonRenderer.styleColorOptions());
+}
+
+void RenderThemeCocoa::paintFileUploadIconDecorations(const RenderObject&, const RenderObject& buttonRenderer, const PaintInfo& paintInfo, const IntRect& rect, Icon* icon, FileUploadDecorations fileUploadDecorations)
+{
+    GraphicsContextStateSaver stateSaver(paintInfo.context());
+
+    IntSize cornerSize(kThumbnailBorderCornerRadius, kThumbnailBorderCornerRadius);
+
+    auto pictureFrameColor = this->pictureFrameColor(buttonRenderer);
+
+    auto thumbnailPictureFrameRect = rect;
+    auto thumbnailRect = rect;
+    thumbnailRect.contract(2 * kThumbnailBorderStrokeWidth, 2 * kThumbnailBorderStrokeWidth);
+    thumbnailRect.move(kThumbnailBorderStrokeWidth, kThumbnailBorderStrokeWidth);
+
+    if (fileUploadDecorations == MultipleFiles) {
+        // Smaller thumbnails for multiple selection appearance.
+        thumbnailPictureFrameRect.contract(kMultipleThumbnailShrinkSize, kMultipleThumbnailShrinkSize);
+        thumbnailRect.contract(kMultipleThumbnailShrinkSize, kMultipleThumbnailShrinkSize);
+
+        // Background picture frame and simple background icon with a gradient matching the button.
+        auto backgroundImageColor = buttonRenderer.style().visitedDependentColor(CSSPropertyBackgroundColor);
+        paintInfo.context().fillRoundedRect(FloatRoundedRect(thumbnailPictureFrameRect, cornerSize, cornerSize, cornerSize, cornerSize), pictureFrameColor);
+        paintInfo.context().fillRect(thumbnailRect, backgroundImageColor);
+
+        // Move the rects for the Foreground picture frame and icon.
+        auto inset = kVisibleBackgroundImageWidth + kThumbnailBorderStrokeWidth;
+        thumbnailPictureFrameRect.move(inset, inset);
+        thumbnailRect.move(inset, inset);
+    }
+
+    // Foreground picture frame and icon.
+    paintInfo.context().fillRoundedRect(FloatRoundedRect(thumbnailPictureFrameRect, cornerSize, cornerSize, cornerSize, cornerSize), pictureFrameColor);
+    icon->paint(paintInfo.context(), thumbnailRect);
+}
+
 #if ENABLE(APPLE_PAY)
 
 static const auto applePayButtonMinimumWidth = 140;
@@ -101,26 +150,6 @@ void RenderThemeCocoa::adjustApplePayButtonStyle(RenderStyle& style, const Eleme
         auto cornerRadius = PKApplePayButtonDefaultCornerRadius;
         style.setBorderRadius({ { cornerRadius, LengthType::Fixed }, { cornerRadius, LengthType::Fixed } });
     }
-}
-
-bool RenderThemeCocoa::paintApplePayButton(const RenderObject& renderer, const PaintInfo& paintInfo, const IntRect& paintRect)
-{
-    auto& style = renderer.style();
-    auto largestCornerRadius = std::max<CGFloat>({
-        floatValueForLength(style.borderTopLeftRadius().height, paintRect.height()),
-        floatValueForLength(style.borderTopLeftRadius().width, paintRect.width()),
-        floatValueForLength(style.borderTopRightRadius().height, paintRect.height()),
-        floatValueForLength(style.borderTopRightRadius().width, paintRect.width()),
-        floatValueForLength(style.borderBottomLeftRadius().height, paintRect.height()),
-        floatValueForLength(style.borderBottomLeftRadius().width, paintRect.width()),
-        floatValueForLength(style.borderBottomRightRadius().height, paintRect.height()),
-        floatValueForLength(style.borderBottomRightRadius().width, paintRect.width())
-    });
-    String locale = style.computedLocale();
-    if (locale.isEmpty())
-        locale = defaultLanguage(ShouldMinimizeLanguages::No);
-    paintInfo.context().drawSystemImage(ApplePayButtonSystemImage::create(style.applePayButtonType(), style.applePayButtonStyle(), locale, largestCornerRadius), paintRect);
-    return false;
 }
 
 #endif // ENABLE(APPLE_PAY)
@@ -189,11 +218,63 @@ static inline FontSelectionValue cssWeightOfSystemFont(CTFontRef font)
     CFNumberGetValue(resultRef.get(), kCFNumberFloatType, &result);
     // These numbers were experimentally gathered from weights of the system font.
     static constexpr float weightThresholds[] = { -0.6, -0.365, -0.115, 0.130, 0.235, 0.350, 0.5, 0.7 };
-    for (unsigned i = 0; i < WTF_ARRAY_LENGTH(weightThresholds); ++i) {
+    for (unsigned i = 0; i < std::size(weightThresholds); ++i) {
         if (result < weightThresholds[i])
             return FontSelectionValue((static_cast<int>(i) + 1) * 100);
     }
     return FontSelectionValue(900);
+}
+
+#if ENABLE(ATTACHMENT_ELEMENT)
+
+int RenderThemeCocoa::attachmentBaseline(const RenderAttachment& attachment) const
+{
+    AttachmentLayout layout(attachment, AttachmentLayoutStyle::NonSelected);
+    return layout.baseline;
+}
+
+void RenderThemeCocoa::paintAttachmentText(GraphicsContext& context, AttachmentLayout* layout)
+{
+    DrawGlyphsRecorder recorder(context, 1, DrawGlyphsRecorder::DeriveFontFromContext::Yes);
+
+    for (const auto& line : layout->lines)
+        recorder.drawNativeText(line.font.get(), CTFontGetSize(line.font.get()), line.line.get(), line.rect);
+}
+
+#endif
+
+Color RenderThemeCocoa::platformSpellingMarkerColor(OptionSet<StyleColorOptions> options) const
+{
+    auto useDarkMode = options.contains(StyleColorOptions::UseDarkAppearance);
+    return useDarkMode ? SRGBA<uint8_t> { 255, 140, 140, 217 } : SRGBA<uint8_t> { 255, 59, 48, 191 };
+}
+
+Color RenderThemeCocoa::platformDictationAlternativesMarkerColor(OptionSet<StyleColorOptions> options) const
+{
+    auto useDarkMode = options.contains(StyleColorOptions::UseDarkAppearance);
+    return useDarkMode ? SRGBA<uint8_t> { 40, 145, 255, 217 } : SRGBA<uint8_t> { 0, 122, 255, 191 };
+}
+
+Color RenderThemeCocoa::platformAutocorrectionReplacementMarkerColor(OptionSet<StyleColorOptions> options) const
+{
+    auto useDarkMode = options.contains(StyleColorOptions::UseDarkAppearance);
+    return useDarkMode ? SRGBA<uint8_t> { 40, 145, 255, 217 } : SRGBA<uint8_t> { 0, 122, 255, 191 };
+}
+
+Color RenderThemeCocoa::platformGrammarMarkerColor(OptionSet<StyleColorOptions> options) const
+{
+    auto useDarkMode = options.contains(StyleColorOptions::UseDarkAppearance);
+#if ENABLE(POST_EDITING_GRAMMAR_CHECKING)
+    static bool useBlueForGrammar = false;
+    static std::once_flag flag;
+    std::call_once(flag, [] {
+        useBlueForGrammar = os_feature_enabled(TextComposer, PostEditing) && os_feature_enabled(TextComposer, PostEditingUseBlueDots);
+    });
+
+    if (useBlueForGrammar)
+        return useDarkMode ? SRGBA<uint8_t> { 40, 145, 255, 217 } : SRGBA<uint8_t> { 0, 122, 255, 191 };
+#endif
+    return useDarkMode ? SRGBA<uint8_t> { 50, 215, 75, 217 } : SRGBA<uint8_t> { 25, 175, 50, 191 };
 }
 
 }

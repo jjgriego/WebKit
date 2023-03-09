@@ -158,7 +158,13 @@ function waitForEventTestAndEnd(element, eventName, testFuncString)
 {
     waitForEventAndTest(element, eventName, testFuncString, true);
 }
-  
+
+function sleepFor(duration) {
+    return new Promise(resolve => {
+        setTimeout(resolve, duration);
+    });
+}
+
 var testEnded = false;
 
 function endTest()

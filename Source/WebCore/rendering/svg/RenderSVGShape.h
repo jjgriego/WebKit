@@ -40,7 +40,6 @@ namespace WebCore {
 
 class FloatPoint;
 class GraphicsContextStateSaver;
-class RenderSVGPath;
 class RenderSVGResource;
 class SVGGraphicsElement;
 
@@ -81,6 +80,8 @@ public:
     FloatRect repaintRectInLocalCoordinates() const final { return SVGBoundingBoxComputation::computeRepaintBoundingBox(*this); }
 
     FloatRect computeMarkerBoundingBox(const SVGBoundingBoxComputation::DecorationOptions&) const;
+
+    bool needsHasSVGTransformFlags() const final;
 
     void applyTransform(TransformationMatrix&, const RenderStyle&, const FloatRect& boundingBox, OptionSet<RenderStyle::TransformOperationOption> = RenderStyle::allTransformOperations) const final;
 

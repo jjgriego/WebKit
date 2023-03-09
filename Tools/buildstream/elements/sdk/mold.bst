@@ -1,11 +1,22 @@
-kind: make
+kind: cmake
+
+build-depends:
+- freedesktop-sdk.bst:public-stacks/buildsystem-cmake.bst
+
 depends:
 - freedesktop-sdk.bst:bootstrap-import.bst
-- freedesktop-sdk.bst:public-stacks/buildsystem-cmake.bst
+- freedesktop-sdk.bst:components/zstd.bst
 - sdk/tbb.bst
 
 variables:
-  make: make PREFIX="%{prefix}" LTO=1 SYSTEM_TBB=1
+  cmake-local: |
+    -DMOLD_USE_MOLD=OFF \
+    -DMOLD_USE_ASAN=OFF \
+    -DMOLD_USE_TSAN=OFF \
+    -DMOLD_USE_SYSTEM_MIMALLOC=OFF \
+    -DMOLD_USE_SYSTEM_TBB=ON \
+    -DMOLD_LTO=ON \
+    -DMOLD_MOSTLY_STATIC=OFF
 
 sources:
 - kind: git_tag
@@ -13,4 +24,10 @@ sources:
   checkout-submodules: false
   track-tags: true
   track: main
-  ref: v1.2.1-0-gc8d8f86a52084c96e2663d9f692c51e98c04cc2f
+  ref: v1.10.1-0-g040180f933d33fa246f9d2961c2d6e8b74241463
+
+public:
+  bst:
+    integration-commands:
+    - |
+      mold --version

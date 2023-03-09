@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,7 +29,7 @@
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
 
 #include "GPUProcessConnection.h"
-#include "SharedRingBufferStorage.h"
+#include "SharedCARingBuffer.h"
 #include "UserMediaCaptureManager.h"
 #include "UserMediaCaptureManagerMessages.h"
 #include "UserMediaCaptureManagerProxyMessages.h"
@@ -90,9 +90,9 @@ void RemoteRealtimeMediaSourceProxy::endProducingData()
     m_connection->send(Messages::UserMediaCaptureManagerProxy::EndProducingData { m_identifier }, 0);
 }
 
-void RemoteRealtimeMediaSourceProxy::createRemoteMediaSource(const String& deviceIDHashSalt, WebCore::PageIdentifier pageIdentifier, CreateCallback&& callback, bool shouldUseRemoteFrame)
+void RemoteRealtimeMediaSourceProxy::createRemoteMediaSource(const MediaDeviceHashSalts& deviceIDHashSalts, WebCore::PageIdentifier pageIdentifier, CreateCallback&& callback, bool shouldUseRemoteFrame)
 {
-    m_connection->sendWithAsyncReply(Messages::UserMediaCaptureManagerProxy::CreateMediaSourceForCaptureDeviceWithConstraints(identifier(), m_device, deviceIDHashSalt, m_constraints, shouldUseRemoteFrame, pageIdentifier), WTFMove(callback));
+    m_connection->sendWithAsyncReply(Messages::UserMediaCaptureManagerProxy::CreateMediaSourceForCaptureDeviceWithConstraints(identifier(), m_device, deviceIDHashSalts, m_constraints, shouldUseRemoteFrame, pageIdentifier), WTFMove(callback));
 }
 
 RemoteRealtimeMediaSourceProxy RemoteRealtimeMediaSourceProxy::clone()
@@ -100,9 +100,9 @@ RemoteRealtimeMediaSourceProxy RemoteRealtimeMediaSourceProxy::clone()
     return { RealtimeMediaSourceIdentifier::generate(), m_device, m_shouldCaptureInGPUProcess, &m_constraints };
 }
 
-void RemoteRealtimeMediaSourceProxy::createRemoteCloneSource(WebCore::RealtimeMediaSourceIdentifier cloneIdentifier)
+void RemoteRealtimeMediaSourceProxy::createRemoteCloneSource(WebCore::RealtimeMediaSourceIdentifier cloneIdentifier, WebCore::PageIdentifier pageIdentifier)
 {
-    m_connection->send(Messages::UserMediaCaptureManagerProxy::Clone { m_identifier, cloneIdentifier }, 0);
+    m_connection->send(Messages::UserMediaCaptureManagerProxy::Clone { m_identifier, cloneIdentifier, pageIdentifier }, 0);
 }
 
 void RemoteRealtimeMediaSourceProxy::applyConstraints(const MediaConstraints& constraints, RealtimeMediaSource::ApplyConstraintsHandler&& completionHandler)

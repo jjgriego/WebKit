@@ -65,6 +65,12 @@ public:
     // so we'll copy to xmm0 for sanity!
     static constexpr FPRReg returnValueFPR = X86Registers::xmm0; // fpRegT0
 
+#if CPU(X86_64)
+    static constexpr FPRReg nonPreservedNonArgumentFPR0 = X86Registers::xmm8;
+#else
+    static constexpr FPRReg nonPreservedNonArgumentFPR0 = X86Registers::xmm5;
+#endif
+
     // FPRReg mapping is direct, the machine regsiter numbers can
     // be used directly as indices into the FPR RegisterBank.
     static_assert(X86Registers::xmm0 == 0);
@@ -108,11 +114,7 @@ public:
     typedef FPRReg RegisterType;
     static constexpr unsigned numberOfRegisters = 8;
 
-#if CPU(ARM_HARDFP)
     static constexpr unsigned numberOfArgumentRegisters = 8;
-#else
-    static constexpr unsigned numberOfArgumentRegisters = 0;
-#endif
 
     // Temporary registers.
     // d8-d15 are callee saved, d15 is use by the MacroAssembler as fpTempRegister.
@@ -136,11 +138,10 @@ public:
     // value is also actually in integer registers, for now
     // we'll return in d0 for simplicity.
     static constexpr FPRReg returnValueFPR = ARMRegisters::d0; // fpRegT0
-
-#if CPU(ARM_HARDFP)
     static constexpr FPRReg argumentFPR0 = ARMRegisters::d0; // fpRegT0
     static constexpr FPRReg argumentFPR1 = ARMRegisters::d1; // fpRegT1
-#endif
+
+    static constexpr FPRReg nonPreservedNonArgumentFPR0 = ARMRegisters::d7;
 
     // FPRReg mapping is direct, the machine regsiter numbers can
     // be used directly as indices into the FPR RegisterBank.
@@ -161,13 +162,11 @@ public:
         return (unsigned)reg;
     }
 
-#if CPU(ARM_HARDFP)
     static FPRReg toArgumentRegister(unsigned index)
     {
         ASSERT(index < numberOfArgumentRegisters);
         return static_cast<FPRReg>(index);
     }
-#endif
 
     static const char* debugName(FPRReg reg)
     {
@@ -232,6 +231,7 @@ public:
     static constexpr FPRReg argumentFPR7 = ARM64Registers::q7; // fpRegT7
 
     static constexpr FPRReg returnValueFPR = ARM64Registers::q0; // fpRegT0
+    static constexpr FPRReg nonPreservedNonArgumentFPR0 = ARM64Registers::q16;
 
     static FPRReg toRegister(unsigned index)
     {
@@ -296,6 +296,8 @@ public:
 
     static constexpr FPRReg argumentFPR0 = MIPSRegisters::f12;
     static constexpr FPRReg argumentFPR1 = MIPSRegisters::f14;
+
+    static constexpr FPRReg nonPreservedNonArgumentFPR0 = MIPSRegisters::f2;
 
     static FPRReg toRegister(unsigned index)
     {
@@ -391,6 +393,7 @@ public:
     static constexpr FPRReg argumentFPR7 = RISCV64Registers::f17; // fpRegT7
 
     static constexpr FPRReg returnValueFPR = RISCV64Registers::f10; // fpRegT0
+    static constexpr FPRReg nonPreservedNonArgumentFPR0 = RISCV64Registers::f11;
 
     static FPRReg toRegister(unsigned index)
     {

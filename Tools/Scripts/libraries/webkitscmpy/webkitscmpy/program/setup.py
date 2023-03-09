@@ -28,6 +28,7 @@ import time
 
 from .command import Command
 from requests.auth import HTTPBasicAuth
+from webkitbugspy import radar
 from webkitcorepy import arguments, run, Editor, OutputCapture, Terminal
 from webkitscmpy import log, local, remote
 
@@ -37,7 +38,7 @@ class Setup(Command):
     help = 'Configure local settings for the current repository'
 
     @classmethod
-    def github(cls, args, repository, additional_setup=None, remote=None, **kwargs):
+    def github(cls, args, repository, additional_setup=None, remote=None, team=None, **kwargs):
         log.info('Saving GitHub credentials in system credential store...')
         username, access_token = repository.credentials(required=True, validate=True, save_in_keyring=True)
         log.info('GitHub credentials saved via Keyring!')
@@ -47,16 +48,54 @@ class Setup(Command):
         if additional_setup:
             result += additional_setup(args, repository)
 
-        forked_name = '{}{}'.format(repository.name, '-{}'.format(remote) if remote else '')
-        log.info('Verifying user owned fork...')
+        team_id = None
         auth = HTTPBasicAuth(username, access_token)
+        if team:
+            response = requests.get('{}/orgs/{}'.format(
+                repository.api_url,
+                team,
+            ), auth=auth, headers=dict(Accept=repository.ACCEPT_HEADER))
+            if response.status_code == 200:
+                team_id = response.json().get('id', None)
+            else:
+                sys.stderr.write('You are not a member of {}\n'.format(team))
+                sys.stderr.write('Created "{}" fork will not be accessible to other contributors\n'.format(remote))
+
+        forked_name = '{}{}'.format(repository.name, '-{}'.format(remote) if remote and not repository.name.endswith(remote) else '')
+        log.info('Verifying user owned fork...')
         response = requests.get('{}/repos/{}/{}'.format(
             repository.api_url,
             username,
             forked_name,
-        ), auth=auth, headers=dict(Accept='application/vnd.github.v3+json'))
+        ), auth=auth, headers=dict(Accept=repository.ACCEPT_HEADER))
 
         if response.status_code == 200:
+            has_team = False
+            if team_id:
+                log.info("Checking if '{}' has access to '{}/{}'...".format(team, username, forked_name))
+                teams = requests.get('{}/repos/{}/{}/teams'.format(
+                    repository.api_url,
+                    username,
+                    forked_name,
+                ), auth=auth, headers=dict(Accept=repository.ACCEPT_HEADER))
+                if teams.status_code == 200 and any([team_id == node.get('id') for node in teams.json()]):
+                    log.info("'{}' has access to '{}/{}'!".format(team, username, forked_name))
+                    has_team = True
+
+            if not has_team and team:
+                log.info("Granting '{}' access to '{}/{}'...".format(team, username, forked_name))
+                granting = requests.put('{}/orgs/{}/repos/{}/{}'.format(
+                    repository.api_url,
+                    team,
+                    username,
+                    forked_name,
+                ), json=dict(permission='push'), auth=auth, headers=dict(Accept=repository.ACCEPT_HEADER))
+                if granting.status_code // 100 != 2:
+                    sys.stderr.write("Failed to grant '{}' access to '{}/{}'\n".format(team, username, forked_name))
+                    sys.stderr.write("Other contributors do not have access to '{}/{}'\n".format(username, forked_name))
+                else:
+                    log.info("Granted '{}' access to '{}/{}'!".format(team, username, forked_name))
+
             parent_name = response.json().get('parent', {}).get('full_name', None)
             if parent_name == '{}/{}'.format(repository.owner, repository.name):
                 log.info("User already owns a fork of '{}'!".format(parent_name))
@@ -69,16 +108,19 @@ class Setup(Command):
             log.info("Continuing without forking '{}'".format(forked_name))
             return 1
 
+        data = dict(
+            owner=username,
+            description="{}'s fork of {}{}".format(username, repository.name, ' ({})'.format(remote) if remote else ''),
+            private=True,
+        )
+        if team_id:
+            data[team_id] = team_id
         response = requests.post('{}/repos/{}/{}/forks'.format(
             repository.api_url,
             repository.owner,
             repository.name,
-        ), json=dict(
-            owner=username,
-            description="{}'s fork of {}{}".format(username, repository.name, ' ({})'.format(remote) if remote else ''),
-            private=True,
-        ), auth=auth, headers=dict(Accept='application/vnd.github.v3+json'))
-        if response.status_code not in (200, 202):
+        ), json=data, auth=auth, headers=dict(Accept=repository.ACCEPT_HEADER))
+        if response.status_code // 100 != 2:
             sys.stderr.write("Failed to create a fork of '{}' belonging to '{}'\n".format(forked_name, username))
             sys.stderr.write("URL: {}\nServer replied with status code {}:\n{}\n".format(response.url, response.status_code, response.text))
             return 1
@@ -89,17 +131,15 @@ class Setup(Command):
                 repository.api_url,
                 username,
                 set_name,
-            ), json=dict(
-                name=forked_name
-            ), auth=auth, headers=dict(Accept='application/vnd.github.v3+json'))
-            if response.status_code not in (200, 202):
+            ), json=dict(name=forked_name), auth=auth, headers=dict(Accept=repository.ACCEPT_HEADER))
+            if response.status_code // 100 != 2:
                 sys.stderr.write("Fork created with name '{}' belonging to '{}'\n Failed to change name to {}\n".format(set_name, username, forked_name))
                 sys.stderr.write("URL: {}\nServer replied with status code {}:\n{}\n".format(response.url, response.status_code, response.text))
                 return 1
 
         response = None
         attempts = 0
-        while response and response.status_code != 200:
+        while response and response.status_code // 100 != 2:
             if attempts > 3:
                 sys.stderr.write("Waiting on '{}' belonging to '{}' took to long\n".format(forked_name, username))
                 sys.stderr.write("Wait until '{}/{}/{}' is accessible and then re-run setup\n".format(
@@ -164,7 +204,7 @@ class Setup(Command):
         global_config = local.Git.config()
         result = 0
 
-        email = os.environ.get('EMAIL_ADDRESS') or global_config.get('user.email') or local_config.get('user.email')
+        email = os.environ.get('EMAIL_ADDRESS') or local_config.get('user.email') or global_config.get('user.email')
         log.info('Setting git user email for {}...'.format(repository.root_path))
         if not email or args.defaults is False or (not args.defaults and args.all and Terminal.choose(
             "Set '{}' as the git user email for this repository".format(email),
@@ -187,7 +227,7 @@ class Setup(Command):
         if contributor:
             name = contributor.name
         else:
-            name = global_config.get('user.name') or local_config.get('user.name')
+            name = local_config.get('user.name') or global_config.get('user.name')
         log.info('Setting git user name for {}...'.format(repository.root_path))
         if not name or args.defaults is False or (not args.defaults and args.all and Terminal.choose(
             "Set '{}' as the git user name for this repository".format(name),
@@ -255,7 +295,7 @@ class Setup(Command):
             log.info('Setting auto update on PR creation...')
             response = Terminal.choose(
                 'Would you like to automatically rebase your branch when creating or\nupdating a pull request?',
-                default='Yes', options=('Yes', 'No', 'Later'),
+                default='No', options=('Yes', 'No', 'Later'),
             )
             if response in ['Yes', 'No']:
                 if run(
@@ -300,6 +340,7 @@ class Setup(Command):
                     contents = Template(f.read()).render(
                         location=source_path,
                         python=os.path.basename(sys.executable),
+                        prefer_radar=bool(radar.Tracker.radarclient()),
                     )
 
                 target = os.path.join(repository.common_directory, 'hooks', hook)
@@ -436,17 +477,15 @@ class Setup(Command):
                     available_remotes.append(name)
                 if not isinstance(nw_rmt, remote.GitHub):
                     continue
-                if cls.github(args, nw_rmt, remote=name):
+                if cls.github(args, nw_rmt, remote=name, team=repository.config().get('webkitscmpy.access.{}'.format(name), None)):
                     result += 1
                     continue
-                log.info("Adding forked {remote} remote as '{username}-{remote}' and '{remote}-fork'...".format(
-                    remote=name, username=username,
-                ))
-                for fork_name in ['{}-{}'.format(username, name), '{}-fork'.format(name)]:
-                    if cls._add_remote(repository, fork_name, cls._fork_remote(repository.url(), username, '{}-{}'.format(rmt.name, name)), fetch=False):
-                        result += 1
-                    else:
-                        available_remotes.append(fork_name)
+                fork_name = '{}-fork'.format(name)
+                log.info("Adding forked {remote} remote as '{name}'...".format(remote=name, name=fork_name))
+                if cls._add_remote(repository, fork_name, cls._fork_remote(repository.url(), username, '{}-{}'.format(rmt.name, name)), fetch=False):
+                    result += 1
+                else:
+                    available_remotes.append(fork_name)
 
         else:
             warning = '''Checkout using {actual} as origin remote
@@ -462,15 +501,14 @@ Automation may create pull requests and forks in unexpected locations
         if not forking or forking == 'No':
             return result
 
-        if cls.github(args, rmt, **kwargs):
+        if cls.github(args, rmt, team=repository.config().get('webkitscmpy.access.origin', None), **kwargs):
             return result + 1
 
-        log.info("Adding forked remote as '{}' and 'fork'...".format(username))
-        for name in [username, 'fork']:
-            if cls._add_remote(repository, name, cls._fork_remote(repository.url(), username, rmt.name), fetch=False):
-                result += 1
-            else:
-                available_remotes.append(name)
+        log.info("Adding forked remote as 'fork'...".format(username))
+        if cls._add_remote(repository, 'fork', cls._fork_remote(repository.url(), username, rmt.name), fetch=False):
+            result += 1
+        else:
+            available_remotes.append('fork')
 
         for rem in available_remotes:
             if 'fork' not in rem:

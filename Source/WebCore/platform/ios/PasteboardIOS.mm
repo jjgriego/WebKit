@@ -27,17 +27,18 @@
 
 #if PLATFORM(IOS_FAMILY)
 
+#import "DeprecatedGlobalSettings.h"
 #import "DragData.h"
 #import "Image.h"
 #import "NotImplemented.h"
 #import "PasteboardStrategy.h"
 #import "PlatformPasteboard.h"
 #import "PlatformStrategies.h"
-#import "RuntimeEnabledFeatures.h"
 #import "SharedBuffer.h"
 #import "UTIUtilities.h"
 #import "WebNSAttributedStringExtras.h"
 #import <MobileCoreServices/MobileCoreServices.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <pal/ios/UIKitSoftLink.h>
 #import <wtf/URL.h>
 #import <wtf/text/StringHash.h>
@@ -91,6 +92,7 @@ static int64_t changeCountForPasteboard(const String& pasteboardName = { }, cons
 // FIXME: Does this need to be declared in the header file?
 WEBCORE_EXPORT NSString *WebArchivePboardType = @"Apple Web Archive pasteboard type";
 NSString *UIColorPboardType = @"com.apple.uikit.color";
+NSString *UIImagePboardType = @"com.apple.uikit.image";
 
 Pasteboard::Pasteboard(std::unique_ptr<PasteboardContext>&& context)
     : m_context(WTFMove(context))
@@ -300,6 +302,12 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         reader.readURL(url, title);
 }
 
+static bool shouldTreatAsAttachmentByDefault(const String& typeIdentifier)
+{
+    auto type = [UTType typeWithIdentifier:typeIdentifier];
+    return [type conformsToType:UTTypeVCard] || [type conformsToType:UTTypePDF];
+}
+
 static bool prefersAttachmentRepresentation(const PasteboardItemInfo& info)
 {
     auto contentTypeForHighestFidelityItem = info.contentTypeForHighestFidelityItem();
@@ -309,9 +317,7 @@ static bool prefersAttachmentRepresentation(const PasteboardItemInfo& info)
     if (info.preferredPresentationStyle == PasteboardItemPresentationStyle::Inline)
         return false;
 
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    return info.canBeTreatedAsAttachmentOrFile() || UTTypeConformsTo(contentTypeForHighestFidelityItem.createCFString().get(), kUTTypeVCard);
-ALLOW_DEPRECATED_DECLARATIONS_END
+    return info.canBeTreatedAsAttachmentOrFile() || shouldTreatAsAttachmentByDefault(contentTypeForHighestFidelityItem);
 }
 
 void Pasteboard::read(PasteboardWebContentReader& reader, WebContentReadingPolicy policy, std::optional<size_t> itemIndex)
@@ -333,7 +339,7 @@ void Pasteboard::read(PasteboardWebContentReader& reader, WebContentReadingPolic
     int numberOfTypes = [types count];
 
 #if ENABLE(ATTACHMENT_ELEMENT)
-    bool canReadAttachment = policy == WebContentReadingPolicy::AnyType && RuntimeEnabledFeatures::sharedFeatures().attachmentElementEnabled();
+    bool canReadAttachment = policy == WebContentReadingPolicy::AnyType && DeprecatedGlobalSettings::attachmentElementEnabled();
 #else
     bool canReadAttachment = false;
 #endif
@@ -396,7 +402,7 @@ void Pasteboard::readRespectingUTIFidelities(PasteboardWebContentReader& reader,
             return;
 
         auto attachmentFilePath = info->pathForHighestFidelityItem();
-        bool canReadAttachment = policy == WebContentReadingPolicy::AnyType && RuntimeEnabledFeatures::sharedFeatures().attachmentElementEnabled() && !attachmentFilePath.isEmpty();
+        bool canReadAttachment = policy == WebContentReadingPolicy::AnyType && DeprecatedGlobalSettings::attachmentElementEnabled() && !attachmentFilePath.isEmpty();
         auto contentType = info->contentTypeForHighestFidelityItem();
         if (canReadAttachment && prefersAttachmentRepresentation(*info)) {
             readURLAlongsideAttachmentIfNecessary(reader, strategy, contentType, m_pasteboardName, index, context());

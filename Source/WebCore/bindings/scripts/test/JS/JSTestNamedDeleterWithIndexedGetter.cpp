@@ -107,7 +107,7 @@ template<> void JSTestNamedDeleterWithIndexedGetterDOMConstructor::initializePro
 
 static const HashTableValue JSTestNamedDeleterWithIndexedGetterPrototypeTableValues[] =
 {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsTestNamedDeleterWithIndexedGetterConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestNamedDeleterWithIndexedGetterConstructor, 0 } },
 };
 
 const ClassInfo JSTestNamedDeleterWithIndexedGetterPrototype::s_info = { "TestNamedDeleterWithIndexedGetter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestNamedDeleterWithIndexedGetterPrototype) };
@@ -232,7 +232,7 @@ bool JSTestNamedDeleterWithIndexedGetter::deleteProperty(JSCell* cell, JSGlobalO
         return !impl.isSupportedPropertyIndex(index.value());
     if (isVisibleNamedProperty<LegacyOverrideBuiltIns::No>(*lexicalGlobalObject, thisObject, propertyName)) {
         using ReturnType = decltype(impl.deleteNamedProperty(propertyNameToString(propertyName)));
-        static_assert(std::is_same_v<ReturnType, ExceptionOr<bool>> || std::is_same_v<ReturnType, bool>, "The implementation of named deleters without an identifer must return either bool or ExceptionOr<bool>.");
+        static_assert(std::is_same_v<ReturnType, ExceptionOr<bool>> || std::is_same_v<ReturnType, bool>, "The implementation of named deleters without an identifier must return either bool or ExceptionOr<bool>.");
         return performLegacyPlatformObjectDeleteOperation(*lexicalGlobalObject, [&] { return impl.deleteNamedProperty(propertyNameToString(propertyName)); });
     }
     return JSObject::deleteProperty(cell, lexicalGlobalObject, propertyName, slot);
@@ -259,9 +259,9 @@ JSC::GCClient::IsoSubspace* JSTestNamedDeleterWithIndexedGetter::subspaceForImpl
 {
     return WebCore::subspaceForImpl<JSTestNamedDeleterWithIndexedGetter, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForTestNamedDeleterWithIndexedGetter.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForTestNamedDeleterWithIndexedGetter = WTFMove(space); },
+        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForTestNamedDeleterWithIndexedGetter = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForTestNamedDeleterWithIndexedGetter.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForTestNamedDeleterWithIndexedGetter = WTFMove(space); }
+        [] (auto& spaces, auto&& space) { spaces.m_subspaceForTestNamedDeleterWithIndexedGetter = std::forward<decltype(space)>(space); }
     );
 }
 
@@ -270,7 +270,7 @@ void JSTestNamedDeleterWithIndexedGetter::analyzeHeap(JSCell* cell, HeapAnalyzer
     auto* thisObject = jsCast<JSTestNamedDeleterWithIndexedGetter*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, "url "_s + thisObject->scriptExecutionContext()->url().string());
     Base::analyzeHeap(cell, analyzer);
 }
 

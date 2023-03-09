@@ -47,18 +47,21 @@
     RetainPtr<CocoaImage> _cocoaImage;
 #if PLATFORM(IOS_FAMILY)
     RetainPtr<NSDictionary> _userInfo;
+    BOOL _isAnimating;
+    BOOL _canShowAnimationControls;
 #endif
     BOOL _animatedImage;
     BOOL _isImage;
+    BOOL _isUsingAlternateURLForImage;
 }
 
 #if PLATFORM(IOS_FAMILY)
 + (instancetype)activatedElementInfoWithInteractionInformationAtPosition:(const WebKit::InteractionInformationAtPosition&)information userInfo:(NSDictionary *)userInfo
 {
-    return adoptNS([[self alloc] _initWithInteractionInformationAtPosition:information userInfo:userInfo]).autorelease();
+    return adoptNS([[self alloc] _initWithInteractionInformationAtPosition:information isUsingAlternateURLForImage:NO userInfo:userInfo]).autorelease();
 }
 
-- (instancetype)_initWithInteractionInformationAtPosition:(const WebKit::InteractionInformationAtPosition&)information userInfo:(NSDictionary *)userInfo
+- (instancetype)_initWithInteractionInformationAtPosition:(const WebKit::InteractionInformationAtPosition&)information isUsingAlternateURLForImage:(BOOL)isUsingAlternateURLForImage userInfo:(NSDictionary *)userInfo
 {
     if (!(self = [super init]))
         return nil;
@@ -82,7 +85,10 @@
     _image = information.image;
     _ID = information.idAttribute;
     _animatedImage = information.isAnimatedImage;
+    _isAnimating = information.isAnimating;
+    _canShowAnimationControls = information.canShowAnimationControls;
     _isImage = information.isImage;
+    _isUsingAlternateURLForImage = isUsingAlternateURLForImage;
     _userInfo = userInfo;
     
     return self;
@@ -150,7 +156,22 @@
     return _animatedImage;
 }
 
+- (BOOL)_isUsingAlternateURLForImage
+{
+    return _isUsingAlternateURLForImage;
+}
+
 #if PLATFORM(IOS_FAMILY)
+- (BOOL)isAnimating
+{
+    return _isAnimating;
+}
+
+- (BOOL)canShowAnimationControls
+{
+    return _canShowAnimationControls;
+}
+
 - (NSDictionary *)userInfo
 {
     return _userInfo.get();

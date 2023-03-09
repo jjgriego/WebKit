@@ -1,4 +1,4 @@
-# Copyright (C) 2021-2022 Apple Inc. All rights reserved.
+# Copyright (C) 2021-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -48,6 +48,15 @@ class Tracker(GenericTracker):
     REFRESH_TOKEN_PROMPT = "Is your API token out of date? Run 'git-webkit setup' to refresh credentials\n"
     DEFAULT_COMPONENT_COLOR = 'FFFFFF'
     DEFAULT_VERSION_COLOR = 'EEEEEE'
+    ACCEPT_HEADER = 'application/vnd.github.v3+json'
+    ERROR_MAP = {
+        'missing': 'A resource does not exist.',
+        'missing_field': 'A required field on a resource has not been set.',
+        'invalid': 'The formatting of a field is invalid. Review the documentation for more specific information.',
+        'already_exists': 'Another resource has the same value as this field. This can happen in resources that must have some unique key (such as label names).',
+        'unprocessable': 'The inputs provided were invalid.'
+    }
+    NAME = 'GitHub Issue'
 
 
     class Encoder(GenericTracker.Encoder):
@@ -57,6 +66,7 @@ class Tracker(GenericTracker):
                 result = dict(
                     type='github',
                     url=obj.url,
+                    hide_title=obj.hide_title,
                 )
                 if obj._res[len(Tracker.RE_TEMPLATES):]:
                     result['res'] = [compiled.pattern for compiled in obj._res[len(Tracker.RE_TEMPLATES):]]
@@ -69,9 +79,9 @@ class Tracker(GenericTracker):
             self, url, users=None, res=None,
             component_color=DEFAULT_COMPONENT_COLOR,
             version_color=DEFAULT_VERSION_COLOR,
-            session=None
+            session=None, redact=None, hide_title=None,
     ):
-        super(Tracker, self).__init__(users=users)
+        super(Tracker, self).__init__(users=users, redact=redact, hide_title=hide_title)
 
         self.session = session or requests.Session()
         self.component_color = component_color
@@ -105,7 +115,7 @@ class Tracker(GenericTracker):
                 return False
             response = self.session.get(
                 '{}/user'.format(self.api_url),
-                headers=dict(Accept='application/vnd.github.v3+json'),
+                headers=dict(Accept=self.ACCEPT_HEADER),
                 auth=HTTPBasicAuth(username, access_token),
             )
             expiration = response.headers.get('github-authentication-token-expiration', None)
@@ -144,7 +154,7 @@ with 'repo' and 'workflow' access and appropriate 'Expiration' for your {host} u
 
     def request(self, path=None, params=None, method='GET', headers=None, authenticated=None, paginate=True, json=None, error_message=None):
         headers = {key: value for key, value in headers.items()} if headers else dict()
-        headers['Accept'] = headers.get('Accept', 'application/vnd.github.v3+json')
+        headers['Accept'] = headers.get('Accept', self.ACCEPT_HEADER)
 
         username, access_token = self.credentials(required=bool(authenticated))
         auth = HTTPBasicAuth(username, access_token) if username and access_token else None
@@ -196,7 +206,7 @@ with 'repo' and 'workflow' access and appropriate 'Expiration' for your {host} u
         url = '{api_url}/users/{username}'.format(api_url=self.api_url, username=username)
         response = self.session.get(
             url, auth=HTTPBasicAuth(*self.credentials(required=True)),
-            headers=dict(Accept='application/vnd.github.v3+json'),
+            headers=dict(Accept=self.ACCEPT_HEADER),
         )
         if response.status_code // 100 != 2:
             sys.stderr.write("Request to '{}' returned status code '{}'\n".format(url, response.status_code))
@@ -224,8 +234,10 @@ with 'repo' and 'workflow' access and appropriate 'Expiration' for your {host} u
     def populate(self, issue, member=None):
         issue._link = '{}/issues/{}'.format(self.url, issue.id)
         issue._project = self.name
+        issue._keywords = []  # We don't yet have a defined idiom for "keywords" in GitHub Issues
+        issue._classification = ''  # We don't yet have a defined idiom for "classification" in GitHub issues
 
-        if member in ('title', 'timestamp', 'creator', 'opened', 'assignee', 'description', 'project', 'component', 'version', 'labels'):
+        if member in ('title', 'timestamp', 'creator', 'opened', 'assignee', 'description', 'project', 'component', 'version', 'labels', 'milestone'):
             response = self.request(path='issues/{}'.format(issue.id))
             if response:
                 issue._title = response['title']
@@ -234,6 +246,7 @@ with 'repo' and 'workflow' access and appropriate 'Expiration' for your {host} u
                 issue._description = response['body']
                 issue._opened = response['state'] != 'closed'
                 issue._assignee = self.user(username=response['assignee']['login']) if response.get('assignee') else None
+                issue._milestone = (response.get('milestone') or {}).get('title', '')
 
                 issue._labels = []
                 for label in response.get('labels', []):
@@ -333,7 +346,9 @@ with 'repo' and 'workflow' access and appropriate 'Expiration' for your {host} u
             if not isinstance(assignee, User):
                 raise TypeError("Must assign to '{}', not '{}'".format(User, type(assignee)))
             issue._assignee = self.user(name=assignee.name, username=assignee.username, email=assignee.email)
-            update_dict['assignees'] = [issue._assignee.username]
+            assignees = [issue._assignee.username]
+            if self.add_assignees(issue, assignees) != assignees:
+                return None
 
         if opened is not None:
             issue._opened = bool(opened)
@@ -403,13 +418,29 @@ with 'repo' and 'workflow' access and appropriate 'Expiration' for your {host} u
                 error_message="Failed to modify '{}'".format(issue)
             )
             if not response:
-                if assignee:
-                    issue._assignee = None
                 if opened is not None:
                     issue._opened = None
                 return None
 
         return self.add_comment(issue, why) if why else issue
+
+    def add_assignees(self, issue, assignees):
+        response = self.request(
+            'issues/{id}/assignees'.format(id=issue.id),
+            method='POST',
+            authenticated=True,
+            json={'assignees': assignees},
+            error_message="Failed to modify '{}'".format(issue)
+        )
+        if not response:
+            issue._assignee = None
+            sys.stderr.write('Could not add any assignee(s) to issue')
+            return []
+        response_assignees = [assignee.get('login') for assignee in response.get('assignees', [])]
+        missed_assignees = [assignee for assignee in assignees if assignee not in response_assignees]
+        if missed_assignees:
+            sys.stderr.write('Could not assign {} to issue'.format(missed_assignees))
+        return response_assignees
 
     def add_comment(self, issue, text):
         data = self.request(
@@ -496,15 +527,9 @@ with 'repo' and 'workflow' access and appropriate 'Expiration' for your {host} u
             if component not in self.projects[project]['components']:
                 raise ValueError("'{}' is not a recognized component in '{}'".format(component, project))
 
-            if not version and len(self.projects[project]['versions']) == 1:
-                version = self.projects[project]['versions'][0]
-            elif not version:
-                version = webkitcorepy.Terminal.choose(
-                    "What version of '{}' should the bug be associated with?".format(project),
-                    options=self.projects[project]['versions'], numbered=True,
-                )
-            if version not in self.projects[project]['versions']:
-                raise ValueError("'{}' is not a recognized version for '{}'".format(version, project))
+            if version:
+                if version not in self.projects[project]['versions']:
+                    raise ValueError("'{}' is not a recognized version for '{}'".format(version, project))
 
         else:
             if project:
@@ -544,3 +569,43 @@ with 'repo' and 'workflow' access and appropriate 'Expiration' for your {host} u
             return None
 
         return self.issue(response['number'])
+
+    def parse_error(self, json):
+        message = json.get('message', 'Empty Message')
+        error_messages = []
+        for error in json.get('errors', []):
+            error_message = '---\tERROR\t---\n'
+
+            if not isinstance(error, dict):
+                error_message += str(error) + '\n'
+                error_messages.append(error_message)
+                continue
+
+            code = error.get('code')
+            if code:
+                type = self.ERROR_MAP.get(code, '')
+                if code == 'custom':
+                    type = error['message']
+
+                error_message += 'Type: {}\n'.format(type)
+
+            resource = error.get('resource')
+            if resource:
+                error_message += 'Resource: {}\n'.format(resource)
+
+            field = error.get('field')
+            if field:
+                error_message += 'Field: {}\n'.format(field)
+
+            error_message += '---\t---\t---\n'
+            error_messages.append(error_message)
+
+        documentation_url = json.get('documentation_url')
+        if documentation_url:
+            error_messages += 'Documentation URL: {}\n'.format(documentation_url)
+
+        return 'Error Message: {}\n{}'.format(message, ''.join(error_messages))
+
+    def cc_radar(self, issue, block=False, timeout=None, radar=None):
+        sys.stderr.write('No radar CC implemented for GitHub Issues\n')
+        return None

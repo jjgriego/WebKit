@@ -3,12 +3,12 @@ This tests that the navigator object of a deleted frame is disconnected properly
 navigator.appCodeName is OK
 navigator.appName is OK
 navigator.appVersion is OK
+navigator.audioSession is OK
 navigator.canShare() is OK
 navigator.clipboard is OK
 navigator.contacts is OK
 navigator.cookieEnabled is OK
 navigator.credentials is OK
-navigator.getStorageUpdates() is OK
 navigator.hardwareConcurrency is OK
 navigator.isLoggedIn() is OK
 navigator.javaEnabled() is OK
@@ -20,6 +20,7 @@ navigator.mediaCapabilities is OK
 navigator.mediaSession is OK
 navigator.mimeTypes is OK
 navigator.onLine is OK
+navigator.pdfViewerEnabled is OK
 navigator.permissions is OK
 navigator.platform is OK
 navigator.plugins is OK
@@ -32,20 +33,22 @@ navigator.setLoggedIn() is OK
 navigator.setLoggedOut() is OK
 navigator.share() is OK
 navigator.storage is OK
+navigator.userActivation is OK
 navigator.userAgent is OK
 navigator.vendor is OK
 navigator.vendorSub is OK
+navigator.wakeLock is OK
 navigator.webdriver is OK
 navigator.xr is OK
 navigator.appCodeName is OK
 navigator.appName is OK
 navigator.appVersion is OK
+navigator.audioSession is OK
 navigator.canShare() is OK
 navigator.clipboard is OK
 navigator.contacts is OK
 navigator.cookieEnabled is OK
 navigator.credentials is OK
-navigator.getStorageUpdates() is OK
 navigator.hardwareConcurrency is OK
 navigator.isLoggedIn() is OK
 navigator.javaEnabled() is OK
@@ -57,6 +60,7 @@ navigator.mediaCapabilities is OK
 navigator.mediaSession is OK
 navigator.mimeTypes is OK
 navigator.onLine is OK
+navigator.pdfViewerEnabled is OK
 navigator.permissions is OK
 navigator.platform is OK
 navigator.plugins is OK
@@ -69,9 +73,11 @@ navigator.setLoggedIn() is OK
 navigator.setLoggedOut() is OK
 navigator.share() is OK
 navigator.storage is OK
+navigator.userActivation is OK
 navigator.userAgent is OK
 navigator.vendor is OK
 navigator.vendorSub is OK
+navigator.wakeLock is OK
 navigator.webdriver is OK
 navigator.xr is OK
 

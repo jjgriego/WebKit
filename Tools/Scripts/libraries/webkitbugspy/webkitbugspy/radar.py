@@ -1,4 +1,4 @@
-# Copyright (C) 2022 Apple Inc. All rights reserved.
+# Copyright (C) 2022-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -78,12 +78,17 @@ class Tracker(GenericTracker):
     NOT_APPLICABLE = 'Not Applicable'
 
     REPRODUCIBILITY = [NOT_APPLICABLE, ALWAYS, SOMETIMES, RARELY, UNABLE, DIDNT_TRY]
+    NAME = 'Radar'
 
     class Encoder(GenericTracker.Encoder):
         @decorators.hybridmethod
         def default(context, obj):
             if isinstance(obj, Tracker):
-                return dict(type='radar', projects=obj._projects)
+                return dict(
+                    type='radar',
+                    projects=obj._projects,
+                    hide_title=obj.hide_title,
+                )
             if isinstance(context, type):
                 raise TypeError('Cannot invoke parent class when classmethod')
             return super(Tracker.Encoder, context).default(obj)
@@ -97,8 +102,9 @@ class Tracker(GenericTracker):
         except ImportError:
             return None
 
-    def __init__(self, users=None, authentication=None, project=None, projects=None):
-        super(Tracker, self).__init__(users=users)
+    def __init__(self, users=None, authentication=None, project=None, projects=None, redact=None, hide_title=None):
+        hide_title = True if hide_title is None else hide_title
+        super(Tracker, self).__init__(users=users, redact=redact, hide_title=hide_title)
         self._projects = [project] if project else (projects or [])
 
         self.library = self.radarclient()
@@ -148,9 +154,11 @@ class Tracker(GenericTracker):
             elif name:
                 found = self.library.AppleDirectoryQuery.user_entry_for_attribute_value('cn', name)
             if not found:
-                raise RuntimeError("Failed to find '{}'".format(User(
-                    name, username, [email],
-                )))
+                return self.users.create(
+                    name=name,
+                    username=None,
+                    emails=[email],
+                )
             name = '{} {}'.format(found.first_name(), found.last_name())
             username = found.dsid()
             email = found.email()
@@ -169,7 +177,7 @@ class Tracker(GenericTracker):
         return Issue(id=int(id), tracker=self)
 
     def populate(self, issue, member=None):
-        issue._link = '<rdar://{}>'.format(issue.id)
+        issue._link = 'rdar://{}'.format(issue.id)
         issue._labels = []
         if (not self.client or not self.library) and member:
             sys.stderr.write('radarclient inaccessible on this machine\n')
@@ -197,6 +205,13 @@ class Tracker(GenericTracker):
             username=radar.originator.dsid,
             email=radar.originator.email,
         )
+        issue._milestone = radar.milestone.name if radar.milestone else ''
+
+        if member == 'keywords':
+            issue._keywords = [kw.name for kw in (radar.keywords() or [])]
+
+        if member == 'classification':
+            issue._classification = radar.classification
 
         if member == 'watchers':
             issue._watchers = []
@@ -455,3 +470,7 @@ class Tracker(GenericTracker):
         if assign:
             result.assign(self.me())
         return result
+
+    def cc_radar(self, issue, block=False, timeout=None, radar=None):
+        # cc-ing radar is a no-op for radar
+        return issue

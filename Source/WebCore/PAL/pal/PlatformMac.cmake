@@ -9,6 +9,8 @@ list(APPEND PAL_PUBLIC_HEADERS
     cf/OTSVGTable.h
     cf/VideoToolboxSoftLink.h
 
+    cg/CoreGraphicsSoftLink.h
+
     cocoa/AppSSOSoftLink.h
     cocoa/AVFoundationSoftLink.h
     cocoa/CoreMLSoftLink.h
@@ -16,12 +18,15 @@ list(APPEND PAL_PUBLIC_HEADERS
     cocoa/DataDetectorsCoreSoftLink.h
     cocoa/MediaToolboxSoftLink.h
     cocoa/NaturalLanguageSoftLink.h
+    cocoa/NetworkConnectionIntegritySoftLink.h
     cocoa/OpenGLSoftLinkCocoa.h
     cocoa/PassKitSoftLink.h
     cocoa/RevealSoftLink.h
     cocoa/SpeechSoftLink.h
+    cocoa/TranslationUIServicesSoftLink.h
     cocoa/UsageTrackingSoftLink.h
     cocoa/VisionKitCoreSoftLink.h
+    cocoa/VisionSoftLink.h
 
     mac/DataDetectorsSoftLink.h
     mac/LookupSoftLink.h
@@ -71,7 +76,6 @@ list(APPEND PAL_PUBLIC_HEADERS
     spi/cocoa/NSAttributedStringSPI.h
     spi/cocoa/NSButtonCellSPI.h
     spi/cocoa/NSCalendarDateSPI.h
-    spi/cocoa/NSColorSPI.h
     spi/cocoa/NSExtensionSPI.h
     spi/cocoa/NSFileManagerSPI.h
     spi/cocoa/NSFileSizeFormatterSPI.h
@@ -111,6 +115,7 @@ list(APPEND PAL_PUBLIC_HEADERS
     spi/mac/NSAppearanceSPI.h
     spi/mac/NSApplicationSPI.h
     spi/mac/NSCellSPI.h
+    spi/mac/NSColorSPI.h
     spi/mac/NSColorWellSPI.h
     spi/mac/NSEventSPI.h
     spi/mac/NSFontSPI.h
@@ -159,6 +164,8 @@ list(APPEND PAL_SOURCES
     cf/OTSVGTable.cpp
     cf/VideoToolboxSoftLink.cpp
 
+    cg/CoreGraphicsSoftLink.cpp
+
     cocoa/AppSSOSoftLink.mm
     cocoa/AVFoundationSoftLink.mm
     cocoa/CoreMLSoftLink.mm
@@ -168,10 +175,12 @@ list(APPEND PAL_SOURCES
     cocoa/Gunzip.cpp
     cocoa/MediaToolboxSoftLink.cpp
     cocoa/NaturalLanguageSoftLink.mm
+    cocoa/NetworkConnectionIntegritySoftLink.mm
     cocoa/OpenGLSoftLinkCocoa.mm
     cocoa/PassKitSoftLink.mm
     cocoa/RevealSoftLink.mm
     cocoa/SpeechSoftLink.mm
+    cocoa/TranslationUIServicesSoftLink.mm
     cocoa/UsageTrackingSoftLink.mm
     cocoa/VisionKitCoreSoftLink.mm
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,7 +27,10 @@
 #import "HTTPServer.h"
 
 #import "Utilities.h"
+#import <WebKit/WKWebsiteDataStorePrivate.h>
+#import <WebKit/_WKWebsiteDataStoreConfiguration.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/CallbackAggregator.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/SHA1.h>
@@ -181,8 +184,19 @@ void HTTPServer::cancel()
     nw_listener_cancel(m_listener.get());
     Util::run(&cancelled);
     m_listener = nullptr;
+
+    bool done { false };
+    terminateAllConnections([&] {
+        done = true;
+    });
+    Util::run(&done);
+}
+
+void HTTPServer::terminateAllConnections(CompletionHandler<void()>&& completionHandler)
+{
+    auto aggregator = CallbackAggregator::create(WTFMove(completionHandler));
     for (auto& connection : std::exchange(m_requestData->connections, { }))
-        connection.cancel();
+        connection.terminate([aggregator] { });
 }
 
 HTTPServer::HTTPServer(std::initializer_list<std::pair<String, HTTPResponse>> responses, Protocol protocol, CertificateVerifier&& verifier, RetainPtr<SecIdentityRef>&& identity, std::optional<uint16_t> port)
@@ -289,12 +303,16 @@ static ASCIILiteral statusText(unsigned statusCode)
         return "Switching Protocols"_s;
     case 200:
         return "OK"_s;
+    case 204:
+        return "No Content"_s;
     case 301:
         return "Moved Permanently"_s;
     case 302:
         return "Found"_s;
     case 404:
         return "Not Found"_s;
+    case 503:
+        return "Service Unavailable"_s;
     }
     ASSERT_NOT_REACHED();
     return "Unknown Status Code"_s;
@@ -421,6 +439,15 @@ NSURLRequest *HTTPServer::requestWithLocalhost(StringView path) const
     return [NSURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"%s://localhost:%d%@", scheme(), port(), path.createNSString().get()]]];
 }
 
+WKWebViewConfiguration *HTTPServer::httpsProxyConfiguration() const
+{
+    auto storeConfiguration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] initNonPersistentConfiguration]);
+    [storeConfiguration setHTTPSProxy:[NSURL URLWithString:[NSString stringWithFormat:@"https://127.0.0.1:%d/", port()]]];
+    auto viewConfiguration = adoptNS([WKWebViewConfiguration new]);
+    [viewConfiguration setWebsiteDataStore:adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:storeConfiguration.get()]).get()];
+    return viewConfiguration.autorelease();
+}
+
 void Connection::receiveBytes(CompletionHandler<void(Vector<uint8_t>&&)>&& completionHandler, size_t minimumSize) const
 {
     nw_connection_receive(m_connection.get(), minimumSize, std::numeric_limits<uint32_t>::max(), makeBlockPtr([connection = *this, completionHandler = WTFMove(completionHandler)](dispatch_data_t content, nw_content_context_t, bool, nw_error_t error) mutable {
@@ -452,7 +479,7 @@ ReceiveOperation Connection::awaitableReceiveHTTPRequest() const
     return { *this };
 }
 
-void ReceiveOperation::await_suspend(std::experimental::coroutine_handle<> handle)
+void ReceiveOperation::await_suspend(std::coroutine_handle<> handle)
 {
     m_connection.receiveHTTPRequest([this, handle](Vector<char>&& result) mutable {
         m_result = WTFMove(result);
@@ -460,7 +487,7 @@ void ReceiveOperation::await_suspend(std::experimental::coroutine_handle<> handl
     });
 }
 
-void SendOperation::await_suspend(std::experimental::coroutine_handle<> handle)
+void SendOperation::await_suspend(std::coroutine_handle<> handle)
 {
     m_connection.send(WTFMove(m_data), [handle] (bool) mutable {
         handle();
@@ -542,19 +569,6 @@ void Connection::terminate(CompletionHandler<void()>&& completionHandler)
             completionHandler();
     }).get());
     nw_connection_cancel(m_connection.get());
-}
-
-void Connection::cancel()
-{
-    __block bool cancelled = false;
-    nw_connection_set_state_changed_handler(m_connection.get(), ^(nw_connection_state_t state, nw_error_t error) {
-        ASSERT_UNUSED(error, !error);
-        if (state == nw_connection_state_cancelled)
-            cancelled = true;
-    });
-    nw_connection_cancel(m_connection.get());
-    Util::run(&cancelled);
-    m_connection = nullptr;
 }
 
 Vector<uint8_t> HTTPResponse::bodyFromString(const String& string)

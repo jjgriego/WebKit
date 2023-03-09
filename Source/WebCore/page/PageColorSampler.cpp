@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -89,8 +89,6 @@ static bool isValidSampleLocation(Document& document, const IntPoint& location)
             return false;
         if (auto* animations = styleable.animations()) {
             for (auto& animation : *animations) {
-                if (!animation)
-                    continue;
                 if (animation->playState() == WebAnimation::PlayState::Running)
                     return false;
             }
@@ -102,7 +100,7 @@ static bool isValidSampleLocation(Document& document, const IntPoint& location)
             return false;
 
         // Skip 3rd-party `<iframe>` as the content likely won't match the rest of the page.
-        if (is<HTMLIFrameElement>(element) && !areRegistrableDomainsEqual(downcast<HTMLIFrameElement>(element).location(), document.url()))
+        if (is<HTMLIFrameElement>(element))
             return false;
     }
 
@@ -120,7 +118,11 @@ static std::optional<Lab<float>> sampleColor(Document& document, IntPoint&& loca
     auto colorSpace = DestinationColorSpace::SRGB();
 
     ASSERT(document.view());
-    auto snapshot = snapshotFrameRect(document.view()->frame(), IntRect(location, IntSize(1, 1)), { { SnapshotFlags::ExcludeSelectionHighlighting, SnapshotFlags::PaintEverythingExcludingSelection }, PixelFormat::BGRA8, colorSpace });
+    auto* localFrame = dynamicDowncast<LocalFrame>(document.view()->frame());
+    if (!localFrame)
+        return std::nullopt;
+
+    auto snapshot = snapshotFrameRect(*localFrame, IntRect(location, IntSize(1, 1)), { { SnapshotFlags::ExcludeSelectionHighlighting, SnapshotFlags::PaintEverythingExcludingSelection }, PixelFormat::BGRA8, colorSpace });
     if (!snapshot)
         return std::nullopt;
 
@@ -167,11 +169,15 @@ std::optional<Color> PageColorSampler::sampleTop(Page& page)
         return Color();
     }
 
-    RefPtr mainDocument = page.mainFrame().document();
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(page.mainFrame());
+    if (!localMainFrame)
+        return std::nullopt;
+
+    RefPtr mainDocument = localMainFrame->document();
     if (!mainDocument)
         return std::nullopt;
 
-    RefPtr frameView = page.mainFrame().view();
+    RefPtr frameView = localMainFrame->view();
     if (!frameView)
         return std::nullopt;
 

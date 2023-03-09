@@ -70,19 +70,15 @@ static void releaseNoncriticalMemory(MaintainMemoryCache maintainMemoryCache)
 {
     RenderTheme::singleton().purgeCaches();
 
-    // FIXME: Clear these font caches in workers too?
-    FontCache::forCurrentThread().purgeInactiveFontData();
-    FontCache::forCurrentThread().clearWidthCaches();
+    FontCache::releaseNoncriticalMemoryInAllFontCaches();
 
     GlyphDisplayListCache::singleton().clear();
 
     for (auto* document : Document::allDocuments()) {
         document->clearSelectorQueryCache();
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
         if (auto* renderView = document->renderView())
             LayoutIntegration::LineLayout::releaseCaches(*renderView);
-#endif
     }
 
     if (maintainMemoryCache == MaintainMemoryCache::No)
@@ -120,10 +116,8 @@ static void releaseCriticalMemory(Synchronous synchronous, MaintainBackForwardCa
     GCController::singleton().deleteAllCode(JSC::DeleteAllCodeIfNotCollecting);
 
 #if ENABLE(VIDEO)
-    for (auto* mediaElement : HTMLMediaElement::allMediaElements()) {
-        if (mediaElement->paused())
-            mediaElement->purgeBufferedDataIfPossible();
-    }
+    for (auto* mediaElement : HTMLMediaElement::allMediaElements())
+        mediaElement->purgeBufferedDataIfPossible();
 #endif
 
     if (synchronous == Synchronous::Yes) {
@@ -201,6 +195,7 @@ void logMemoryStatistics(LogMemoryStatisticsReason reason)
     const char* description = logMemoryStatisticsReasonDescription(reason);
 
     RELEASE_LOG(MemoryPressure, "WebKit memory usage statistics at time of %" PUBLIC_LOG_STRING ":", description);
+    RELEASE_LOG(MemoryPressure, "Websam state: %" PUBLIC_LOG_STRING, MemoryPressureHandler::processStateDescription().characters());
     auto stats = PerformanceLogging::memoryUsageStatistics(ShouldIncludeExpensiveComputations::Yes);
     for (auto& [key, val] : stats)
         RELEASE_LOG(MemoryPressure, "%" PUBLIC_LOG_STRING ": %zu", key, val);

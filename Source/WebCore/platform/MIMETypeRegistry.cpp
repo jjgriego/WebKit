@@ -27,8 +27,8 @@
 #include "config.h"
 #include "MIMETypeRegistry.h"
 
+#include "DeprecatedGlobalSettings.h"
 #include "MediaPlayer.h"
-#include "RuntimeEnabledFeatures.h"
 #include "ThreadGlobalData.h"
 #include <wtf/FixedVector.h>
 #include <wtf/HashMap.h>
@@ -39,14 +39,11 @@
 #include <wtf/Vector.h>
 
 #if USE(CG)
-#include "ImageSourceCG.h"
+#include "ImageBufferUtilitiesCG.h"
 #include "UTIRegistry.h"
+#include "UTIUtilities.h"
 #include <ImageIO/ImageIO.h>
 #include <wtf/RetainPtr.h>
-#endif
-
-#if USE(CG) && PLATFORM(COCOA)
-#include "UTIUtilities.h"
 #endif
 
 #if ENABLE(WEB_ARCHIVE) || ENABLE(MHTML)
@@ -93,7 +90,7 @@ constexpr ComparableCaseFoldingASCIILiteral supportedImageMIMETypeArray[] = {
 #if USE(CG) || ENABLE(APNG)
     "image/apng",
 #endif
-#if USE(AVIF)
+#if HAVE(AVIF) || USE(AVIF)
     "image/avif",
 #endif
     "image/bmp",
@@ -112,6 +109,7 @@ constexpr ComparableCaseFoldingASCIILiteral supportedImageMIMETypeArray[] = {
 #if !USE(CG) && USE(OPENJPEG)
     "image/jpeg2000",
 #endif
+    "image/jpg",
 #if USE(JPEGXL)
     "image/jxl",
 #endif
@@ -133,7 +131,7 @@ constexpr ComparableCaseFoldingASCIILiteral supportedImageMIMETypeArray[] = {
 #if PLATFORM(IOS_FAMILY)
     "image/vnd.switfview-jpeg",
 #endif
-#if (USE(CG) && HAVE(WEBP)) || (!USE(CG) && USE(WEBP))
+#if HAVE(WEBP) || USE(WEBP)
     "image/webp",
 #endif
 #if PLATFORM(IOS_FAMILY)
@@ -421,9 +419,11 @@ bool MIMETypeRegistry::isSupportedImageMIMEType(const String& mimeType)
         }
     });
 #endif
-    if (supportedImageMIMETypeSet.contains(mimeType))
+
+    String normalizedMIMEType = normalizedImageMIMEType(mimeType);
+    if (supportedImageMIMETypeSet.contains(normalizedMIMEType))
         return true;
-    return additionalSupportedImageMIMETypes().contains(normalizedImageMIMEType(mimeType));
+    return additionalSupportedImageMIMETypes().contains(normalizedMIMEType);
 }
 
 bool MIMETypeRegistry::isSupportedImageVideoOrSVGMIMEType(const String& mimeType)
@@ -537,12 +537,16 @@ bool MIMETypeRegistry::isTextMediaPlaylistMIMEType(const String& mimeType)
     return false;
 }
 
+// https://mimesniff.spec.whatwg.org/#json-mime-type
 bool MIMETypeRegistry::isSupportedJSONMIMEType(const String& mimeType)
 {
     if (mimeType.isEmpty())
         return false;
 
     if (equalLettersIgnoringASCIICase(mimeType, "application/json"_s))
+        return true;
+
+    if (equalLettersIgnoringASCIICase(mimeType, "text/json"_s))
         return true;
 
     // When detecting +json ensure there is a non-empty type / subtype preceeding the suffix.
@@ -667,7 +671,7 @@ bool MIMETypeRegistry::canShowMIMEType(const String& mimeType)
 #endif
 
 #if ENABLE(MODEL_ELEMENT)
-    if (isSupportedModelMIMEType(mimeType) && RuntimeEnabledFeatures::sharedFeatures().modelDocumentEnabled())
+    if (isSupportedModelMIMEType(mimeType) && DeprecatedGlobalSettings::modelDocumentEnabled())
         return true;
 #endif
 
@@ -710,8 +714,6 @@ bool MIMETypeRegistry::isSupportedModelMIMEType(const String& mimeType)
 static String normalizedImageMIMEType(const String& mimeType)
 {
 #if USE(CURL)
-    return mimeType;
-#else
     // FIXME: Since this is only used in isSupportedImageMIMEType, we should consider removing the non-image types below.
     static constexpr std::pair<ComparableLettersLiteral, ASCIILiteral> mimeTypeAssociationArray[] = {
         { "application/ico", "image/vnd.microsoft.icon"_s },
@@ -764,6 +766,8 @@ static String normalizedImageMIMEType(const String& mimeType)
     static constexpr SortedArrayMap associationMap { mimeTypeAssociationArray };
     auto normalizedType = associationMap.tryGet(mimeType);
     return normalizedType ? *normalizedType : mimeType;
+#else
+    return mimeType;
 #endif
 }
 
@@ -830,6 +834,18 @@ Vector<String> MIMETypeRegistry::allowedFileExtensions(const Vector<String>& mim
         allowedFileExtensions.appendIfNotContains(trimmedExtension(extension));
 
     return allowedFileExtensions;
+}
+
+bool MIMETypeRegistry::isJPEGMIMEType(const String& mimeType)
+{
+#if USE(CG)
+    auto destinationUTI = utiFromImageBufferMIMEType(mimeType);
+    if (!destinationUTI)
+        return false;
+    return CFEqual(destinationUTI.get(), jpegUTI());
+#else
+    return mimeType == "image/jpeg"_s || mimeType == "image/jpg"_s;
+#endif
 }
 
 } // namespace WebCore

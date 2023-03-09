@@ -98,7 +98,7 @@ void WebEditorClient::handleKeyboardEvent(KeyboardEvent& event)
         // During RawKeyDown events if an editor command will insert text, defer
         // the insertion until the keypress event. We want keydown to bubble up
         // through the DOM first.
-        if (platformEvent->type() == PlatformEvent::RawKeyDown) {
+        if (platformEvent->type() == PlatformEvent::Type::RawKeyDown) {
             if (executePendingEditorCommands(*frame, pendingEditorCommands, false))
                 event.setDefaultHandled();
 
@@ -145,7 +145,7 @@ void WebEditorClient::updateGlobalSelection(Frame* frame)
     PasteboardWebContent pasteboardContent;
     pasteboardContent.canSmartCopyOrDelete = false;
     pasteboardContent.text = plainText(*range);
-    pasteboardContent.markup = serializePreservingVisualAppearance(frame->selection().selection(), ResolveURLs::YesExcludingLocalFileURLsForPrivacy);
+    pasteboardContent.markup = serializePreservingVisualAppearance(frame->selection().selection(), ResolveURLs::YesExcludingURLsForPrivacy);
     Pasteboard::createForGlobalSelection(PagePasteboardContext::create(frame->pageID()))->write(pasteboardContent);
 }
 

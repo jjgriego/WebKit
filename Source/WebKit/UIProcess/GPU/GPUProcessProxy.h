@@ -28,14 +28,12 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "AuxiliaryProcessProxy.h"
-#include "GPUProcessProxyMessagesReplies.h"
 #include "ProcessLauncher.h"
 #include "ProcessTerminationReason.h"
 #include "ProcessThrottler.h"
 #include "ProcessThrottlerClient.h"
 #include "ShareableBitmap.h"
 #include "WebPageProxyIdentifier.h"
-#include "WebProcessProxyMessagesReplies.h"
 #include <WebCore/MediaPlayerIdentifier.h>
 #include <WebCore/PageIdentifier.h>
 #include <memory>
@@ -53,7 +51,7 @@ namespace WebCore {
 class CaptureDevice;
 struct MockMediaDevice;
 struct ScreenProperties;
-struct SecurityOriginData;
+class SecurityOriginData;
 }
 
 namespace WebKit {
@@ -72,7 +70,7 @@ public:
     static GPUProcessProxy* singletonIfCreated();
     ~GPUProcessProxy();
 
-    void createGPUProcessConnection(WebProcessProxy&, IPC::Attachment&& connectionIdentifier, GPUProcessConnectionParameters&&);
+    void createGPUProcessConnection(WebProcessProxy&, IPC::Connection::Handle&&, GPUProcessConnectionParameters&&);
 
     ProcessThrottler& throttler() final { return m_throttler; }
     void updateProcessAssertion();
@@ -85,8 +83,10 @@ public:
     void addMockMediaDevice(const WebCore::MockMediaDevice&);
     void clearMockMediaDevices();
     void removeMockMediaDevice(const String&);
+    void setMockMediaDeviceIsEphemeral(const String&, bool);
     void resetMockMediaDevices();
     void setMockCaptureDevicesInterrupted(bool isCameraInterrupted, bool isMicrophoneInterrupted);
+    void triggerMockMicrophoneConfigurationChange();
     void updateSandboxAccess(bool allowAudioCapture, bool allowVideoCapture, bool allowDisplayCapture);
 #endif
 
@@ -102,13 +102,20 @@ public:
     void setScreenProperties(const WebCore::ScreenProperties&);
 #endif
 
+#if HAVE(POWERLOG_TASK_MODE_QUERY)
+    void enablePowerLogging();
+    static bool isPowerLoggingInTaskMode();
+#endif
+
     void updatePreferences(WebProcessProxy&);
     void updateScreenPropertiesIfNeeded();
 
     void terminateForTesting();
     void webProcessConnectionCountForTesting(CompletionHandler<void(uint64_t)>&&);
 
-    void requestBitmapImageForCurrentTime(WebCore::ProcessIdentifier, WebCore::MediaPlayerIdentifier, CompletionHandler<void(const ShareableBitmap::Handle&)>&&);
+#if ENABLE(VIDEO)
+    void requestBitmapImageForCurrentTime(WebCore::ProcessIdentifier, WebCore::MediaPlayerIdentifier, CompletionHandler<void(const ShareableBitmapHandle&)>&&);
+#endif
 
 private:
     explicit GPUProcessProxy();
@@ -147,6 +154,15 @@ private:
     void didCreateContextForVisibilityPropagation(WebPageProxyIdentifier, WebCore::PageIdentifier, LayerHostingContextID);
 #endif
 
+#if ENABLE(VP9)
+    void setHasVP9HardwareDecoder(bool hasVP9HardwareDecoder) { s_hasVP9HardwareDecoder = hasVP9HardwareDecoder; }
+    void setHasVP9ExtensionSupport(bool hasVP9ExtensionSupport) { s_hasVP9ExtensionSupport = hasVP9ExtensionSupport; }
+#endif
+
+#if ENABLE(MEDIA_STREAM) && PLATFORM(IOS_FAMILY)
+    void statusBarWasTapped(CompletionHandler<void()>&&);
+#endif
+
     GPUProcessCreationParameters processCreationParameters();
     void platformInitializeGPUProcessParameters(GPUProcessCreationParameters&);
 
@@ -163,32 +179,12 @@ private:
     bool m_hasSentDisplayCaptureSandboxExtension { false };
 #endif
 
-#if ENABLE(MEDIA_SOURCE) && ENABLE(VP9)
-    bool m_hasEnabledWebMParser { false };
-#endif
-
-#if ENABLE(WEBM_FORMAT_READER)
-    bool m_hasEnabledWebMFormatReader { false };
-#endif
-
-#if ENABLE(OPUS)
-    bool m_hasEnabledOpus { false };
-#endif
-
-#if ENABLE(VORBIS)
-    bool m_hasEnabledVorbis { false };
-#endif
-
-#if ENABLE(MEDIA_SOURCE) && HAVE(AVSAMPLEBUFFERVIDEOOUTPUT)
-    bool m_hasEnabledMediaSourceInlinePainting { false };
-#endif
-
-#if HAVE(AVCONTENTKEYSPECIFIER)
-    bool m_hasEnabledSampleBufferContentKeySessionSupport { false };
-#endif
-
 #if HAVE(SCREEN_CAPTURE_KIT)
     bool m_hasEnabledScreenCaptureKit { false };
+#endif
+#if ENABLE(VP9)
+    static std::optional<bool> s_hasVP9HardwareDecoder;
+    static std::optional<bool> s_hasVP9ExtensionSupport;
 #endif
 
     HashSet<PAL::SessionID> m_sessionIDs;

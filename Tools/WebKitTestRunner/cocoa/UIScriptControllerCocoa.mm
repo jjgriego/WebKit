@@ -68,16 +68,6 @@ void UIScriptControllerCocoa::setWebViewEditable(bool editable)
     webView()._editable = editable;
 }
 
-void UIScriptControllerCocoa::becomeFirstResponder()
-{
-    [webView() becomeFirstResponder];
-}
-
-void UIScriptControllerCocoa::resignFirstResponder()
-{
-    [webView() resignFirstResponder];
-}
-
 void UIScriptControllerCocoa::doAsyncTask(JSValueRef callback)
 {
     unsigned callbackID = m_context->prepareForAsyncTask(callback, CallbackTypeNonPersistent);
@@ -87,6 +77,16 @@ void UIScriptControllerCocoa::doAsyncTask(JSValueRef callback)
             return;
         m_context->asyncTaskComplete(callbackID);
     });
+}
+
+void UIScriptControllerCocoa::doAfterPresentationUpdate(JSValueRef callback)
+{
+    unsigned callbackID = m_context->prepareForAsyncTask(callback, CallbackTypeNonPersistent);
+    [webView() _doAfterNextPresentationUpdate:makeBlockPtr([this, strongThis = Ref { *this }, callbackID] {
+        if (!m_context)
+            return;
+        m_context->asyncTaskComplete(callbackID);
+    }).get()];
 }
 
 void UIScriptControllerCocoa::completeTaskAsynchronouslyAfterActivityStateUpdate(unsigned callbackID)
@@ -102,6 +102,11 @@ void UIScriptControllerCocoa::completeTaskAsynchronouslyAfterActivityStateUpdate
             m_context->asyncTaskComplete(callbackID);
         }];
     });
+}
+
+JSRetainPtr<JSStringRef> UIScriptControllerCocoa::scrollingTreeAsText() const
+{
+    return adopt(JSStringCreateWithCFString((CFStringRef)[webView() _scrollingTreeAsText]));
 }
 
 void UIScriptControllerCocoa::removeViewFromWindow(JSValueRef callback)
@@ -166,6 +171,11 @@ void UIScriptControllerCocoa::setDefaultCalendarType(JSStringRef calendarIdentif
 JSRetainPtr<JSStringRef> UIScriptControllerCocoa::lastUndoLabel() const
 {
     return adopt(JSStringCreateWithCFString((__bridge CFStringRef)platformUndoManager().undoActionName));
+}
+
+JSRetainPtr<JSStringRef> UIScriptControllerCocoa::caLayerTreeAsText() const
+{
+    return adopt(JSStringCreateWithCFString((CFStringRef)[webView() _caLayerTreeAsText]));
 }
 
 JSRetainPtr<JSStringRef> UIScriptControllerCocoa::firstRedoLabel() const

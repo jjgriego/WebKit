@@ -28,6 +28,7 @@
 
 #include "CSSMarkup.h"
 #include "CSSStyleSheet.h"
+#include "GenericMediaQuerySerialization.h"
 #include "StyleRule.h"
 #include <wtf/text/StringBuilder.h>
 
@@ -51,36 +52,24 @@ const StyleRuleContainer& CSSContainerRule::styleRuleContainer() const
 String CSSContainerRule::cssText() const
 {
     StringBuilder builder;
-
     builder.append("@container ");
-
-    auto name = styleRuleContainer().filteredQuery().nameFilter;
-    if (!name.isEmpty()) {
-        serializeIdentifier(name, builder);
-        builder.append(' ');
-    }
-
-    serialize(builder, styleRuleContainer().filteredQuery().query);
-
-    builder.append(" {\n");
+    CQ::serialize(builder, styleRuleContainer().containerQuery());
     appendCSSTextForItems(builder);
-    builder.append('}');
-
     return builder.toString();
 }
 
 String CSSContainerRule::conditionText() const
 {
     StringBuilder builder;
-    serialize(builder, styleRuleContainer().filteredQuery().query);
+    MQ::serialize(builder, styleRuleContainer().containerQuery().condition);
     return builder.toString();
 }
 
-String CSSContainerRule::nameFilterText() const
+String CSSContainerRule::nameText() const
 {
     StringBuilder builder;
     
-    auto name = styleRuleContainer().filteredQuery().nameFilter;
+    auto name = styleRuleContainer().containerQuery().name;
     if (!name.isEmpty())
         serializeIdentifier(name, builder);
 

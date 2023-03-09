@@ -8,7 +8,6 @@ navigator.clipboard is OK
 navigator.contacts is OK
 navigator.cookieEnabled is OK
 navigator.credentials is OK
-navigator.getStorageUpdates() is OK
 navigator.hardwareConcurrency is OK
 navigator.javaEnabled() is OK
 navigator.language is OK
@@ -16,6 +15,7 @@ navigator.languages is OK
 navigator.mediaCapabilities is OK
 navigator.mimeTypes is OK
 navigator.onLine is OK
+navigator.pdfViewerEnabled is OK
 navigator.platform is OK
 navigator.plugins is OK
 navigator.product is OK
@@ -35,7 +35,6 @@ navigator.clipboard is OK
 navigator.contacts is OK
 navigator.cookieEnabled is OK
 navigator.credentials is OK
-navigator.getStorageUpdates() is OK
 navigator.hardwareConcurrency is OK
 navigator.javaEnabled() is OK
 navigator.language is OK
@@ -43,6 +42,7 @@ navigator.languages is OK
 navigator.mediaCapabilities is OK
 navigator.mimeTypes is OK
 navigator.onLine is OK
+navigator.pdfViewerEnabled is OK
 navigator.platform is OK
 navigator.plugins is OK
 navigator.product is OK

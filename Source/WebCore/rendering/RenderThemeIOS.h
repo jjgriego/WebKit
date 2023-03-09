@@ -66,7 +66,8 @@ public:
     WEBCORE_EXPORT static IconAndSize iconForAttachment(const String& fileName, const String& attachmentType, const String& title);
 
 private:
-    bool canPaint(const PaintInfo&, const Settings&) const final;
+    bool canPaint(const PaintInfo&, const Settings&, StyleAppearance) const final;
+    bool canCreateControlPartForRenderer(const RenderObject&) const final;
 
     LengthBox popupInternalPaddingBox(const RenderStyle&, const Settings&) const override;
 
@@ -86,8 +87,6 @@ private:
     void adjustButtonStyle(RenderStyle&, const Element*) const override;
     void paintButtonDecorations(const RenderObject&, const PaintInfo&, const IntRect&) override;
     void paintPushButtonDecorations(const RenderObject&, const PaintInfo&, const IntRect&) override;
-
-    void paintFileUploadIconDecorations(const RenderObject& inputRenderer, const RenderObject& buttonRenderer, const PaintInfo&, const IntRect&, Icon*, FileUploadDecorations) override;
 
     void adjustTextFieldStyle(RenderStyle&, const Element*) const final;
     void paintTextFieldDecorations(const RenderBox&, const PaintInfo&, const FloatRect&) override;
@@ -128,7 +127,7 @@ private:
 
     Seconds animationRepeatIntervalForProgressBar(const RenderProgress&) const final;
 
-    bool supportsMeter(ControlPart, const HTMLMeterElement&) const final;
+    bool supportsMeter(StyleAppearance, const HTMLMeterElement&) const final;
     bool paintMeter(const RenderObject&, const PaintInfo&, const IntRect&) final;
 
 #if ENABLE(DATALIST_ELEMENT)
@@ -173,14 +172,10 @@ private:
 
 #if ENABLE(ATTACHMENT_ELEMENT)
     LayoutSize attachmentIntrinsicSize(const RenderAttachment&) const override;
-    int attachmentBaseline(const RenderAttachment&) const override;
     bool attachmentShouldAllowWidthToShrink(const RenderAttachment&) const override { return true; }
     String attachmentStyleSheet() const final;
     bool paintAttachment(const RenderObject&, const PaintInfo&, const IntRect&) override;
 #endif
-
-    bool shouldMockBoldSystemFontForAccessibility() const override { return m_shouldMockBoldSystemFontForAccessibility; }
-    void setShouldMockBoldSystemFontForAccessibility(bool shouldMockBoldSystemFontForAccessibility) override { m_shouldMockBoldSystemFontForAccessibility = shouldMockBoldSystemFontForAccessibility; }
 
 private:
     RenderThemeIOS();
@@ -204,11 +199,11 @@ private:
 
     Color systemColor(CSSValueID, OptionSet<StyleColorOptions>) const override;
 
+    Color pictureFrameColor(const RenderObject&) override;
+
     Color controlTintColor(const RenderStyle&, OptionSet<StyleColorOptions>) const;
 
     void adjustStyleForAlternateFormControlDesignTransition(RenderStyle&, const Element*) const;
-
-    bool m_shouldMockBoldSystemFontForAccessibility { false };
 };
 
 }

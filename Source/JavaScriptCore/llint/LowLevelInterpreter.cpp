@@ -39,6 +39,7 @@
 #include "LLIntData.h"
 #include "LLIntSlowPaths.h"
 #include "JSCInlines.h"
+#include "SuperSampler.h"
 #include <wtf/Assertions.h>
 #include <wtf/MathExtras.h>
 
@@ -344,7 +345,7 @@ JSValue CLoop::execute(OpcodeID entryOpcodeID, void* executableAddress, VM* vm, 
         void* m_originalStackPointer;
     };
 
-    CLoopStack& cloopStack = vm->interpreter->cloopStack();
+    CLoopStack& cloopStack = vm->interpreter.cloopStack();
     StackPointerScope stackPointerScope(cloopStack);
 
     lr = getOpcode(llint_return_to_host);

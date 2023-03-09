@@ -31,7 +31,8 @@
 #include <wtf/CompletionHandler.h>
 
 namespace WebCore {
-struct SecurityOriginData;
+struct NotificationData;
+class SecurityOriginData;
 }
 
 namespace WebKit {
@@ -56,6 +57,25 @@ public:
     virtual void openWindowFromServiceWorker(const String&, const WebCore::SecurityOriginData&, CompletionHandler<void(WebPageProxy*)>&& completionHandler)
     {
         completionHandler(nullptr);
+    }
+
+    virtual bool showNotification(const WebCore::NotificationData&)
+    {
+        return false;
+    }
+
+    virtual HashMap<WTF::String, bool> notificationPermissions()
+    {
+        return { };
+    }
+
+    virtual void workerUpdatedAppBadge(const WebCore::SecurityOriginData&, std::optional<uint64_t>)
+    {
+    }
+    
+    virtual void requestBackgroundFetchPermission(const WebCore::SecurityOriginData& topOrigin, const WebCore::SecurityOriginData& frameOrigin, CompletionHandler<void(bool)>&& completionHandler)
+    {
+        completionHandler(false);
     }
 };
 

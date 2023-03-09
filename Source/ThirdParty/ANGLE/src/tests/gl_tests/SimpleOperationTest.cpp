@@ -31,7 +31,7 @@ constexpr char kGreenFragmentShader[] =
     gl_FragColor = vec4(0, 1, 0, 1);
 })";
 
-class SimpleOperationTest : public ANGLETest
+class SimpleOperationTest : public ANGLETest<>
 {
   protected:
     SimpleOperationTest()
@@ -1356,7 +1356,8 @@ ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND(
     SimpleOperationTest,
     ES3_METAL().enable(Feature::ForceBufferGPUStorage),
     ES3_METAL().disable(Feature::HasExplicitMemBarrier).disable(Feature::HasCheapRenderPass),
-    ES2_VULKAN().disable(Feature::SupportsNegativeViewport));
+    ES2_VULKAN().disable(Feature::SupportsNegativeViewport),
+    WithVulkanSecondaries(ES3_VULKAN_SWIFTSHADER()));
 
 ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND(
     TriangleFanDrawTest,

@@ -1,4 +1,4 @@
-# Copyright (C) 2020, 2021 Apple Inc. All rights reserved.
+# Copyright (C) 2020-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -21,11 +21,11 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import calendar
+import os
 import re
 import requests
 import six
 import sys
-import webkitcorepy
 
 from datetime import datetime
 from requests.auth import HTTPBasicAuth
@@ -40,6 +40,7 @@ from xml.dom import minidom
 class GitHub(Scm):
     URL_RE = re.compile(r'\Ahttps?://github.(?P<domain>\S+)/(?P<owner>\S+)/(?P<repository>\S+)\Z')
     EMAIL_RE = re.compile(r'(?P<email>[^@]+@[^@]+)(@.*)?')
+    ACCEPT_HEADER = Tracker.ACCEPT_HEADER
 
     class PRGenerator(Scm.PRGenerator):
         SUPPORTS_DRAFTS = True
@@ -48,23 +49,31 @@ class GitHub(Scm):
             if not data:
                 return None
             issue_ref = data.get('_links', {}).get('issue', {}).get('href')
+            # We can construct an issue ref given the url and PR number
+            if issue_ref:
+                issue = self.repository.tracker.from_string(issue_ref)
+            else:
+                issue = self.repository.tracker.issue(data['number'])
+
             return PullRequest(
                 number=data['number'],
                 title=data.get('title'),
                 body=data.get('body'),
-                author=self.repository.contributors.create(data['user']['login']),
-                head=data['head']['ref'],
-                base=data['base']['ref'],
+                author=self.repository.contributors.create((data.get('user') or data.get('author'))['login']),
+                head=(data.get('head') or {}).get('ref', data.get('headRefName')),
+                hash=(data.get('head') or {}).get('sha') or ((data.get('headRef') or {}).get('target') or {}).get('oid'),
+                base=(data.get('base') or {}).get('ref', data.get('baseRefName')),
                 opened=dict(
                     open=True,
                     closed=False,
-                ).get(data.get('state'), None),
+                    merged=False,
+                ).get(data.get('state').lower(), None),
                 generator=self,
                 metadata=dict(
-                    issue=self.repository.tracker.from_string(issue_ref) if issue_ref else None,
-                    full_name=data.get('head', {}).get('repo', {}).get('full_name')
+                    issue=issue,
+                    full_name=((data.get('head') or {}).get('repo') or {}).get('full_name') or (data.get('headRepository') or {}).get('nameWithOwner')
                 ), url='{}/pull/{}'.format(self.repository.url, data['number']),
-                draft=data['draft'],
+                draft=data.get('draft', data.get('isDraft', False)),
             )
 
         def get(self, number):
@@ -73,31 +82,52 @@ class GitHub(Scm):
         def find(self, opened=True, head=None, base=None):
             assert opened in (True, False, None)
 
-            user, _ = self.repository.credentials()
-            heads = [head]
-            if user and head:
-                heads.insert(0, '{}:{}'.format(user, head))
-            for qhead in heads:
-                data = self.repository.request('pulls', params=dict(
-                    state={
-                        None: 'all',
-                        True: 'open',
-                        False: 'closed',
-                    }.get(opened),
-                    base=base,
-                    head=qhead,
-                ))
-                if not data:
+            search = 'repo:{}/{} is:pr'.format(self.repository.owner, self.repository.name)
+            if head:
+                search += ' head:{}'.format(head)
+            if base:
+                search += ' base:{}'.format(base)
+            if opened is not None:
+                search += ' is:open' if opened else ' is:closed'
+
+            data = self.repository.graphql('''query {{
+  search(query: "{}", type: ISSUE, last: 100) {{
+    edges {{
+      node {{
+        ... on PullRequest {{
+          number
+          state
+          title
+          body
+          isDraft
+          author {{
+            login
+          }}
+          baseRefName
+          headRefName
+          headRef {{
+            target {{
+              oid
+            }}
+          }}
+          headRepository {{
+            nameWithOwner
+          }}
+        }}
+      }}
+    }}
+  }}
+}}'''.format(search)
+            )
+            if not data:
+                return
+
+            for node in data.get('data', {}).get('search', {}).get("edges", []):
+                nodeData = node.get('node')
+                if not nodeData:
                     continue
-                for datum in data or []:
-                    if base and datum['base']['ref'] != base:
-                        continue
-                    if head and not datum['head']['ref'].endswith(head.split(':')[-1]):
-                        continue
-                    if datum.get('head', {}).get('repo', {}).get('owner', {}).get('login', None) not in (user, None):
-                        continue
-                    yield self.PullRequest(datum)
-                break
+                yield self.PullRequest(nodeData)
+            return
 
         def create(self, head, title, body=None, commits=None, base=None, draft=None):
             draft = False if draft is None else draft
@@ -113,7 +143,7 @@ class GitHub(Scm):
             )
             response = self.repository.session.post(
                 url, auth=HTTPBasicAuth(*self.repository.credentials(required=True)),
-                headers=dict(Accept='application/vnd.github.v3+json'),
+                headers=dict(Accept=self.repository.ACCEPT_HEADER),
                 json=dict(
                     title=title,
                     body=PullRequest.create_body(body, commits),
@@ -123,14 +153,11 @@ class GitHub(Scm):
                 ),
             )
             if response.status_code == 422:
-                sys.stderr.write('Validation failed when creating pull request\n')
-                sys.stderr.write('Does a pull request against this branch already exist?\n')
+                sys.stderr.write(self.repository.tracker.parse_error(response.json()))
                 return None
             if response.status_code // 100 != 2:
                 sys.stderr.write("Request to '{}' returned status code '{}'\n".format(url, response.status_code))
-                message = response.json().get('message')
-                if message:
-                    sys.stderr.write('Message: {}\n'.format(message))
+                sys.stderr.write(self.repository.tracker.parse_error(response.json()))
                 sys.stderr.write(Tracker.REFRESH_TOKEN_PROMPT)
                 return None
             result = self.PullRequest(response.json())
@@ -167,17 +194,16 @@ class GitHub(Scm):
             )
             response = self.repository.session.post(
                 url, auth=HTTPBasicAuth(*self.repository.credentials(required=True)),
-                headers=dict(Accept='application/vnd.github.v3+json'),
+                headers=dict(Accept=self.repository.ACCEPT_HEADER),
                 json=updates,
             )
             if response.status_code == 422:
+                sys.stderr.write(self.repository.tracker.parse_error(response.json()))
                 pull_request._opened = False
                 return pull_request
             if response.status_code // 100 != 2:
                 sys.stderr.write("Request to '{}' returned status code '{}'\n".format(url, response.status_code))
-                message = response.json().get('message')
-                if message:
-                    sys.stderr.write('Message: {}\n'.format(message))
+                sys.stderr.write(self.repository.tracker.parse_error(response.json()))
                 sys.stderr.write(Tracker.REFRESH_TOKEN_PROMPT)
                 return None
             data = response.json()
@@ -192,6 +218,7 @@ class GitHub(Scm):
             pull_request._opened = dict(
                 open=True,
                 closed=False,
+                merged=False,
             ).get(data.get('state'), None)
             pull_request.generator = self
             issue_ref = data.get('_links', {}).get('issue', {}).get('href')
@@ -273,12 +300,64 @@ class GitHub(Scm):
                     content=comment.content,
                 )
 
+        def review(self, pull_request, comment=None, approve=None):
+            if not comment and approve is None:
+                raise self.repository.Exception('No review comment or approval provided')
+
+            body = dict(
+                event={
+                    True: 'APPROVE',
+                    False: 'REQUEST_CHANGES',
+                }.get(approve, 'COMMENT')
+            )
+            if comment:
+                body['body'] = comment
+
+            url = '{api_url}/repos/{owner}/{name}/pulls/{number}/reviews'.format(
+                api_url=self.repository.api_url,
+                owner=self.repository.owner,
+                name=self.repository.name,
+                number=pull_request.number,
+            )
+            response = self.repository.session.post(
+                url, auth=HTTPBasicAuth(*self.repository.credentials(required=True)),
+                headers=dict(Accept=self.repository.ACCEPT_HEADER),
+                json=body,
+            )
+
+            if response.status_code // 100 != 2:
+                sys.stderr.write("Request to '{}' returned status code '{}'\n".format(url, response.status_code))
+                sys.stderr.write(self.repository.tracker.parse_error(response.json()))
+                if response.status_code != 422:
+                    sys.stderr.write(Tracker.REFRESH_TOKEN_PROMPT)
+                return None
+
+            me = self._contributor(self.repository.credentials(required=True)[0])
+            if approve and pull_request._approvers:
+                if me in (pull_request._blockers or []):
+                    pull_request._blockers.remove(me)
+                if me not in pull_request._approvers:
+                    pull_request._approvers.append(me)
+            if approve is False and pull_request._blockers:
+                if me in (pull_request._approvers or []):
+                    pull_request._approvers.remove(me)
+                if me not in pull_request._blockers:
+                    pull_request._blockers.append(me)
+            if comment and pull_request._comments:
+                pull_request._comments.append(PullRequest.Comment(
+                    author=me,
+                    timestamp=time.time(),
+                    content=comment,
+                ))
+
+            return pull_request
+
 
     @classmethod
     def is_webserver(cls, url):
         return True if cls.URL_RE.match(url) else False
 
-    def __init__(self, url, dev_branches=None, prod_branches=None, contributors=None, id=None, proxies=None):
+    def __init__(self, url, dev_branches=None, prod_branches=None, contributors=None, id=None, proxies=None, classifier=None):
         match = self.URL_RE.match(url)
         if not match:
             raise self.Exception("'{}' is not a valid GitHub project".format(url))
@@ -299,6 +378,7 @@ class GitHub(Scm):
             dev_branches=dev_branches, prod_branches=prod_branches,
             contributors=contributors,
             id=id or self.name.lower(),
+            classifier=classifier,
         )
 
         self.pull_requests = self.PRGenerator(self)
@@ -315,9 +395,9 @@ class GitHub(Scm):
     def is_git(self):
         return True
 
-    def request(self, path=None, params=None, headers=None, authenticated=None, paginate=True):
+    def request(self, path=None, params=None, headers=None, authenticated=None, paginate=True, json=None, method='GET', endpoint_url=None, files=None, data=None, stream=False):
         headers = {key: value for key, value in headers.items()} if headers else dict()
-        headers['Accept'] = headers.get('Accept', 'application/vnd.github.v3+json')
+        headers['Accept'] = headers.get('Accept', self.ACCEPT_HEADER)
 
         username, access_token = self.credentials(required=bool(authenticated))
         auth = HTTPBasicAuth(username, access_token) if username and access_token else None
@@ -327,26 +407,36 @@ class GitHub(Scm):
             raise self.Exception('Request requires authentication, none provided')
 
         params = {key: value for key, value in params.items()} if params else dict()
-        params['per_page'] = params.get('per_page', 100)
-        params['page'] = params.get('page', 1)
+        if paginate:
+            params['per_page'] = params.get('per_page', 100)
+            params['page'] = params.get('page', 1)
 
-        url = '{api_url}/repos/{owner}/{name}{path}'.format(
-            api_url=self.api_url,
-            owner=self.owner,
-            name=self.name,
-            path='/{}'.format(path) if path else '',
-        )
-        response = self.session.get(url, params=params, headers=headers, auth=auth)
+        json = {key: value for key, value in json.items()} if json else None
+
+        url = endpoint_url
+        if not url:
+            url = '{api_url}/repos/{owner}/{name}{path}'.format(
+                api_url=self.api_url,
+                owner=self.owner,
+                name=self.name,
+                path='/{}'.format(path) if path else '',
+            )
+        response = self.session.request(method, url, params=params, json=json, headers=headers, auth=auth, files=files, data=data, stream=stream)
+        is_json_response = response.headers.get('Content-Type', '').split(';')[0] in ['application/json', 'text/json']
         if authenticated is None and not auth and response.status_code // 100 == 4:
-            return self.request(path=path, params=params, headers=headers, authenticated=True, paginate=paginate)
-        if response.status_code != 200:
+            return self.request(path=path, params=params, headers=headers, authenticated=True, paginate=paginate, json=json, method=method, endpoint_url=endpoint_url, files=files, data=data, stream=stream)
+        if response.status_code not in [200, 201]:
             sys.stderr.write("Request to '{}' returned status code '{}'\n".format(url, response.status_code))
-            message = response.json().get('message')
+            message = response.json().get('message') if is_json_response else ''
             if message:
                 sys.stderr.write('Message: {}\n'.format(message))
             if auth:
                 sys.stderr.write(Tracker.REFRESH_TOKEN_PROMPT)
             return None
+
+        if not is_json_response:
+            return response
+
         result = response.json()
 
         while paginate and isinstance(response.json(), list) and len(response.json()) == params['per_page']:
@@ -356,6 +446,21 @@ class GitHub(Scm):
                 raise self.Exception("Failed to assemble pagination requests for '{}', failed on page {}".format(url, params['page']))
             result += response.json()
         return result
+
+    def graphql(self, query):
+        url = '{}/graphql'.format(self.api_url)
+        response = self.session.post(
+            url, json=dict(query=query),
+            auth=HTTPBasicAuth(*self.credentials(required=True)),
+        )
+        if response.status_code != 200:
+            sys.stderr.write("Request to '{}' returned status code '{}'\n".format(url, response.status_code))
+            message = response.json().get('message')
+            if message:
+                sys.stderr.write('Message: {}\n'.format(message))
+            sys.stderr.write(Tracker.REFRESH_TOKEN_PROMPT)
+            return None
+        return response.json()
 
     def _count_for_ref(self, ref=None):
         ref = ref or self.default_branch
@@ -648,3 +753,76 @@ class GitHub(Scm):
         if not commit_data:
             raise ValueError("'{}' is not an argument recognized by git".format(argument))
         return self.commit(hash=commit_data['sha'], include_log=include_log, include_identifier=include_identifier)
+
+    def files_changed(self, argument=None):
+        if not argument:
+            return self.modified()
+        if not Commit.HASH_RE.match(argument):
+            commit = self.find(argument, include_log=False, include_identifier=False)
+            if not commit:
+                raise ValueError("'{}' is not an argument recognized by git".format(argument))
+            argument = commit.hash
+
+        return [
+            file.get('filename')
+            for file in self.request('commits/{}'.format(argument)).get('files', [])
+            if file.get('filename')
+        ]
+
+    def create_release(self, name, tag_name, target_commitish='main', body='', draft=False, prerelease=False):
+        data = {
+            'name': name,
+            'tag_name': tag_name,
+            'target_commitish': target_commitish,
+            'body': body,
+            'draft': draft,
+            'prerelease': prerelease
+        }
+        return self.request('releases', json=data, paginate=False, authenticated=True, method='POST')
+
+    def upload_release_asset(self, release_tag_name, source_filename, mime_type, asset_name=None, asset_label=None, file_like_object=None):
+        source_filename = os.path.abspath(os.path.realpath(os.path.expanduser(source_filename)))
+        source_basename = os.path.basename(source_filename)
+        asset_name = asset_name if asset_name else source_basename
+        asset_label = asset_label if asset_label else source_basename
+        headers = dict()
+        headers['Content-Type'] = mime_type
+        params = dict(name=asset_name, label=asset_label)
+        release_info = self.request('releases/tags/{tag}'.format(tag=release_tag_name), authenticated=True)
+        upload_url = release_info['upload_url'][0:release_info['upload_url'].rfind('{?name,label}')]
+        file_object = file_like_object if file_like_object else open(source_filename, 'rb')
+        try:
+            return self.request(
+                params=params,
+                authenticated=True,
+                paginate=False,
+                method='POST',
+                endpoint_url=upload_url,
+                headers=headers,
+                data=file_object
+            )
+        finally:
+            if not file_like_object:
+                file_object.close()
+
+    def download_release_assets(self, destination_directory, release_tag_name=None):
+        assert os.path.isdir(destination_directory), '`{destination_directory}` must be a directory'.format(destination_directory=destination_directory)
+        path = 'releases/tags/{release_tag_name}'.format(release_tag_name=release_tag_name) if release_tag_name else 'releases/latest'
+        release_info = self.request(path, authenticated=True, paginate=False)
+        release_assets = self.request(
+            'releases/{id}/assets'.format(id=release_info['id']),
+            authenticated=True,
+            paginate=False
+        )
+        headers = dict(Accept='application/octet-stream')
+        for asset_info in release_assets:
+            with self.request(
+                'releases/assets/{id}'.format(id=asset_info['id']),
+                headers=headers,
+                authenticated=True,
+                paginate=False,
+                stream=True
+            ) as response:
+                with open(os.path.join(destination_directory, asset_info['name']), 'wb') as file_object:
+                    for chunk in response.iter_content(chunk_size=10240):
+                        file_object.write(chunk)

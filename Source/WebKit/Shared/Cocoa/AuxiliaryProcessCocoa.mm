@@ -26,7 +26,9 @@
 #import "config.h"
 #import "AuxiliaryProcess.h"
 
+#import "Logging.h"
 #import "OSStateSPI.h"
+#import "SharedBufferReference.h"
 #import "WKCrashReporter.h"
 #import "XPCServiceEntryPoint.h"
 #import <WebCore/FloatingPointEnvironment.h>
@@ -45,6 +47,8 @@
 #if PLATFORM(MAC)
 #import <pal/spi/mac/HIServicesSPI.h>
 #endif
+
+#import <pal/cf/AudioToolboxSoftLink.h>
 
 #if HAVE(UPDATE_WEB_ACCESSIBILITY_SETTINGS) && ENABLE(CFPREFS_DIRECT_MODE)
 SOFT_LINK_LIBRARY_OPTIONAL(libAccessibility)
@@ -95,7 +99,7 @@ bool AuxiliaryProcess::parentProcessHasEntitlement(ASCIILiteral entitlement)
 
 void AuxiliaryProcess::platformStopRunLoop()
 {
-    XPCServiceExit(WTFMove(m_priorityBoostMessage));
+    XPCServiceExit();
 }
 
 #if USE(OS_STATE)
@@ -125,7 +129,7 @@ void AuxiliaryProcess::registerWithStateDumper(ASCIILiteral title)
             auto data = [NSPropertyListSerialization dataWithPropertyList:stateDictionary.get() format:NSPropertyListBinaryFormat_v1_0 options:0 error:&error];
 
             if (!data) {
-                ASSERT(data);
+                ASSERT_NOT_REACHED_WITH_MESSAGE("Failed to serialize OS state info with error: %@", error);
                 return os_state;
             }
 
@@ -237,5 +241,23 @@ void AuxiliaryProcess::setApplicationIsDaemon()
     CGSSetDenyWindowServerConnections(true);
 #endif
 }
+
+#if HAVE(AUDIO_COMPONENT_SERVER_REGISTRATIONS)
+void AuxiliaryProcess::consumeAudioComponentRegistrations(const IPC::SharedBufferReference& data)
+{
+    using namespace PAL;
+
+    if (!PAL::isAudioToolboxCoreFrameworkAvailable() || !PAL::canLoad_AudioToolboxCore_AudioComponentApplyServerRegistrations())
+        return;
+
+    if (data.isNull())
+        return;
+    auto registrations = data.unsafeBuffer()->createCFData();
+
+    auto err = AudioComponentApplyServerRegistrations(registrations.get());
+    if (noErr != err)
+        RELEASE_LOG_ERROR(Process, "Could not apply AudioComponent registrations, err(%ld)", static_cast<long>(err));
+}
+#endif
 
 } // namespace WebKit

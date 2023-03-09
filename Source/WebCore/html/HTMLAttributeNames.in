@@ -5,7 +5,7 @@ attrsNullNamespace
 
 abbr
 accept
-accept_charset
+accept-charset
 accesskey
 action
 align
@@ -27,6 +27,7 @@ aria-colspan
 aria-controls
 aria-current
 aria-describedby
+aria-description
 aria-details
 aria-disabled
 aria-dropeffect
@@ -82,7 +83,6 @@ axis
 background
 behavior
 bgcolor
-bgproperties
 border
 bordercolor
 capture
@@ -134,6 +134,7 @@ event
 expanded
 exportparts
 face
+fetchpriority
 filename
 focused
 for
@@ -152,12 +153,11 @@ high
 href
 hreflang
 hspace
-http_equiv
+http-equiv
 id
 imagesizes
 imagesrcset
 incremental
-indeterminate
 inert
 inputmode
 integrity
@@ -220,6 +220,7 @@ onbeforeinput
 onbeforeload
 onbeforepaste
 onbeforeprint
+onbeforetoggle
 onbeforeunload
 onblur
 oncancel
@@ -249,6 +250,10 @@ onfocus
 onfocusin
 onfocusout
 onformdata
+onfullscreenchange
+onfullscreenerror
+ongamepadconnected
+ongamepaddisconnected
 ongesturechange
 ongestureend
 ongesturestart
@@ -266,6 +271,7 @@ onloadedmetadata
 onloadstart
 onlostpointercapture
 onmessage
+onmessageerror
 onmousedown
 onmouseenter
 onmouseleave
@@ -358,11 +364,10 @@ playcount
 playsinline
 pluginspage
 pluginurl
+popover
 poster
-precision
 preload
 primary
-profile
 progress
 prompt
 pseudo
@@ -386,6 +391,8 @@ scrolldelay
 scrolling
 select
 selected
+shadowrootmode
+shadowrootdelegatesfocus
 shape
 size
 sizes
@@ -402,7 +409,6 @@ standby
 start
 step
 style
-subtitle
 summary
 tabindex
 tableborder

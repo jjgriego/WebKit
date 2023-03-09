@@ -47,6 +47,7 @@
 #include "FloatRect.h"
 #include "FocusController.h"
 #include "Frame.h"
+#include "FrameDestructionObserverInlines.h"
 #include "HTMLIFrameElement.h"
 #include "HitTestResult.h"
 #include "InspectorController.h"
@@ -66,6 +67,7 @@
 #include "Settings.h"
 #include "SystemSoundManager.h"
 #include "UserGestureIndicator.h"
+#include "WebCorePersistentCoders.h"
 #include <JavaScriptCore/ScriptFunctionCall.h>
 #include <pal/system/Sound.h>
 #include <wtf/CompletionHandler.h>
@@ -73,6 +75,10 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/persistence/PersistentDecoder.h>
 #include <wtf/text/Base64.h>
+
+#if PLATFORM(COCOA)
+#include <wtf/spi/darwin/OSVariantSPI.h>
+#endif
 
 namespace WebCore {
 
@@ -169,7 +175,10 @@ void InspectorFrontendHost::addSelfToGlobalObjectInWorld(DOMWrapperWorld& world)
 {
     // FIXME: What guarantees m_frontendPage is non-null?
     // FIXME: What guarantees globalObject's return value is non-null?
-    auto& globalObject = *m_frontendPage->mainFrame().script().globalObject(world);
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame());
+    if (!localMainFrame)
+        return;
+    auto& globalObject = *localMainFrame->script().globalObject(world);
     auto& vm = globalObject.vm();
     JSC::JSLockHolder lock(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
@@ -256,14 +265,18 @@ void InspectorFrontendHost::inspectedURLChanged(const String& newURL)
 
 void InspectorFrontendHost::setZoomFactor(float zoom)
 {
-    if (m_frontendPage)
-        m_frontendPage->mainFrame().setPageAndTextZoomFactors(zoom, 1);
+    if (m_frontendPage) {
+        if (auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame()))
+            localMainFrame->setPageAndTextZoomFactors(zoom, 1);
+    }
 }
 
 float InspectorFrontendHost::zoomFactor()
 {
-    if (m_frontendPage)
-        return m_frontendPage->mainFrame().pageZoomFactor();
+    if (m_frontendPage) {
+        if (auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame()))
+            return localMainFrame->pageZoomFactor();
+    }
 
     return 1.0;
 }
@@ -415,7 +428,8 @@ String InspectorFrontendHost::platformVersionName() const
 
 void InspectorFrontendHost::copyText(const String& text)
 {
-    auto pageID = m_frontendPage ? m_frontendPage->mainFrame().pageID() : std::nullopt;
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame());
+    auto pageID = m_frontendPage && localMainFrame ? localMainFrame->pageID() : std::nullopt;
     Pasteboard::createForCopyAndPaste(PagePasteboardContext::create(WTFMove(pageID)))->writePlainText(text, Pasteboard::CannotSmartReplace);
 }
 
@@ -559,7 +573,10 @@ void InspectorFrontendHost::showContextMenu(Event& event, Vector<ContextMenuItem
     // FIXME: What guarantees m_frontendPage is non-null?
     // FIXME: What guarantees globalObject's return value is non-null?
     ASSERT(m_frontendPage);
-    auto& globalObject = *m_frontendPage->mainFrame().script().globalObject(debuggerWorld());
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame());
+    if (!localMainFrame)
+        return;
+    auto& globalObject = *localMainFrame->script().globalObject(debuggerWorld());
     auto& vm = globalObject.vm();
     auto value = globalObject.get(&globalObject, JSC::Identifier::fromString(vm, "InspectorFrontendAPI"_s));
     ASSERT(value);
@@ -627,8 +644,27 @@ bool InspectorFrontendHost::isBeingInspected()
 
 void InspectorFrontendHost::setAllowsInspectingInspector(bool allow)
 {
-    if (m_frontendPage)
-        m_frontendPage->settings().setDeveloperExtrasEnabled(allow);
+    if (!m_frontendPage)
+        return;
+
+    m_frontendPage->settings().setDeveloperExtrasEnabled(allow);
+    if (m_client)
+        m_client->setInspectorPageDeveloperExtrasEnabled(m_frontendPage->settings().developerExtrasEnabled());
+}
+
+bool InspectorFrontendHost::engineeringSettingsAllowed()
+{
+    if (!m_frontendPage)
+        return false;
+
+    if (!m_frontendPage->settings().webInspectorEngineeringSettingsAllowed())
+        return false;
+#if PLATFORM(COCOA)
+    static bool allowsInternalSecurityPolicies = os_variant_allows_internal_security_policies("com.apple.WebKit");
+    if (!allowsInternalSecurityPolicies)
+        return false;
+#endif
+    return true;
 }
 
 bool InspectorFrontendHost::supportsShowCertificate() const
@@ -741,11 +777,11 @@ void InspectorFrontendHost::didShowExtensionTab(const String& extensionID, const
     if (!m_client)
         return;
 
-    Frame* frame = extensionFrameElement.contentFrame();
+    auto* frame = extensionFrameElement.contentFrame();
     if (!frame)
         return;
 
-    m_client->didShowExtensionTab(extensionID, extensionTabID, valueOrDefault(frame->frameID()));
+    m_client->didShowExtensionTab(extensionID, extensionTabID, frame->frameID());
 }
 
 void InspectorFrontendHost::didHideExtensionTab(const String& extensionID, const String& extensionTabID)
@@ -774,7 +810,7 @@ void InspectorFrontendHost::inspectedPageDidNavigate(const String& newURLString)
 
 ExceptionOr<JSC::JSValue> InspectorFrontendHost::evaluateScriptInExtensionTab(HTMLIFrameElement& extensionFrameElement, const String& scriptSource)
 {
-    Frame* frame = extensionFrameElement.contentFrame();
+    auto* frame = dynamicDowncast<LocalFrame>(extensionFrameElement.contentFrame());
     if (!frame)
         return Exception { InvalidStateError, "Unable to find global object for <iframe>"_s };
 

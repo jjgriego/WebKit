@@ -28,19 +28,8 @@
 
 #include "Common.h"
 #include "MiniBrowserLibResource.h"
-#include <sstream>
-
-#if USE(CF)
-#include <CoreFoundation/CoreFoundation.h>
-#endif
-
-#if ENABLE(WEBKIT)
 #include "WebKitBrowserWindow.h"
-#endif
-
-#if ENABLE(WEBKIT_LEGACY)
-#include "WebKitLegacyBrowserWindow.h"
-#endif
+#include <sstream>
 
 namespace WebCore {
 float deviceScaleFactorForWindow(HWND);
@@ -115,6 +104,15 @@ MainWindow::~MainWindow()
 Ref<MainWindow> MainWindow::create()
 {
     return adoptRef(*new MainWindow());
+}
+
+void MainWindow::resetFeatureMenu(BrowserWindow::FeatureType featureType, bool resetsSettingsToDefaults)
+{
+    auto settingMenu = GetSubMenu(GetMenu(m_hMainWnd), 3);
+    int index = featureType == BrowserWindow::FeatureType::Experimental ? 0 : 1;
+    auto featureMenu = GetSubMenu(settingMenu, index);
+    assert(GetMenuItemID(featureMenu, 0) == (featureType == BrowserWindow::FeatureType::Experimental ? IDM_EXPERIMENTAL_FEATURES_RESET_ALL_TO_DEFAULTS : IDM_INTERNAL_DEBUG_FEATURES_RESET_ALL_TO_DEFAULTS));
+    m_browserWindow->resetFeatureMenu(featureType, featureMenu, resetsSettingsToDefaults);
 }
 
 void MainWindow::createToolbar(HINSTANCE hInstance)
@@ -208,13 +206,6 @@ bool MainWindow::init(BrowserWindowFactory factory, HINSTANCE hInstance, bool us
     if (!m_hMainWnd)
         return false;
 
-#if !ENABLE(WEBKIT)
-    EnableMenuItem(GetMenu(m_hMainWnd), IDM_NEW_WEBKIT_WINDOW, MF_GRAYED);
-#endif
-#if !ENABLE(WEBKIT_LEGACY)
-    EnableMenuItem(GetMenu(m_hMainWnd), IDM_NEW_WEBKITLEGACY_WINDOW, MF_GRAYED);
-#endif
-
     createToolbar(hInstance);
     if (!m_hToolbarWnd)
         return false;
@@ -226,6 +217,9 @@ bool MainWindow::init(BrowserWindowFactory factory, HINSTANCE hInstance, bool us
     if (FAILED(hr))
         return false;
 
+    resetFeatureMenu(BrowserWindow::FeatureType::Experimental);
+    resetFeatureMenu(BrowserWindow::FeatureType::InternalDebug);
+    
     updateDeviceScaleFactor();
     resizeSubViews();
     SetFocus(m_hURLBarWnd);
@@ -307,22 +301,12 @@ LRESULT CALLBACK MainWindow::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPA
         case IDC_URL_BAR:
             thisWindow->onURLBarEnter();
             break;
-#if ENABLE(WEBKIT)
         case IDM_NEW_WEBKIT_WINDOW: {
             auto& newWindow = MainWindow::create().leakRef();
             newWindow.init(WebKitBrowserWindow::create, hInst);
             ShowWindow(newWindow.hwnd(), SW_SHOW);
             break;
         }
-#endif
-#if ENABLE(WEBKIT_LEGACY)
-        case IDM_NEW_WEBKITLEGACY_WINDOW: {
-            auto& newWindow = MainWindow::create().leakRef();
-            newWindow.init(WebKitLegacyBrowserWindow::create, hInst);
-            ShowWindow(newWindow.hwnd(), SW_SHOW);
-            break;
-        }
-#endif
         case IDM_CLOSE_WINDOW:
             PostMessage(hWnd, WM_CLOSE, 0, 0);
             break;
@@ -343,6 +327,12 @@ LRESULT CALLBACK MainWindow::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPA
             break;
         case IDM_PROXY_SETTINGS:
             thisWindow->browserWindow()->openProxySettings();
+            break;
+        case IDM_EXPERIMENTAL_FEATURES_RESET_ALL_TO_DEFAULTS:
+            thisWindow->resetFeatureMenu(BrowserWindow::FeatureType::Experimental, true);
+            break;
+        case IDM_INTERNAL_DEBUG_FEATURES_RESET_ALL_TO_DEFAULTS:
+            thisWindow->resetFeatureMenu(BrowserWindow::FeatureType::InternalDebug, true);
             break;
         case IDM_SET_DEFAULT_URL:
             thisWindow->setDefaultURLToCurrentURL();
@@ -375,6 +365,12 @@ LRESULT CALLBACK MainWindow::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPA
         case IDM_SHOW_LAYER_TREE:
             thisWindow->browserWindow()->showLayerTree();
             break;
+        case IDM_CLEAR_COOKIES:
+            thisWindow->browserWindow()->clearCookies();
+            break;
+        case IDM_CLEAR_WEBSITE_DATA:
+            thisWindow->browserWindow()->clearWebsiteData();
+            break;
         default:
             if (!thisWindow->toggleMenuItem(wmId))
                 return DefWindowProc(hWnd, message, wParam, lParam);
@@ -386,9 +382,6 @@ LRESULT CALLBACK MainWindow::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPA
         thisWindow->deref();
         if (s_numInstances > 1)
             return 0;
-#if USE(CF)
-        CFRunLoopStop(CFRunLoopGetMain());
-#endif
         PostQuitMessage(0);
         break;
     case WM_SIZE:

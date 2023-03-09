@@ -65,6 +65,7 @@ public:
         size_t argumentCountIncludingThis() const { return m_argumentCountIncludingThis; }
         bool callerIsEntryFrame() const { return m_callerIsEntryFrame; }
         CallFrame* callerFrame() const { return m_callerFrame; }
+        EntryFrame* entryFrame() const { return m_entryFrame; }
         CalleeBits callee() const { return m_callee; }
         CodeBlock* codeBlock() const { return m_codeBlock; }
         BytecodeIndex bytecodeIndex() const { return m_bytecodeIndex; }
@@ -101,6 +102,8 @@ public:
 
         ClonedArguments* createArguments(VM&);
         CallFrame* callFrame() const { return m_callFrame; }
+
+        JS_EXPORT_PRIVATE bool isImplementationVisibilityPrivate() const;
         
         void dump(PrintStream&, Indenter = Indenter()) const;
         void dump(PrintStream&, Indenter, WTF::Function<void(PrintStream&)> prefix) const;
@@ -131,13 +134,8 @@ public:
         friend class StackVisitor;
     };
 
-    enum Status {
-        Continue = 0,
-        Done = 1
-    };
-
     // StackVisitor::visit() expects a Functor that implements the following method:
-    //     Status operator()(StackVisitor&) const;
+    //     IterationStatus operator()(StackVisitor&) const;
 
     enum EmptyEntryFrameAction {
         ContinueIfTopEntryFrameIsEmpty,

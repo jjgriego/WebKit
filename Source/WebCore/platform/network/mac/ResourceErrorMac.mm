@@ -33,6 +33,15 @@
 #import <wtf/URL.h>
 #import <wtf/text/WTFString.h>
 
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/ResourceErrorMacAdditions.mm>)
+#import <WebKitAdditions/ResourceErrorMacAdditions.mm>
+#else
+static bool dueToCompromisingNetworkConnectionIntegrity(NSError *)
+{
+    return false;
+}
+#endif
+
 @interface NSError (WebExtras)
 - (NSString *)_web_localizedDescription;
 @end
@@ -111,8 +120,8 @@ static RetainPtr<NSError> createNSErrorFromResourceErrorBase(const ResourceError
 
 ResourceError::ResourceError(NSError *nsError)
     : ResourceErrorBase(Type::Null)
-    , m_dataIsUpToDate(false)
     , m_platformError(nsError)
+    , m_dataIsUpToDate(false)
 {
     mapPlatformError();
 }
@@ -132,6 +141,38 @@ const String& ResourceError::getCFErrorDomainCFNetwork() const
 {
     static const NeverDestroyed<String> errorDomain(kCFErrorDomainCFNetwork);
     return errorDomain.get();
+}
+
+ResourceError::ErrorRecoveryMethod ResourceError::errorRecoveryMethod() const
+{
+    lazyInit();
+
+    if ([m_domain isEqualToString:NSURLErrorDomain]) {
+        switch (m_errorCode) {
+        case NSURLErrorTimedOut:
+        case NSURLErrorCannotFindHost:
+        case NSURLErrorCannotConnectToHost:
+        case NSURLErrorNetworkConnectionLost:
+        case NSURLErrorHTTPTooManyRedirects:
+        case NSURLErrorResourceUnavailable:
+        case NSURLErrorRedirectToNonExistentLocation:
+        case NSURLErrorBadServerResponse:
+        case NSURLErrorZeroByteResource:
+        case NSURLErrorCannotDecodeRawData:
+        case NSURLErrorCannotDecodeContentData:
+        case NSURLErrorCannotParseResponse:
+        case NSURLErrorSecureConnectionFailed:
+        case NSURLErrorServerCertificateHasBadDate:
+        case NSURLErrorServerCertificateUntrusted:
+        case NSURLErrorServerCertificateHasUnknownRoot:
+        case NSURLErrorServerCertificateNotYetValid:
+        case NSURLErrorClientCertificateRejected:
+        case NSURLErrorClientCertificateRequired:
+            if (m_failingURL.protocolIs("https"_s) && (!m_failingURL.port() || WTF::isDefaultPortForProtocol(m_failingURL.port().value(), m_failingURL.protocol())))
+                return ResourceError::ErrorRecoveryMethod::HTTPFallback;
+        }
+    }
+    return ResourceError::ErrorRecoveryMethod::NoRecovery;
 }
 
 void ResourceError::mapPlatformError()
@@ -159,14 +200,16 @@ void ResourceError::platformLazyInit()
     m_domain = [m_platformError domain];
     m_errorCode = [m_platformError code];
 
-    if (NSString* failingURLString = [[m_platformError userInfo] valueForKey:@"NSErrorFailingURLStringKey"])
+    RetainPtr userInfo = [m_platformError userInfo];
+    if (auto *failingURLString = dynamic_objc_cast<NSString>([userInfo valueForKey:@"NSErrorFailingURLStringKey"]))
         m_failingURL = URL { failingURLString };
-    else
-        m_failingURL = URL((NSURL *)[[m_platformError userInfo] valueForKey:@"NSErrorFailingURLKey"]);
+    else if (auto *failingURL = dynamic_objc_cast<NSURL>([userInfo valueForKey:@"NSErrorFailingURLKey"]))
+        m_failingURL = URL { failingURL };
     // Workaround for <rdar://problem/6554067>
     m_localizedDescription = m_failingURL.string();
     BEGIN_BLOCK_OBJC_EXCEPTIONS
     m_localizedDescription = [m_platformError _web_localizedDescription];
+    m_compromisedNetworkConnectionIntegrity = dueToCompromisingNetworkConnectionIntegrity(m_platformError.get());
     END_BLOCK_OBJC_EXCEPTIONS
 
     m_dataIsUpToDate = true;

@@ -104,6 +104,14 @@ RTCDataChannel::RTCDataChannel(ScriptExecutionContext& context, std::unique_ptr<
 {
 }
 
+std::optional<unsigned short> RTCDataChannel::id() const
+{
+    if (!m_options.id && m_handler)
+        const_cast<RTCDataChannel*>(this)->m_options.id = m_handler->id();
+
+    return m_options.id;
+}
+
 const AtomString& RTCDataChannel::binaryType() const
 {
     switch (m_binaryType) {
@@ -127,7 +135,7 @@ ExceptionOr<void> RTCDataChannel::setBinaryType(const AtomString& binaryType)
         m_binaryType = BinaryType::ArrayBuffer;
         return { };
     }
-    return Exception { TypeMismatchError };
+    return Exception { SyntaxError };
 }
 
 ExceptionOr<void> RTCDataChannel::send(const String& data)
@@ -259,6 +267,7 @@ void RTCDataChannel::stop()
 {
     removeFromDataChannelLocalMapIfNeeded();
 
+    id();
     close();
     m_stopped = true;
     m_handler = nullptr;

@@ -37,14 +37,16 @@
 #include "AudioTrackList.h"
 #include "ContentType.h"
 #include "ContentTypeUtilities.h"
+#include "DeprecatedGlobalSettings.h"
 #include "Event.h"
 #include "EventNames.h"
 #include "HTMLMediaElement.h"
 #include "Logging.h"
+#include "ManagedMediaSource.h"
+#include "ManagedSourceBuffer.h"
 #include "MediaSourcePrivate.h"
 #include "MediaSourceRegistry.h"
 #include "Quirks.h"
-#include "RuntimeEnabledFeatures.h"
 #include "Settings.h"
 #include "SourceBuffer.h"
 #include "SourceBufferList.h"
@@ -69,7 +71,7 @@ String convertEnumerationToString(MediaSourcePrivate::AddStatus enumerationValue
     static_assert(static_cast<size_t>(MediaSourcePrivate::AddStatus::Ok) == 0, "MediaSourcePrivate::AddStatus::Ok is not 0 as expected");
     static_assert(static_cast<size_t>(MediaSourcePrivate::AddStatus::NotSupported) == 1, "MediaSourcePrivate::AddStatus::NotSupported is not 1 as expected");
     static_assert(static_cast<size_t>(MediaSourcePrivate::AddStatus::ReachedIdLimit) == 2, "MediaSourcePrivate::AddStatus::ReachedIdLimit is not 2 as expected");
-    ASSERT(static_cast<size_t>(enumerationValue) < WTF_ARRAY_LENGTH(values));
+    ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }
 
@@ -83,7 +85,7 @@ String convertEnumerationToString(MediaSourcePrivate::EndOfStreamStatus enumerat
     static_assert(static_cast<size_t>(MediaSourcePrivate::EndOfStreamStatus::EosNoError) == 0, "MediaSourcePrivate::EndOfStreamStatus::EosNoError is not 0 as expected");
     static_assert(static_cast<size_t>(MediaSourcePrivate::EndOfStreamStatus::EosNetworkError) == 1, "MediaSourcePrivate::EndOfStreamStatus::EosNetworkError is not 1 as expected");
     static_assert(static_cast<size_t>(MediaSourcePrivate::EndOfStreamStatus::EosDecodeError) == 2, "MediaSourcePrivate::EndOfStreamStatus::EosDecodeError is not 2 as expected");
-    ASSERT(static_cast<size_t>(enumerationValue) < WTF_ARRAY_LENGTH(values));
+    ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }
 
@@ -324,8 +326,8 @@ ExceptionOr<void> MediaSource::clearLiveSeekableRange()
 
 const MediaTime& MediaSource::currentTimeFudgeFactor()
 {
-    // Allow hasCurrentTime() to be off by as much as 100ms.
-    static NeverDestroyed<MediaTime> fudgeFactor(1, 10);
+    // Allow hasCurrentTime() to be off by as much as the length of two 24fps video frames
+    static NeverDestroyed<MediaTime> fudgeFactor(2002, 24000);
     return fudgeFactor;
 }
 
@@ -697,7 +699,13 @@ ExceptionOr<Ref<SourceBuffer>> MediaSource::addSourceBuffer(const String& type)
         return sourceBufferPrivate.releaseException();
     }
 
-    auto buffer = SourceBuffer::create(sourceBufferPrivate.releaseReturnValue(), this);
+    Ref<SourceBuffer> buffer =
+#if ENABLE(MANAGED_MEDIA_SOURCE)
+        isManaged() ? ManagedSourceBuffer::create(sourceBufferPrivate.releaseReturnValue(), downcast<ManagedMediaSource>(*this)).get() : SourceBuffer::create(sourceBufferPrivate.releaseReturnValue(), *this).get();
+#else
+        SourceBuffer::create(sourceBufferPrivate.releaseReturnValue(), *this);
+#endif
+
     DEBUG_LOG(LOGIDENTIFIER, "created SourceBuffer");
 
     // 6. Set the generate timestamps flag on the new object to the value in the "Generate Timestamps Flag"
@@ -867,6 +875,8 @@ ExceptionOr<void> MediaSource::removeSourceBuffer(SourceBuffer& buffer)
 
     // 12. Destroy all resources for sourceBuffer.
     buffer.removedFromMediaSource();
+
+    notifyElementUpdateMediaState();
 
     return { };
 }
@@ -1064,7 +1074,7 @@ ExceptionOr<Ref<SourceBufferPrivate>> MediaSource::createSourceBufferPrivate(con
         type = addVP9FullRangeVideoFlagToContentType(incomingType);
 
     RefPtr<SourceBufferPrivate> sourceBufferPrivate;
-    switch (m_private->addSourceBuffer(type, RuntimeEnabledFeatures::sharedFeatures().webMParserEnabled(), sourceBufferPrivate)) {
+    switch (m_private->addSourceBuffer(type, DeprecatedGlobalSettings::webMParserEnabled(), sourceBufferPrivate)) {
     case MediaSourcePrivate::AddStatus::Ok:
         return sourceBufferPrivate.releaseNonNull();
     case MediaSourcePrivate::AddStatus::NotSupported:
@@ -1117,7 +1127,16 @@ void MediaSource::regenerateActiveSourceBuffers()
     for (auto& sourceBuffer : *m_activeSourceBuffers)
         sourceBuffer->setBufferedDirty(true);
 
+    notifyElementUpdateMediaState();
+
     updateBufferedIfNeeded();
+}
+
+void MediaSource::notifyElementUpdateMediaState() const
+{
+    if (!mediaElement())
+        return;
+    mediaElement()->updateMediaState();
 }
 
 void MediaSource::updateBufferedIfNeeded()
@@ -1187,6 +1206,14 @@ void MediaSource::failedToCreateRenderer(RendererType type)
 {
     if (auto context = scriptExecutionContext())
         context->addConsoleMessage(MessageSource::JS, MessageLevel::Error, makeString("MediaSource ", type == RendererType::Video ? "video" : "audio", " renderer creation failed."));
+}
+
+void MediaSource::memoryPressure()
+{
+    if (!isManaged())
+        return;
+    for (auto& sourceBuffer : *m_sourceBuffers)
+        sourceBuffer->memoryPressure();
 }
 
 }

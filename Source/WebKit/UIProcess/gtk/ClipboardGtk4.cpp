@@ -34,6 +34,7 @@
 #include <WebCore/SharedBuffer.h>
 #include <gtk/gtk.h>
 #include <wtf/glib/GRefPtr.h>
+#include <wtf/glib/GUniquePtr.h>
 
 namespace WebKit {
 
@@ -172,7 +173,7 @@ void Clipboard::write(WebCore::SelectionData&& selectionData)
     }
 
     if (selectionData.hasImage()) {
-        GRefPtr<GdkPixbuf> pixbuf = adoptGRef(selectionData.image()->getGdkPixbuf());
+        auto pixbuf = selectionData.image()->gdkPixbuf();
         providers.append(gdk_content_provider_new_typed(GDK_TYPE_PIXBUF, pixbuf.get()));
     }
 

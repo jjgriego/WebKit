@@ -96,7 +96,7 @@ public:
 
 #if USE(SYSTEM_PREVIEW)
     bool isSystemPreviewDownload() const { return request().isSystemPreview(); }
-    WebCore::SystemPreviewInfo systemPreviewDownloadInfo() const { return request().systemPreviewInfo(); }
+    WebCore::SystemPreviewInfo systemPreviewDownloadInfo() const { RELEASE_ASSERT(request().systemPreviewInfo().has_value()); return *request().systemPreviewInfo(); }
 #endif
 
 #if PLATFORM(COCOA)
@@ -104,7 +104,9 @@ public:
     void setProgress(NSProgress *progress) { m_progress = progress; }
     NSProgress *progress() const { return m_progress.get(); }
 #endif
-
+#if PLATFORM(MAC)
+    void updateQuarantinePropertiesIfPossible();
+#endif
     API::FrameInfo& frameInfo() { return m_frameInfo.get(); }
 
     API::DownloadClient& client() { return m_client.get(); }

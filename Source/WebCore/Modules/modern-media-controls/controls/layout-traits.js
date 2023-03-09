@@ -103,9 +103,9 @@ class LayoutTraits
         throw "Derived class must implement this function.";
     }
 
-    additionalControlScaleFactor()
+    inheritsBorderRadius()
     {
-        return 1;
+        throw "Derived class must implement this function.";
     }
 }
 

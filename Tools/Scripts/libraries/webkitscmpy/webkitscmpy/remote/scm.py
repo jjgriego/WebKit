@@ -1,4 +1,4 @@
-# Copyright (C) 2020, 2021 Apple Inc. All rights reserved.
+# Copyright (C) 2020-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -54,13 +54,16 @@ class Scm(ScmBase):
         def comments(self, pull_request):
             raise NotImplementedError()
 
+        def review(self, pull_request, comment=None, approve=None):
+            raise NotImplementedError()
+
 
     @classmethod
-    def from_url(cls, url, contributors=None):
+    def from_url(cls, url, contributors=None, classifier=None):
         from webkitscmpy import remote
 
         if 'bitbucket' in url or 'stash' in url:
-            match = re.match(r'(?P<protocol>https?)://(?P<host>.+)/(?P<project>.+)/(?P<repo>.+)', url)
+            match = re.match(r'(?P<protocol>https?)://(?P<host>[^/]+)/(projects/)?(?P<project>[^/]+)/(repos/)?(?P<repo>[^/]+)', url)
             url = '{}://{}/projects/{}/repos/{}'.format(
                 match.group('protocol'),
                 match.group('host'),
@@ -70,12 +73,18 @@ class Scm(ScmBase):
 
         for candidate in [remote.Svn, remote.GitHub, remote.BitBucket]:
             if candidate.is_webserver(url):
-                return candidate(url, contributors=contributors)
+                return candidate(url, contributors=contributors, classifier=classifier)
 
         raise OSError("'{}' is not a known SCM server".format(url))
 
-    def __init__(self, url, dev_branches=None, prod_branches=None, contributors=None, id=None):
-        super(Scm, self).__init__(dev_branches=dev_branches, prod_branches=prod_branches, contributors=contributors, id=id)
+    def __init__(self, url, dev_branches=None, prod_branches=None, contributors=None, id=None, classifier=None):
+        super(Scm, self).__init__(
+            dev_branches=dev_branches,
+            prod_branches=prod_branches,
+            contributors=contributors,
+            id=id,
+            classifier=classifier,
+        )
 
         if not isinstance(url, six.string_types):
             raise ValueError("Expected 'url' to be a string type, not '{}'".format(type(url)))

@@ -1,4 +1,4 @@
-# Copyright (C) 2018-2022 Apple Inc. All rights reserved.
+# Copyright (C) 2018-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -36,8 +36,8 @@ from twisted.internet import defer
 
 from factories import (APITestsFactory, BindingsFactory, BuildFactory, CommitQueueFactory, Factory, GTKBuildFactory,
                        GTKTestsFactory, JSCBuildFactory, JSCBuildAndTestsFactory, JSCTestsFactory, MergeQueueFactory, StressTestFactory,
-                       StyleFactory, TestFactory, tvOSBuildFactory, WPEFactory, WebKitPerlFactory, WebKitPyFactory,
-                       WinCairoFactory, WindowsFactory, iOSBuildFactory, iOSEmbeddedBuildFactory, iOSTestsFactory,
+                       StyleFactory, TestFactory, tvOSBuildFactory, WPEBuildFactory, WPETestsFactory, WebKitPerlFactory, WebKitPyFactory,
+                       WinCairoFactory, iOSBuildFactory, iOSEmbeddedBuildFactory, iOSTestsFactory,
                        macOSBuildFactory, macOSBuildOnlyFactory, macOSWK1Factory, macOSWK2Factory, ServicesFactory,
                        UnsafeMergeQueueFactory, WatchListFactory, watchOSBuildFactory)
 
@@ -52,6 +52,9 @@ def loadBuilderConfig(c, is_test_mode_enabled=False, master_prefix_path='./'):
         passwords = {}
     else:
         passwords = json.load(open(os.path.join(master_prefix_path, 'passwords.json')))
+    results_server_api_key = passwords.get('results-server-api-key')
+    if results_server_api_key:
+        os.environ['RESULTS_SERVER_API_KEY'] = results_server_api_key
 
     checkWorkersAndBuildersForConsistency(config, config['workers'], config['builders'])
     checkValidSchedulers(config, config['schedulers'])
@@ -136,7 +139,7 @@ def prioritizeBuilders(buildmaster, builders):
     def key(b):
         request_time = yield b.getOldestRequestTime()
         return (
-            'build' not in b.name.lower(),
+            'build' not in b.name.lower() and 'unsafe' not in b.name.lower() and 'commit' not in b.name.lower(),
             bool(b.building) or bool(b.old_building),
             request_time or datetime.now(timezone.utc),
         )

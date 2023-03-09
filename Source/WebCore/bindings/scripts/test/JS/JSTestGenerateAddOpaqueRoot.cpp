@@ -33,7 +33,7 @@
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-#include "WebCoreOpaqueRoot.h"
+#include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -108,8 +108,8 @@ template<> void JSTestGenerateAddOpaqueRootDOMConstructor::initializeProperties(
 
 static const HashTableValue JSTestGenerateAddOpaqueRootPrototypeTableValues[] =
 {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsTestGenerateAddOpaqueRootConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "someAttribute"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsTestGenerateAddOpaqueRoot_someAttribute), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestGenerateAddOpaqueRootConstructor, 0 } },
+    { "someAttribute"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestGenerateAddOpaqueRoot_someAttribute, 0 } },
 };
 
 const ClassInfo JSTestGenerateAddOpaqueRootPrototype::s_info = { "TestGenerateAddOpaqueRoot"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestGenerateAddOpaqueRootPrototype) };
@@ -185,9 +185,9 @@ JSC::GCClient::IsoSubspace* JSTestGenerateAddOpaqueRoot::subspaceForImpl(JSC::VM
 {
     return WebCore::subspaceForImpl<JSTestGenerateAddOpaqueRoot, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForTestGenerateAddOpaqueRoot.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForTestGenerateAddOpaqueRoot = WTFMove(space); },
+        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForTestGenerateAddOpaqueRoot = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForTestGenerateAddOpaqueRoot.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForTestGenerateAddOpaqueRoot = WTFMove(space); }
+        [] (auto& spaces, auto&& space) { spaces.m_subspaceForTestGenerateAddOpaqueRoot = std::forward<decltype(space)>(space); }
     );
 }
 
@@ -207,7 +207,7 @@ void JSTestGenerateAddOpaqueRoot::analyzeHeap(JSCell* cell, HeapAnalyzer& analyz
     auto* thisObject = jsCast<JSTestGenerateAddOpaqueRoot*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, "url "_s + thisObject->scriptExecutionContext()->url().string());
     Base::analyzeHeap(cell, analyzer);
 }
 

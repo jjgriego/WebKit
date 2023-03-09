@@ -92,12 +92,12 @@ async function testRefTypeParamCheck() {
     // Trigger the ic path
     assert.throws(
       () => instance2.exports.f(null),
-      WebAssembly.RuntimeError,
+      TypeError,
       "Funcref must be an exported wasm function"
     );
     assert.throws(
       () => instance2.exports.f(instance1.exports.f),
-      WebAssembly.RuntimeError,
+      TypeError,
       "Argument function did not match the reference type"
     );
     instance3.exports.f(null);
@@ -129,7 +129,7 @@ async function testRefGlobalCheck() {
   const instance1 = new WebAssembly.Instance(m1);
   assert.throws(
     () => (instance1.exports.g.value = null),
-    WebAssembly.RuntimeError,
+    TypeError,
     "Funcref must be an exported wasm function"
   );
 
@@ -145,12 +145,12 @@ async function testRefGlobalCheck() {
   const instance2 = new WebAssembly.Instance(m2);
   assert.throws(
     () => (instance2.exports.g.value = null),
-    WebAssembly.RuntimeError,
+    TypeError,
     "Funcref must be an exported wasm function"
   );
   assert.throws(
     () => (instance2.exports.g.value = providerInstance.exports.f),
-    WebAssembly.RuntimeError,
+    TypeError,
     "Argument function did not match the reference type"
   );
 
@@ -208,7 +208,7 @@ async function testRefGlobalCheck() {
       )
     },
     WebAssembly.CompileError,
-    "WebAssembly.Module doesn't validate: set_global 0 with type Ref with a variable of type RefNull, in function at index 0 (evaluating 'new WebAssembly.Module(buffer)')"
+    `WebAssembly.Module doesn't validate: set_global 0 with type Ref with a variable of type RefNull, in function at index 0 (evaluating 'new WebAssembly.Module(buffer)')`
   );
 }
 
@@ -237,12 +237,12 @@ async function testExternFuncrefNonNullCheck() {
     // Trigger the ic path
     assert.throws(
       () => instance1.exports.f(null),
-      WebAssembly.RuntimeError,
+      TypeError,
       "Non-null Externref cannot be null"
     );
     assert.throws(
       () => instance2.exports.f(null),
-      WebAssembly.RuntimeError,
+      TypeError,
       "Funcref must be an exported wasm function"
     );
   }
@@ -272,7 +272,7 @@ async function testNonNullExternrefIncompatible() {
         "\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x07\x01\x60\x01\x6f\x01\x6b\x6f\x03\x02\x01\x00\x0a\x06\x01\x04\x00\x20\x00\x0b\x00\x0b\x04\x6e\x61\x6d\x65\x01\x04\x01\x00\x01\x66"
       ),
     WebAssembly.CompileError,
-    "WebAssembly.Module doesn't validate: control flow returns with unexpected type. RefNull is not a Ref, in function at index 0 (evaluating 'new WebAssembly.Module(buffer)')"
+    "WebAssembly.Module doesn't validate: control flow returns with unexpected type. Externref is not a Externref, in function at index 0 (evaluating 'new WebAssembly.Module(buffer)')"
   );
 }
 
@@ -300,7 +300,7 @@ async function testNonNullFuncrefIncompatible() {
         "\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x07\x01\x60\x01\x70\x01\x6b\x70\x03\x02\x01\x00\x0a\x06\x01\x04\x00\x20\x00\x0b\x00\x0b\x04\x6e\x61\x6d\x65\x01\x04\x01\x00\x01\x66"
       ),
     WebAssembly.CompileError,
-    "WebAssembly.Module doesn't validate: control flow returns with unexpected type. RefNull is not a Ref, in function at index 0 (evaluating 'new WebAssembly.Module(buffer)')"
+    "WebAssembly.Module doesn't validate: control flow returns with unexpected type. Funcref is not a Funcref, in function at index 0 (evaluating 'new WebAssembly.Module(buffer)')"
   );
 }
 
@@ -326,8 +326,8 @@ async function testWasmJSGlobals() {
 
   assert.throws(
     () => wasmGlobalFuncref.value = console.log,
-    WebAssembly.RuntimeError,
-    "Funcref must be an exported wasm function (evaluating 'wasmGlobalFuncref.value = console.log')"
+    TypeError,
+    "Funcref must be an exported wasm function"
   );
 
   const wasmGlobalExtern = new WebAssembly.Global({value:'externref', mutable:true});

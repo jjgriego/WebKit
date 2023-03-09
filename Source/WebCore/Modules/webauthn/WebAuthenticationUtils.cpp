@@ -52,8 +52,8 @@ Vector<uint8_t> convertArrayBufferToVector(ArrayBuffer* buffer)
 Vector<uint8_t> produceRpIdHash(const String& rpId)
 {
     auto crypto = PAL::CryptoDigest::create(PAL::CryptoDigest::Algorithm::SHA_256);
-    auto rpIdUtf8 = rpId.utf8();
-    crypto->addBytes(rpIdUtf8.data(), rpIdUtf8.length());
+    auto rpIdUTF8 = rpId.utf8();
+    crypto->addBytes(rpIdUTF8.data(), rpIdUTF8.length());
     return crypto->computeHash();
 }
 
@@ -189,6 +189,16 @@ Vector<uint8_t> buildClientDataJsonHash(const ArrayBuffer& clientDataJson)
     auto crypto = PAL::CryptoDigest::create(PAL::CryptoDigest::Algorithm::SHA_256);
     crypto->addBytes(clientDataJson.data(), clientDataJson.byteLength());
     return crypto->computeHash();
+}
+
+Vector<uint8_t> encodeRawPublicKey(const Vector<uint8_t>& x, const Vector<uint8_t>& y)
+{
+    Vector<uint8_t> rawKey;
+    rawKey.reserveInitialCapacity(1 + x.size() + y.size());
+    rawKey.uncheckedAppend(0x04);
+    rawKey.appendVector(x);
+    rawKey.appendVector(y);
+    return rawKey;
 }
 
 } // namespace WebCore

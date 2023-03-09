@@ -61,6 +61,11 @@ Ref<HTMLButtonElement> HTMLButtonElement::create(const QualifiedName& tagName, D
     return adoptRef(*new HTMLButtonElement(tagName, document, form));
 }
 
+Ref<HTMLButtonElement> HTMLButtonElement::create(Document& document)
+{
+    return adoptRef(*new HTMLButtonElement(buttonTag, document, nullptr));
+}
+
 void HTMLButtonElement::setType(const AtomString& type)
 {
     setAttributeWithoutSynchronization(typeAttr, type);
@@ -156,7 +161,7 @@ void HTMLButtonElement::defaultEventHandler(Event& event)
     if (is<KeyboardEvent>(event)) {
         KeyboardEvent& keyboardEvent = downcast<KeyboardEvent>(event);
         if (keyboardEvent.type() == eventNames.keydownEvent && keyboardEvent.keyIdentifier() == "U+0020"_s) {
-            setActive(true, true);
+            setActive(true);
             // No setDefaultHandled() - IE dispatches a keypress in this case.
             return;
         }
@@ -192,7 +197,7 @@ bool HTMLButtonElement::isSuccessfulSubmitButton() const
 {
     // HTML spec says that buttons must have names to be considered successful.
     // However, other browsers do not impose this constraint.
-    return m_type == SUBMIT && !isDisabledFormControl();
+    return m_type == SUBMIT;
 }
 
 bool HTMLButtonElement::matchesDefaultPseudoClass() const

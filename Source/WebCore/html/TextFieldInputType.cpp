@@ -37,8 +37,8 @@
 #include "ChromeClient.h"
 #include "DOMFormData.h"
 #include "Editor.h"
-#include "ElementInlines.h"
 #include "ElementRareData.h"
+#include "EventLoop.h"
 #include "EventNames.h"
 #include "Frame.h"
 #include "FrameSelection.h"
@@ -54,7 +54,6 @@
 #include "RenderLayerScrollableArea.h"
 #include "RenderTextControlSingleLine.h"
 #include "RenderTheme.h"
-#include "RuntimeEnabledFeatures.h"
 #include "ScriptDisallowedScope.h"
 #include "Settings.h"
 #include "ShadowPseudoIds.h"
@@ -63,6 +62,7 @@
 #include "TextEvent.h"
 #include "TextIterator.h"
 #include "TextNodeTraversal.h"
+#include "TypedElementDescendantIteratorInlines.h"
 #include "UserTypingGestureIndicator.h"
 #include "WheelEvent.h"
 
@@ -125,7 +125,7 @@ bool TextFieldInputType::isEmptyValue() const
 bool TextFieldInputType::valueMissing(const String& value) const
 {
     ASSERT(element());
-    return !element()->isDisabledOrReadOnly() && element()->isRequired() && value.isEmpty();
+    return element()->isMutable() && element()->isRequired() && value.isEmpty();
 }
 
 void TextFieldInputType::setValue(const String& sanitizedValue, bool valueChanged, TextFieldEventBehavior eventBehavior, TextControlSetValueSelection selection)
@@ -213,7 +213,7 @@ auto TextFieldInputType::handleKeydownEvent(KeyboardEvent& event) -> ShouldCallB
 void TextFieldInputType::handleKeydownEventForSpinButton(KeyboardEvent& event)
 {
     ASSERT(element());
-    if (element()->isDisabledOrReadOnly())
+    if (!element()->isMutable())
         return;
 #if ENABLE(DATALIST_ELEMENT)
     if (m_suggestionPicker)
@@ -355,13 +355,14 @@ void TextFieldInputType::createShadowSubtree()
 
     m_innerText = TextControlInnerTextElement::create(document, element()->isInnerTextElementEditable());
 
+    ScriptDisallowedScope::EventAllowedScope eventAllowedScope { *element()->userAgentShadowRoot() };
     if (!createsContainer) {
         element()->userAgentShadowRoot()->appendChild(ContainerNode::ChildChange::Source::Parser, *m_innerText);
         updatePlaceholderText();
         return;
     }
 
-    createContainer();
+    createContainer(PreserveSelectionRange::No);
     updatePlaceholderText();
 
     if (shouldHaveSpinButton) {
@@ -371,12 +372,12 @@ void TextFieldInputType::createShadowSubtree()
 
     if (shouldHaveCapsLockIndicator) {
         m_capsLockIndicator = HTMLDivElement::create(document);
+        m_container->appendChild(ContainerNode::ChildChange::Source::Parser, *m_capsLockIndicator);
+
         m_capsLockIndicator->setPseudo(ShadowPseudoIds::webkitCapsLockIndicator());
 
         bool shouldDrawCapsLockIndicator = this->shouldDrawCapsLockIndicator();
         m_capsLockIndicator->setInlineStyleProperty(CSSPropertyDisplay, shouldDrawCapsLockIndicator ? CSSValueBlock : CSSValueNone, true);
-
-        m_container->appendChild(ContainerNode::ChildChange::Source::Parser, *m_capsLockIndicator);
     }
 
     updateAutoFillButton();
@@ -404,11 +405,6 @@ RefPtr<TextControlInnerTextElement> TextFieldInputType::innerTextElement() const
 HTMLElement* TextFieldInputType::innerSpinButtonElement() const
 {
     return m_innerSpinButton.get();
-}
-
-HTMLElement* TextFieldInputType::capsLockIndicatorElement() const
-{
-    return m_capsLockIndicator.get();
 }
 
 HTMLElement* TextFieldInputType::autoFillButtonElement() const
@@ -486,7 +482,9 @@ void TextFieldInputType::createDataListDropdownIndicator()
     ASSERT(!m_dataListDropdownIndicator);
     if (!m_container)
         createContainer();
-
+    if (!element())
+        return;
+    
     ScriptDisallowedScope::EventAllowedScope allowedScope(*m_container);
     m_dataListDropdownIndicator = DataListButtonElement::create(element()->document(), *this);
     m_container->appendChild(*m_dataListDropdownIndicator);
@@ -509,14 +507,14 @@ bool TextFieldInputType::shouldOnlyShowDataListDropdownButtonWhenFocusedOrEdited
 
 #endif // ENABLE(DATALIST_ELEMENT)
 
-static String limitLength(const String& string, unsigned maxNumGraphemeClusters)
+static String limitLength(const String& string, unsigned maxLength)
 {
-    StringView stringView { string };
-
-    if (!stringView.is8Bit())
-        maxNumGraphemeClusters = numCodeUnitsInGraphemeClusters(stringView, maxNumGraphemeClusters);
-
-    return string.left(maxNumGraphemeClusters);
+    unsigned newLength = std::min(maxLength, string.length());
+    if (newLength == string.length())
+        return string;
+    if (newLength > 0 && U16_IS_LEAD(string[newLength - 1]))
+        --newLength;
+    return string.left(newLength);
 }
 
 static String autoFillButtonTypeToAccessibilityLabel(AutoFillButtonType autoFillButtonType)
@@ -530,6 +528,8 @@ static String autoFillButtonTypeToAccessibilityLabel(AutoFillButtonType autoFill
         return AXAutoFillStrongPasswordLabel();
     case AutoFillButtonType::CreditCard:
         return AXAutoFillCreditCardLabel();
+    case AutoFillButtonType::Loading:
+        return AXAutoFillLoadingLabel();
     case AutoFillButtonType::None:
         ASSERT_NOT_REACHED();
         return { };
@@ -544,6 +544,7 @@ static String autoFillButtonTypeToAutoFillButtonText(AutoFillButtonType autoFill
     case AutoFillButtonType::Contacts:
     case AutoFillButtonType::Credentials:
     case AutoFillButtonType::CreditCard:
+    case AutoFillButtonType::Loading:
         return emptyString();
     case AutoFillButtonType::StrongPassword:
         return autoFillStrongPasswordLabel();
@@ -566,6 +567,8 @@ static AtomString autoFillButtonTypeToAutoFillButtonPseudoClassName(AutoFillButt
         return ShadowPseudoIds::webkitStrongPasswordAutoFillButton();
     case AutoFillButtonType::CreditCard:
         return ShadowPseudoIds::webkitCreditCardAutoFillButton();
+    case AutoFillButtonType::Loading:
+        return ShadowPseudoIds::webkitLoadingAutoFillButton();
     case AutoFillButtonType::None:
         ASSERT_NOT_REACHED();
         return emptyAtom();
@@ -584,12 +587,18 @@ static bool isAutoFillButtonTypeChanged(const AtomString& attribute, AutoFillBut
         return true;
     if (attribute == ShadowPseudoIds::webkitCreditCardAutoFillButton() && autoFillButtonType != AutoFillButtonType::CreditCard)
         return true;
+    if (attribute == ShadowPseudoIds::webkitLoadingAutoFillButton() && autoFillButtonType != AutoFillButtonType::Loading)
+        return true;
     return false;
 }
 
 String TextFieldInputType::sanitizeValue(const String& proposedValue) const
 {
-    return limitLength(proposedValue.removeCharacters(isHTMLLineBreak), HTMLInputElement::maxEffectiveLength);
+    // Passing a lambda instead of a function name helps the compiler inline isHTMLLineBreak.
+    auto proposedValueWithoutLineBreaks = proposedValue.removeCharacters([](auto character) {
+        return isHTMLLineBreak(character);
+    });
+    return limitLength(WTFMove(proposedValueWithoutLineBreaks), HTMLInputElement::maxEffectiveLength);
 }
 
 void TextFieldInputType::handleBeforeTextInsertedEvent(BeforeTextInsertedEvent& event)
@@ -601,7 +610,7 @@ void TextFieldInputType::handleBeforeTextInsertedEvent(BeforeTextInsertedEvent& 
     // because they can be mismatched by sanitizeValue() in
     // HTMLInputElement::subtreeHasChanged() in some cases.
     String innerText = element()->innerTextValue();
-    unsigned oldLength = numGraphemeClusters(innerText);
+    unsigned oldLength = innerText.length();
 
     // selectionLength represents the selection length of this text field to be
     // removed by this insertion.
@@ -613,8 +622,7 @@ void TextFieldInputType::handleBeforeTextInsertedEvent(BeforeTextInsertedEvent& 
         ASSERT(enclosingTextFormControl(element()->document().frame()->selection().selection().start()) == element());
         unsigned selectionStart = element()->selectionStart();
         ASSERT(selectionStart <= element()->selectionEnd());
-        int selectionCodeUnitCount = element()->selectionEnd() - selectionStart;
-        selectionLength = selectionCodeUnitCount ? numGraphemeClusters(StringView(innerText).substring(selectionStart, selectionCodeUnitCount)) : 0;
+        selectionLength = element()->selectionEnd() - selectionStart;
     }
     ASSERT(oldLength >= selectionLength);
 
@@ -638,7 +646,7 @@ void TextFieldInputType::handleBeforeTextInsertedEvent(BeforeTextInsertedEvent& 
 bool TextFieldInputType::shouldRespectListAttribute()
 {
 #if ENABLE(DATALIST_ELEMENT)
-    return RuntimeEnabledFeatures::sharedFeatures().dataListElementEnabled();
+    return element() && element()->document().settings().dataListElementEnabled();
 #else
     return InputType::themeSupportsDataListUI(this);
 #endif
@@ -758,7 +766,7 @@ void TextFieldInputType::focusAndSelectSpinButtonOwner()
 bool TextFieldInputType::shouldSpinButtonRespondToMouseEvents() const
 {
     ASSERT(element());
-    return !element()->isDisabledOrReadOnly();
+    return element()->isMutable();
 }
 
 bool TextFieldInputType::shouldSpinButtonRespondToWheelEvents() const
@@ -773,7 +781,7 @@ bool TextFieldInputType::shouldDrawCapsLockIndicator() const
     if (element()->document().focusedElement() != element())
         return false;
 
-    if (element()->isDisabledOrReadOnly())
+    if (!element()->isMutable())
         return false;
 
     if (element()->hasAutoFillStrongPasswordButton())
@@ -801,7 +809,7 @@ void TextFieldInputType::capsLockStateMayHaveChanged()
 bool TextFieldInputType::shouldDrawAutoFillButton() const
 {
     ASSERT(element());
-    return !element()->isDisabledOrReadOnly() && element()->autoFillButtonType() != AutoFillButtonType::None;
+    return element()->isMutable() && element()->autoFillButtonType() != AutoFillButtonType::None;
 }
 
 void TextFieldInputType::autoFillButtonElementWasClicked()
@@ -814,7 +822,7 @@ void TextFieldInputType::autoFillButtonElementWasClicked()
     page->chrome().client().handleAutoFillButtonClick(*element());
 }
 
-void TextFieldInputType::createContainer()
+void TextFieldInputType::createContainer(PreserveSelectionRange preserveSelection)
 {
     ASSERT(!m_container);
     ASSERT(element());
@@ -823,6 +831,11 @@ void TextFieldInputType::createContainer()
 
     ScriptDisallowedScope::EventAllowedScope allowedScope(*element()->userAgentShadowRoot());
 
+    // FIXME: <https://webkit.org/b/245977> Suppress selectionchange events during subtree modification.
+    std::optional<std::tuple<unsigned, unsigned, TextFieldSelectionDirection>> selectionState;
+    if (preserveSelection == PreserveSelectionRange::Yes && enclosingTextFormControl(element()->document().selection().selection().start()) == element())
+        selectionState = { element()->selectionStart(), element()->selectionEnd(), element()->computeSelectionDirection() };
+
     m_container = TextControlInnerContainer::create(element()->document());
     element()->userAgentShadowRoot()->appendChild(*m_container);
     m_container->setPseudo(ShadowPseudoIds::webkitTextfieldDecorationContainer());
@@ -830,6 +843,20 @@ void TextFieldInputType::createContainer()
     m_innerBlock = TextControlInnerElement::create(element()->document());
     m_container->appendChild(*m_innerBlock);
     m_innerBlock->appendChild(*m_innerText);
+
+    if (selectionState) {
+        element()->document().eventLoop().queueTask(TaskSource::DOMManipulation, [selectionState = *selectionState, element = WeakPtr { element() }] {
+            if (!element || !element->focused())
+                return;
+
+            auto selection = element->document().selection().selection();
+            if (selection.start().deprecatedNode() != element->userAgentShadowRoot())
+                return;
+
+            auto& [selectionStart, selectionEnd, selectionDirection] = selectionState;
+            element->setSelectionRange(selectionStart, selectionEnd, selectionDirection);
+        });
+    }
 }
 
 void TextFieldInputType::createAutoFillButton(AutoFillButtonType autoFillButtonType)
@@ -841,11 +868,12 @@ void TextFieldInputType::createAutoFillButton(AutoFillButtonType autoFillButtonT
 
     ASSERT(element());
     m_autoFillButton = AutoFillButtonElement::create(element()->document(), *this);
+    m_container->appendChild(*m_autoFillButton);
+
     m_autoFillButton->setPseudo(autoFillButtonTypeToAutoFillButtonPseudoClassName(autoFillButtonType));
     m_autoFillButton->setAttributeWithoutSynchronization(roleAttr, HTMLNames::buttonTag->localName());
     m_autoFillButton->setAttributeWithoutSynchronization(aria_labelAttr, AtomString { autoFillButtonTypeToAccessibilityLabel(autoFillButtonType) });
     m_autoFillButton->setTextContent(autoFillButtonTypeToAutoFillButtonText(autoFillButtonType));
-    m_container->appendChild(*m_autoFillButton);
 }
 
 void TextFieldInputType::updateAutoFillButton()
@@ -891,7 +919,8 @@ void TextFieldInputType::dataListMayHaveChanged()
 
     if (!m_dataListDropdownIndicator)
         createDataListDropdownIndicator();
-
+    if (!element())
+        return;
     if (!shouldOnlyShowDataListDropdownButtonWhenFocusedOrEdited())
         m_dataListDropdownIndicator->setInlineStyleProperty(CSSPropertyDisplay, element()->list() ? CSSValueBlock : CSSValueNone, true);
 }

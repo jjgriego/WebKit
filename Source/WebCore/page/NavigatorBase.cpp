@@ -29,7 +29,6 @@
 
 #include "Document.h"
 #include "GPU.h"
-#include "RuntimeEnabledFeatures.h"
 #include "ServiceWorkerContainer.h"
 #include "StorageManager.h"
 #include "WebCoreOpaqueRoot.h"
@@ -99,7 +98,7 @@ String NavigatorBase::platform() const
     return platformName->isolatedCopy();
 #elif PLATFORM(IOS_FAMILY)
     return deviceName();
-#elif OS(MAC_OS_X)
+#elif OS(MACOS)
     return "MacIntel"_s;
 #elif OS(WINDOWS)
     return "Win32"_s;

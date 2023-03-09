@@ -25,7 +25,7 @@
 #include "config.h"
 #include "LibWebRTCDataChannelHandler.h"
 
-#if USE(LIBWEBRTC)
+#if ENABLE(WEB_RTC) && USE(LIBWEBRTC)
 
 #include "EventNames.h"
 #include "LibWebRTCUtils.h"
@@ -127,6 +127,12 @@ void LibWebRTCDataChannelHandler::close()
     m_channel->Close();
 }
 
+std::optional<unsigned short> LibWebRTCDataChannelHandler::id() const
+{
+    auto id = m_channel->id();
+    return id != -1 ? std::make_optional(id) : std::nullopt;
+}
+
 void LibWebRTCDataChannelHandler::OnStateChange()
 {
     checkState();
@@ -220,4 +226,4 @@ void LibWebRTCDataChannelHandler::postTask(Function<void()>&& function)
 
 } // namespace WebCore
 
-#endif // USE(LIBWEBRTC)
+#endif // ENABLE(WEB_RTC) && USE(LIBWEBRTC)

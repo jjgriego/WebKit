@@ -51,7 +51,7 @@ body {
 
     overflow: hidden;
 
-    user-select: none;
+    -webkit-user-select: none;
     -webkit-user-drag: none;
 
     cursor: default;
@@ -226,7 +226,7 @@ body.docked:matches(.right, .left) #navigation-sidebar.collapsed > .resizer {
     display: inline-flex;
     height: 20px;
     border-bottom: none;
-    vertical-align: var(--navigation-item-help-navigation-bar-vertical-align, sub);
+    vertical-align: sub;
 }
 
 .navigation-item-help > .navigation-bar > .item.button {
@@ -266,7 +266,7 @@ body.docked:matches(.right, .left) #navigation-sidebar.collapsed > .resizer {
     color: var(--link-text-color);
     text-decoration: underline;
     cursor: pointer;
-    user-select: none;
+    -webkit-user-select: none;
 }
 
 .go-to-link:not(.dont-float) {
@@ -427,7 +427,7 @@ body[dir=rtl] [dir=ltr] .go-to-arrow {
     margin-top: -2px;
     margin-left: -4px;
 
-    user-select: none;
+    -webkit-user-select: none;
     pointer-events: none;
 
     animation-name: bouncy-highlight-animation;
@@ -522,61 +522,6 @@ body[dir=rtl] [dir=ltr] .go-to-arrow {
 .tab-bar > .navigation-bar :matches(.console-warnings, .console-errors):not(.disabled).pulsing {
     animation-name: tab-bar-console-item-pulse;
     animation-duration: 0.75s;
-}
-
-.device-settings-content {
-    position: relative;
-    padding: 0 4px;
-}
-
-.device-settings-content > table {
-    border-collapse: separate;
-    border-spacing: 4px 8px;
-}
-
-.device-settings-content > table > tr > td:first-child {
-    text-align: end;
-    vertical-align: top;
-}
-
-.device-settings-content .container {
-    display: flex;
-}
-
-.device-settings-content .container > * + * {
-    margin-inline-start: 8px;
-}
-
-.device-settings-content .column {
-    display: flex;
-    flex-direction: column;
-}
-
-.device-settings-content .user-agent select {
-    display: block;
-    margin: -2px 0 0;
-}
-
-.device-settings-content .user-agent input {
-    display: block;
-    width: 100%;
-    margin: 6px 0 0;
-}
-
-.device-settings-content label + label {
-    margin-top: 4px;
-}
-
-
-.device-settings-content label > input {
-    margin: 0;
-    margin-inline: 0.5px 4px;
-}
-
-.device-settings-content > .reference-page-link-container {
-    position: absolute;
-    bottom: 0.5em;
-    inset-inline-end: 0.5em;
 }
 
 @media (prefers-color-scheme: dark) {

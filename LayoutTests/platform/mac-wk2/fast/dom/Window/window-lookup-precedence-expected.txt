@@ -1,3 +1,4 @@
+CONSOLE MESSAGE: Window 'showModalDialog' function is deprecated and will be removed soon.
 Tests lookup precedence for properties on Window objects in the presence of a child frame, and that IDL properties defined in the prototype (window.location, window.focus, etc) have higher lookup precedence than named document elements (such as input elements).
 
 On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
@@ -30,8 +31,6 @@ PASS 'function focus() {    [native code]}' is 'function focus() {    [native co
 PASS 'function focus() {    [native code]}' is 'function focus() {    [native code]}'
 PASS 'function getComputedStyle() {    [native code]}' is 'function getComputedStyle() {    [native code]}'
 PASS 'function getComputedStyle() {    [native code]}' is 'function getComputedStyle() {    [native code]}'
-PASS 'function getMatchedCSSRules() {    [native code]}' is 'function getMatchedCSSRules() {    [native code]}'
-PASS 'function getMatchedCSSRules() {    [native code]}' is 'function getMatchedCSSRules() {    [native code]}'
 PASS 'function getSelection() {    [native code]}' is 'function getSelection() {    [native code]}'
 PASS 'function getSelection() {    [native code]}' is 'function getSelection() {    [native code]}'
 PASS 'function moveBy() {    [native code]}' is 'function moveBy() {    [native code]}'

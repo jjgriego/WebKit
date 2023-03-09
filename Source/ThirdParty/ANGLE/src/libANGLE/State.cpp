@@ -23,6 +23,7 @@
 #include "libANGLE/Debug.h"
 #include "libANGLE/Framebuffer.h"
 #include "libANGLE/FramebufferAttachment.h"
+#include "libANGLE/PixelLocalStorage.h"
 #include "libANGLE/Query.h"
 #include "libANGLE/VertexArray.h"
 #include "libANGLE/formatutils.h"
@@ -338,16 +339,20 @@ State::State(const State *shareContextState,
              const OverlayType *overlay,
              const EGLenum clientType,
              const Version &clientVersion,
+             EGLint profileMask,
              bool debug,
              bool bindGeneratesResourceCHROMIUM,
              bool clientArraysEnabled,
              bool robustResourceInit,
              bool programBinaryCacheEnabled,
              EGLenum contextPriority,
+             bool hasRobustAccess,
              bool hasProtectedContent)
     : mID({gIDCounter++}),
       mClientType(clientType),
+      mProfileMask(profileMask),
       mContextPriority(contextPriority),
+      mHasRobustAccess(hasRobustAccess),
       mHasProtectedContent(hasProtectedContent),
       mIsDebugContext(debug),
       mClientVersion(clientVersion),
@@ -406,8 +411,11 @@ State::State(const State *shareContextState,
       mRobustResourceInit(robustResourceInit),
       mProgramBinaryCacheEnabled(programBinaryCacheEnabled),
       mTextureRectangleEnabled(true),
+      mLogicOpEnabled(false),
+      mLogicOp(LogicalOperation::Copy),
       mMaxShaderCompilerThreads(std::numeric_limits<GLuint>::max()),
       mPatchVertices(3),
+      mPixelLocalStorageActivePlanes(0),
       mOverlay(overlay),
       mNoSimultaneousConstantColorAndAlphaBlendFunc(false),
       mSetBlendIndexedInvoked(false),
@@ -423,7 +431,8 @@ State::State(const State *shareContextState,
       mBoundingBoxMaxZ(1.0f),
       mBoundingBoxMaxW(1.0f),
       mShadingRatePreserveAspectRatio(false),
-      mShadingRate(ShadingRate::Undefined)
+      mShadingRate(ShadingRate::Undefined),
+      mFetchPerSample(false)
 {}
 
 State::~State() {}
@@ -511,13 +520,18 @@ void State::initialize(Context *context)
 
         mAtomicCounterBuffers.resize(mCaps.maxAtomicCounterBufferBindings);
         mShaderStorageBuffers.resize(mCaps.maxShaderStorageBufferBindings);
+    }
+    if (clientVersion >= Version(3, 1) ||
+        (context->getImplementation()->getNativePixelLocalStorageOptions().type ==
+         ShPixelLocalStorageType::ImageLoadStore))
+    {
         mImageUnits.resize(mCaps.maxImageUnits);
     }
-    if (clientVersion >= Version(3, 2) || mExtensions.textureCubeMapArrayAny())
+    if (clientVersion >= Version(3, 1) || nativeExtensions.textureCubeMapArrayAny())
     {
         mSamplerTextures[TextureType::CubeMapArray].resize(mCaps.maxCombinedTextureImageUnits);
     }
-    if (clientVersion >= Version(3, 2) || mExtensions.textureBufferAny())
+    if (clientVersion >= Version(3, 1) || nativeExtensions.textureCubeMapArrayAny())
     {
         mSamplerTextures[TextureType::Buffer].resize(mCaps.maxCombinedTextureImageUnits);
     }
@@ -565,6 +579,8 @@ void State::initialize(Context *context)
     mNoSimultaneousConstantColorAndAlphaBlendFunc =
         context->getLimitations().noSimultaneousConstantColorAndAlphaBlendFunc ||
         context->getExtensions().webglCompatibilityANGLE;
+
+    mNoUnclampedBlendColor = context->getLimitations().noUnclampedBlendColor;
 
     // GLES1 emulation: Initialize state for GLES1 if version applies
     // TODO(http://anglebug.com/3745): When on desktop client only do this in compatibility profile
@@ -988,7 +1004,7 @@ void State::setBlendColor(float red, float green, float blue, float alpha)
     const bool hasFloatBlending =
         mExtensions.colorBufferFloatEXT || mExtensions.colorBufferHalfFloatEXT ||
         mExtensions.colorBufferFloatRgbCHROMIUM || mExtensions.colorBufferFloatRgbaCHROMIUM;
-    if (isES2 && !hasFloatBlending)
+    if ((isES2 && !hasFloatBlending) || mNoUnclampedBlendColor)
     {
         red   = clamp01(red);
         green = clamp01(green);
@@ -1120,11 +1136,12 @@ void State::setPolygonOffsetFill(bool enabled)
     }
 }
 
-void State::setPolygonOffsetParams(GLfloat factor, GLfloat units)
+void State::setPolygonOffsetParams(GLfloat factor, GLfloat units, GLfloat clamp)
 {
     // An application can pass NaN values here, so handle this gracefully
     mRasterizer.polygonOffsetFactor = factor != factor ? 0.0f : factor;
     mRasterizer.polygonOffsetUnits  = units != units ? 0.0f : units;
+    mRasterizer.polygonOffsetClamp  = clamp != clamp ? 0.0f : clamp;
     mDirtyBits.set(DIRTY_BIT_POLYGON_OFFSET);
 }
 
@@ -1301,6 +1318,15 @@ void State::setEnableFeature(GLenum feature, bool enabled)
         case GL_DITHER:
             setDither(enabled);
             return;
+        case GL_COLOR_LOGIC_OP:
+            if (mClientVersion.major == 1)
+            {
+                // Handle logicOp in GLES1 through the GLES1 state management and emulation.
+                // Otherwise this state could be set as part of ANGLE_logic_op.
+                break;
+            }
+            setLogicOpEnabled(enabled);
+            return;
         case GL_PRIMITIVE_RESTART_FIXED_INDEX:
             setPrimitiveRestart(enabled);
             return;
@@ -1325,7 +1351,7 @@ void State::setEnableFeature(GLenum feature, bool enabled)
         case GL_SAMPLE_SHADING:
             setSampleShading(enabled);
             return;
-        // GL_APPLE_clip_distance/GL_EXT_clip_cull_distance
+        // GL_APPLE_clip_distance / GL_EXT_clip_cull_distance / GL_ANGLE_clip_cull_distance
         case GL_CLIP_DISTANCE0_EXT:
         case GL_CLIP_DISTANCE1_EXT:
         case GL_CLIP_DISTANCE2_EXT:
@@ -1344,6 +1370,9 @@ void State::setEnableFeature(GLenum feature, bool enabled)
             break;
         case GL_SHADING_RATE_PRESERVE_ASPECT_RATIO_QCOM:
             mShadingRatePreserveAspectRatio = enabled;
+            return;
+        case GL_FETCH_PER_SAMPLE_ARM:
+            mFetchPerSample = enabled;
             return;
     }
 
@@ -1405,7 +1434,7 @@ void State::setEnableFeature(GLenum feature, bool enabled)
             mGLES1State.mPointSpriteEnabled = enabled;
             break;
         case GL_COLOR_LOGIC_OP:
-            mGLES1State.mLogicOpEnabled = enabled;
+            mGLES1State.setLogicOpEnabled(enabled);
             break;
         default:
             UNREACHABLE();
@@ -1450,6 +1479,13 @@ bool State::getEnableFeature(GLenum feature) const
             return isBlendEnabled();
         case GL_DITHER:
             return isDitherEnabled();
+        case GL_COLOR_LOGIC_OP:
+            if (mClientVersion.major == 1)
+            {
+                // Handle logicOp in GLES1 through the GLES1 state management and emulation.
+                break;
+            }
+            return isLogicOpEnabled();
         case GL_PRIMITIVE_RESTART_FIXED_INDEX:
             return isPrimitiveRestartEnabled();
         case GL_RASTERIZER_DISCARD:
@@ -1474,7 +1510,7 @@ bool State::getEnableFeature(GLenum feature) const
             return mTextureRectangleEnabled;
         case GL_SAMPLE_SHADING:
             return isSampleShadingEnabled();
-        // GL_APPLE_clip_distance/GL_EXT_clip_cull_distance
+        // GL_APPLE_clip_distance / GL_EXT_clip_cull_distance / GL_ANGLE_clip_cull_distance
         case GL_CLIP_DISTANCE0_EXT:
         case GL_CLIP_DISTANCE1_EXT:
         case GL_CLIP_DISTANCE2_EXT:
@@ -1492,6 +1528,8 @@ bool State::getEnableFeature(GLenum feature) const
             break;
         case GL_SHADING_RATE_PRESERVE_ASPECT_RATIO_QCOM:
             return mShadingRatePreserveAspectRatio;
+        case GL_FETCH_PER_SAMPLE_ARM:
+            return mFetchPerSample;
     }
 
     ASSERT(mClientVersion.major == 1);
@@ -1609,6 +1647,11 @@ void State::setFragmentShaderDerivativeHint(GLenum hint)
 
 void State::setViewportParams(GLint x, GLint y, GLsizei width, GLsizei height)
 {
+    // [OpenGL ES 2.0.25] section 2.12.1 page 45:
+    // Viewport width and height are clamped to implementation-dependent maximums when specified.
+    width  = std::min(width, mCaps.maxViewportWidth);
+    height = std::min(height, mCaps.maxViewportHeight);
+
     // Skip if same viewport info
     if (mViewport.x != x || mViewport.y != y || mViewport.width != width ||
         mViewport.height != height)
@@ -1884,16 +1927,13 @@ void State::setVertexArrayBinding(const Context *context, VertexArray *vertexArr
         return;
     }
 
-    if (context->isWebGL())
+    if (mVertexArray)
     {
-        if (mVertexArray)
-        {
-            mVertexArray->onBindingChanged(context, -1);
-        }
-        if (vertexArray)
-        {
-            vertexArray->onBindingChanged(context, 1);
-        }
+        mVertexArray->onBindingChanged(context, -1);
+    }
+    if (vertexArray)
+    {
+        vertexArray->onBindingChanged(context, 1);
     }
 
     mVertexArray = vertexArray;
@@ -1983,6 +2023,7 @@ angle::Result State::setProgram(const Context *context, Program *newProgram)
         else if (mProgramPipeline.get())
         {
             mExecutable = &mProgramPipeline->getExecutable();
+            ANGLE_TRY(onProgramPipelineExecutableChange(context));
         }
 
         // Note that rendering is undefined if glUseProgram(0) is called. But ANGLE will generate
@@ -2043,6 +2084,7 @@ angle::Result State::setProgramPipelineBinding(const Context *context, ProgramPi
         if (mProgramPipeline.get())
         {
             mExecutable = &mProgramPipeline->getExecutable();
+            ANGLE_TRY(onProgramPipelineExecutableChange(context));
         }
         else
         {
@@ -2190,7 +2232,7 @@ angle::Result State::detachBuffer(Context *context, const Buffer *buffer)
         context->getStateCache().onActiveTransformFeedbackChange(context);
     }
 
-    if (getVertexArray()->detachBuffer(context, bufferID))
+    if (mVertexArray && mVertexArray->detachBuffer(context, bufferID))
     {
         mDirtyObjects.set(DIRTY_OBJECT_VERTEX_ARRAY);
         context->getStateCache().onVertexArrayStateChange(context);
@@ -2377,6 +2419,11 @@ void State::setPatchVertices(GLuint value)
     }
 }
 
+void State::setPixelLocalStorageActivePlanes(GLsizei n)
+{
+    mPixelLocalStorageActivePlanes = n;
+}
+
 void State::setShadingRate(GLenum rate)
 {
     mShadingRate = FromGLenum<ShadingRate>(rate);
@@ -2435,6 +2482,10 @@ void State::getBooleanv(GLenum pname, GLboolean *params) const
             break;
         case GL_DITHER:
             *params = mRasterizer.dither;
+            break;
+        case GL_COLOR_LOGIC_OP:
+            ASSERT(mClientVersion.major > 1);
+            *params = mLogicOpEnabled;
             break;
         case GL_TRANSFORM_FEEDBACK_ACTIVE:
             *params = getCurrentTransformFeedback()->isActive() ? GL_TRUE : GL_FALSE;
@@ -2500,6 +2551,30 @@ void State::getBooleanv(GLenum pname, GLboolean *params) const
         case GL_ROBUST_FRAGMENT_SHADER_OUTPUT_ANGLE:
             *params = mExtensions.robustFragmentShaderOutputANGLE ? GL_TRUE : GL_FALSE;
             break;
+        // GL_APPLE_clip_distance / GL_EXT_clip_cull_distance / GL_ANGLE_clip_cull_distance
+        case GL_CLIP_DISTANCE0_EXT:
+        case GL_CLIP_DISTANCE1_EXT:
+        case GL_CLIP_DISTANCE2_EXT:
+        case GL_CLIP_DISTANCE3_EXT:
+        case GL_CLIP_DISTANCE4_EXT:
+        case GL_CLIP_DISTANCE5_EXT:
+        case GL_CLIP_DISTANCE6_EXT:
+        case GL_CLIP_DISTANCE7_EXT:
+            if (mClientVersion.major >= 2)
+            {
+                // If GLES version is 1, the GL_CLIP_DISTANCE0_EXT enum will be used as
+                // GL_CLIP_PLANE0 instead.
+                *params = mClipDistancesEnabled.test(pname - GL_CLIP_DISTANCE0_EXT);
+            }
+            break;
+        // GL_ARM_shader_framebuffer_fetch
+        case GL_FETCH_PER_SAMPLE_ARM:
+            *params = mFetchPerSample;
+            break;
+        // GL_ARM_shader_framebuffer_fetch
+        case GL_FRAGMENT_SHADER_FRAMEBUFFER_FETCH_MRT_ARM:
+            *params = mCaps.fragmentShaderFramebufferFetchMRT;
+            break;
         default:
             UNREACHABLE();
             break;
@@ -2528,6 +2603,9 @@ void State::getFloatv(GLenum pname, GLfloat *params) const
             break;
         case GL_POLYGON_OFFSET_UNITS:
             *params = mRasterizer.polygonOffsetUnits;
+            break;
+        case GL_POLYGON_OFFSET_CLAMP_EXT:
+            *params = mRasterizer.polygonOffsetClamp;
             break;
         case GL_DEPTH_RANGE:
             params[0] = mNearZ;
@@ -2624,6 +2702,14 @@ void State::getFloatv(GLenum pname, GLfloat *params) const
             break;
         case GL_CLIP_DEPTH_MODE_EXT:
             *params = static_cast<float>(mClipControlDepth);
+            break;
+        // GL_ARM_shader_framebuffer_fetch
+        case GL_FETCH_PER_SAMPLE_ARM:
+            *params = mFetchPerSample ? 1.0f : 0.0f;
+            break;
+        // GL_ARM_shader_framebuffer_fetch
+        case GL_FRAGMENT_SHADER_FRAMEBUFFER_FETCH_MRT_ARM:
+            *params = mCaps.fragmentShaderFramebufferFetchMRT ? 1.0f : 0.0f;
             break;
         default:
             UNREACHABLE();
@@ -3070,7 +3156,7 @@ angle::Result State::getIntegerv(const Context *context, GLenum pname, GLint *pa
             break;
 
         // GL_ANGLE_provoking_vertex
-        case GL_PROVOKING_VERTEX:
+        case GL_PROVOKING_VERTEX_ANGLE:
             *params = ToGLenum(mProvokingVertex);
             break;
 
@@ -3102,6 +3188,21 @@ angle::Result State::getIntegerv(const Context *context, GLenum pname, GLint *pa
         // GL_QCOM_shading_rate
         case GL_SHADING_RATE_QCOM:
             *params = ToGLenum(mShadingRate);
+            break;
+
+        // GL_ANGLE_shader_pixel_local_storage
+        case GL_PIXEL_LOCAL_STORAGE_ACTIVE_PLANES_ANGLE:
+            *params = mPixelLocalStorageActivePlanes;
+            break;
+
+        // GL_ARM_shader_framebuffer_fetch
+        case GL_FETCH_PER_SAMPLE_ARM:
+            *params = mFetchPerSample ? 1 : 0;
+            break;
+
+        // GL_ARM_shader_framebuffer_fetch
+        case GL_FRAGMENT_SHADER_FRAMEBUFFER_FETCH_MRT_ARM:
+            *params = mCaps.fragmentShaderFramebufferFetchMRT ? 1 : 0;
             break;
 
         default:
@@ -3137,7 +3238,7 @@ void State::getPointerv(const Context *context, GLenum pname, void **params) con
     }
 }
 
-void State::getIntegeri_v(GLenum target, GLuint index, GLint *data) const
+void State::getIntegeri_v(const Context *context, GLenum target, GLuint index, GLint *data) const
 {
     switch (target)
     {
@@ -3474,6 +3575,16 @@ angle::Result State::syncProgram(const Context *context, Command command)
     return angle::Result::Continue;
 }
 
+angle::Result State::syncProgramPipelineObject(const Context *context, Command command)
+{
+    // If a ProgramPipeline is bound, ensure it is linked.
+    if (mProgramPipeline.get())
+    {
+        mProgramPipeline->resolveLink(context);
+    }
+    return angle::Result::Continue;
+}
+
 angle::Result State::syncDirtyObject(const Context *context, GLenum target)
 {
     DirtyObjects localSet;
@@ -3592,6 +3703,11 @@ angle::Result State::onProgramExecutableChange(const Context *context, Program *
 angle::Result State::onProgramPipelineExecutableChange(const Context *context)
 {
     mDirtyBits.set(DIRTY_BIT_PROGRAM_EXECUTABLE);
+
+    if (!mProgramPipeline->isLinked())
+    {
+        mDirtyObjects.set(DIRTY_OBJECT_PROGRAM_PIPELINE_OBJECT);
+    }
 
     // Set any bound textures.
     const ProgramExecutable &executable        = mProgramPipeline->getExecutable();
@@ -3767,6 +3883,26 @@ void State::initializeForCapture(const Context *context)
     // nothing in the context is modified in a non-compatible way during capture.
     Context *mutableContext = const_cast<Context *>(context);
     initialize(mutableContext);
+}
+
+void State::setLogicOpEnabled(bool enabled)
+{
+    if (mLogicOpEnabled != enabled)
+    {
+        mLogicOpEnabled = enabled;
+        mDirtyBits.set(DIRTY_BIT_EXTENDED);
+        mExtendedDirtyBits.set(EXTENDED_DIRTY_BIT_LOGIC_OP_ENABLED);
+    }
+}
+
+void State::setLogicOp(LogicalOperation opcode)
+{
+    if (mLogicOp != opcode)
+    {
+        mLogicOp = opcode;
+        mDirtyBits.set(DIRTY_BIT_EXTENDED);
+        mExtendedDirtyBits.set(EXTENDED_DIRTY_BIT_LOGIC_OP);
+    }
 }
 
 constexpr State::DirtyObjectHandler State::kDirtyObjectHandlers[DIRTY_OBJECT_MAX];

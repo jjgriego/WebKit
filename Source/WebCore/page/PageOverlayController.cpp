@@ -72,8 +72,10 @@ void PageOverlayController::installedPageOverlaysChanged()
     else
         detachViewOverlayLayers();
 
-    if (auto* frameView = m_page.mainFrame().view())
-        frameView->setNeedsCompositingConfigurationUpdate();
+    if (auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame())) {
+        if (auto* frameView = localMainFrame->view())
+            frameView->setNeedsCompositingConfigurationUpdate();
+    }
 
     updateForceSynchronousScrollLayerPositionUpdates();
 }
@@ -185,7 +187,8 @@ void PageOverlayController::installPageOverlay(PageOverlay& overlay, PageOverlay
 
     m_pageOverlays.append(&overlay);
 
-    auto layer = GraphicsLayer::create(m_page.chrome().client().graphicsLayerFactory(), *this);
+    auto layerType = (overlay.alwaysTileOverlayLayer() == PageOverlay::AlwaysTileOverlayLayer::Yes) ? GraphicsLayer::Type::TiledBacking : GraphicsLayer::Type::Normal;
+    auto layer = GraphicsLayer::create(m_page.chrome().client().graphicsLayerFactory(), *this, layerType);
     layer->setAnchorPoint({ });
     layer->setBackgroundColor(overlay.backgroundColor());
     layer->setName(MAKE_STATIC_STRING_IMPL("Overlay content"));
@@ -206,8 +209,10 @@ void PageOverlayController::installPageOverlay(PageOverlay& overlay, PageOverlay
 
     overlay.setPage(&m_page);
 
-    if (FrameView* frameView = m_page.mainFrame().view())
-        frameView->enterCompositingMode();
+    if (auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame())) {
+        if (FrameView* frameView = localMainFrame->view())
+            frameView->enterCompositingMode();
+    }
 
     updateOverlayGeometry(overlay, rawLayer);
 
@@ -432,6 +437,14 @@ void PageOverlayController::didChangeOverlayBackgroundColor(PageOverlay& overlay
 bool PageOverlayController::shouldSkipLayerInDump(const GraphicsLayer*, OptionSet<LayerTreeAsTextOptions> options) const
 {
     return !options.contains(LayerTreeAsTextOptions::IncludePageOverlayLayers);
+}
+
+bool PageOverlayController::shouldDumpPropertyForLayer(const GraphicsLayer* layer, const char* propertyName, OptionSet<LayerTreeAsTextOptions>) const
+{
+    if (!strcmp(propertyName, "anchorPoint"))
+        return layer->anchorPoint() != FloatPoint3D(0.5f, 0.5f, 0);
+
+    return true;
 }
 
 void PageOverlayController::tiledBackingUsageChanged(const GraphicsLayer* graphicsLayer, bool usingTiledBacking)

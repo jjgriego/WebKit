@@ -22,7 +22,7 @@
 #include "config.h"
 #include "RenderSVGResourcePattern.h"
 
-#include "ElementIterator.h"
+#include "ElementChildIteratorInlines.h"
 #include "FrameView.h"
 #include "GraphicsContext.h"
 #include "LegacyRenderSVGRoot.h"
@@ -122,9 +122,9 @@ PatternData* RenderSVGResourcePattern::buildPattern(RenderElement& renderer, Opt
 
     // Account for text drawing resetting the context to non-scaled, see SVGInlineTextBox::paintTextWithShadows.
     if (resourceMode.contains(RenderSVGResourceMode::ApplyToText)) {
-        AffineTransform additionalTextTransformation;
-        if (shouldTransformOnTextPainting(renderer, additionalTextTransformation))
-            patternData->transform *= additionalTextTransformation;
+        auto textScale = computeTextPaintingScale(renderer);
+        if (textScale != 1)
+            patternData->transform.scale(textScale);
     }
 
     // Build pattern.

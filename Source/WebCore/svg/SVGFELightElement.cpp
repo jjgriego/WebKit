@@ -23,7 +23,7 @@
 #include "config.h"
 #include "SVGFELightElement.h"
 
-#include "ElementIterator.h"
+#include "ElementChildIteratorInlines.h"
 #include "RenderObject.h"
 #include "RenderSVGResource.h"
 #include "SVGElementTypeHelpers.h"
@@ -42,7 +42,7 @@ namespace WebCore {
 WTF_MAKE_ISO_ALLOCATED_IMPL(SVGFELightElement);
 
 SVGFELightElement::SVGFELightElement(const QualifiedName& tagName, Document& document)
-    : SVGElement(tagName, document)
+    : SVGElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
 {
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {

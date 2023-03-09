@@ -136,6 +136,9 @@ public:
     void handleGeolocationPermissionRequest(WKGeolocationPermissionRequestRef);
     bool isGeolocationProviderActive() const;
 
+    // Screen Wake Lock.
+    void setScreenWakeLockPermission(bool);
+
     // MediaStream.
     String saltForOrigin(WKFrameRef, String);
     void getUserMediaInfoForOrigin(WKFrameRef, WKStringRef originKey, bool&, WKRetainPtr<WKStringRef>&);
@@ -158,6 +161,7 @@ public:
 
     // Policy delegate.
     void setCustomPolicyDelegate(bool enabled, bool permissive);
+    void skipPolicyDelegateNotifyDone() { m_skipPolicyDelegateNotifyDone = true; }
 
     // Page Visibility.
     void setHidden(bool);
@@ -184,11 +188,15 @@ public:
     void setAuthenticationUsername(String username) { m_authenticationUsername = username; }
     void setAuthenticationPassword(String password) { m_authenticationPassword = password; }
     void setAllowsAnySSLCertificate(bool);
+    void setBackgroundFetchPermission(bool);
+
     void setShouldSwapToEphemeralSessionOnNextNavigation(bool value) { m_shouldSwapToEphemeralSessionOnNextNavigation = value; }
     void setShouldSwapToDefaultSessionOnNextNavigation(bool value) { m_shouldSwapToDefaultSessionOnNextNavigation = value; }
 
     void setBlockAllPlugins(bool shouldBlock);
     void setPluginSupportedMode(const String&);
+
+    void dumpPolicyDelegateCallbacks() { m_dumpPolicyDelegateCallbacks = true; }
 
     void setShouldLogHistoryClientCallbacks(bool shouldLog) { m_shouldLogHistoryClientCallbacks = shouldLog; }
     void setShouldLogCanAuthenticateAgainstProtectionSpace(bool shouldLog) { m_shouldLogCanAuthenticateAgainstProtectionSpace = shouldLog; }
@@ -259,7 +267,10 @@ public:
     void setStatisticsFirstPartyHostCNAMEDomain(WKStringRef firstPartyURLString, WKStringRef cnameURLString);
     void setStatisticsThirdPartyCNAMEDomain(WKStringRef cnameURLString);
     void setAppBoundDomains(WKArrayRef originURLs);
+    void setManagedDomains(WKArrayRef originURLs);
     void statisticsResetToConsistentState();
+
+    void removeAllCookies();
 
     void getAllStorageAccessEntries();
     void loadedSubresourceDomains();
@@ -270,8 +281,12 @@ public:
     bool didLoadAppInitiatedRequest();
     bool didLoadNonAppInitiatedRequest();
 
+    void reloadFromOrigin();
+
     void updateBundleIdentifierInNetworkProcess(const std::string& bundleIdentifier);
     void clearBundleIdentifierInNetworkProcess();
+
+    const std::set<std::string>& allowedHosts() const { return m_allowedHosts; }
 
     WKArrayRef openPanelFileURLs() const { return m_openPanelFileURLs.get(); }
     void setOpenPanelFileURLs(WKArrayRef fileURLs) { m_openPanelFileURLs = fileURLs; }
@@ -286,6 +301,7 @@ public:
     void terminateServiceWorkers();
 
     void resetQuota();
+    void resetStoragePersistedState();
     void clearStorage();
 
     void removeAllSessionCredentials();
@@ -303,6 +319,7 @@ public:
     uint64_t domCacheSize(WKStringRef origin);
 
     void setAllowStorageQuotaIncrease(bool);
+    void setQuota(uint64_t);
 
     bool didReceiveServerRedirectForProvisionalNavigation() const { return m_didReceiveServerRedirectForProvisionalNavigation; }
     void clearDidReceiveServerRedirectForProvisionalNavigation() { m_didReceiveServerRedirectForProvisionalNavigation = false; }
@@ -310,10 +327,12 @@ public:
     void addMockMediaDevice(WKStringRef persistentID, WKStringRef label, WKStringRef type);
     void clearMockMediaDevices();
     void removeMockMediaDevice(WKStringRef persistentID);
+    void setMockMediaDeviceIsEphemeral(WKStringRef, bool);
     void resetMockMediaDevices();
     void setMockCameraOrientation(uint64_t);
     bool isMockRealtimeMediaSourceCenterEnabled() const;
     void setMockCaptureDevicesInterrupted(bool isCameraInterrupted, bool isMicrophoneInterrupted);
+    void triggerMockMicrophoneConfigurationChange();
     bool hasAppBoundSession();
 
     void injectUserScript(WKStringRef);
@@ -338,7 +357,6 @@ public:
 #endif
 
     void setAllowedMenuActions(const Vector<String>&);
-    void installCustomMenuAction(const String& name, bool dismissesAutomatically);
 
     uint64_t serverTrustEvaluationCallbackCallsCount() const { return m_serverTrustEvaluationCallbackCallsCount; }
 
@@ -364,9 +382,10 @@ public:
 
     void didSetAppBoundDomains() const;
 
+    void didSetManagedDomains() const;
+
     WKURLRef currentTestURL() const;
 
-    void completeSpeechRecognitionPermissionCheck(WKSpeechRecognitionPermissionCallbackRef);
     void setIsSpeechRecognitionPermissionGranted(bool);
 
     void completeMediaKeySystemPermissionCheck(WKMediaKeySystemPermissionCallbackRef);
@@ -380,6 +399,13 @@ public:
     bool denyNotificationPermissionOnPrompt(WKStringRef origin);
 
     PlatformWebView* createOtherPlatformWebView(PlatformWebView* parentView, WKPageConfigurationRef, WKNavigationActionRef, WKWindowFeaturesRef);
+
+    void handleQueryPermission(WKStringRef, WKSecurityOriginRef, WKQueryPermissionResultCallbackRef);
+
+#if PLATFORM(IOS)
+    void lockScreenOrientation(WKScreenOrientationType);
+    void unlockScreenOrientation();
+#endif
 
 private:
     WKRetainPtr<WKPageConfigurationRef> generatePageConfiguration(const TestOptions&);
@@ -442,6 +468,7 @@ private:
 
 #if PLATFORM(IOS_FAMILY)
     UIPasteboardConsistencyEnforcer *pasteboardConsistencyEnforcer();
+    void restorePortraitOrientationIfNeeded();
 #endif
 
     // WKContextInjectedBundleClient
@@ -524,7 +551,7 @@ private:
     void didReceiveAuthenticationChallenge(WKPageRef, WKAuthenticationChallengeRef);
 
     static void decidePolicyForNavigationAction(WKPageRef, WKNavigationActionRef, WKFramePolicyListenerRef, WKTypeRef, const void*);
-    void decidePolicyForNavigationAction(WKNavigationActionRef, WKFramePolicyListenerRef);
+    void decidePolicyForNavigationAction(WKPageRef, WKNavigationActionRef, WKFramePolicyListenerRef);
 
     static void decidePolicyForNavigationResponse(WKPageRef, WKNavigationResponseRef, WKFramePolicyListenerRef, WKTypeRef, const void*);
     void decidePolicyForNavigationResponse(WKNavigationResponseRef, WKFramePolicyListenerRef);
@@ -553,7 +580,7 @@ private:
 
 #if PLATFORM(COCOA)
     static void finishCreatingPlatformWebView(PlatformWebView*, const TestOptions&);
-    void configureContentMode(WKWebViewConfiguration *, const TestOptions&);
+    void configureWebpagePreferences(WKWebViewConfiguration *, const TestOptions&);
 #endif
 
     static const char* libraryPathForTesting();
@@ -573,6 +600,7 @@ private:
     bool m_enableAllExperimentalFeatures { true };
     std::vector<std::string> m_paths;
     std::set<std::string> m_allowedHosts;
+    std::set<std::string> m_localhostAliases;
     TestFeatures m_globalFeatures;
 
     WKRetainPtr<WKStringRef> m_injectedBundlePath;
@@ -580,6 +608,8 @@ private:
 
     WebNotificationProvider m_webNotificationProvider;
     HashSet<String> m_notificationOriginsToDenyOnPrompt;
+
+    HashSet<String> m_geolocationPermissionQueryOrigins;
 
     std::unique_ptr<PlatformWebView> m_mainWebView;
     Vector<UniqueRef<PlatformWebView>> m_auxiliaryWebViews;
@@ -614,6 +644,7 @@ private:
     Vector<WKRetainPtr<WKGeolocationPermissionRequestRef> > m_geolocationPermissionRequests;
     bool m_isGeolocationPermissionSet { false };
     bool m_isGeolocationPermissionAllowed { false };
+    std::optional<bool> m_screenWakeLockPermission;
 
     HashMap<String, RefPtr<OriginSettings>> m_cachedUserMediaPermissions;
 
@@ -625,6 +656,7 @@ private:
 
     bool m_policyDelegateEnabled { false };
     bool m_policyDelegatePermissive { false };
+    bool m_skipPolicyDelegateNotifyDone { false };
     bool m_shouldDownloadUndisplayableMIMETypes { false };
     bool m_shouldAllowDeviceOrientationAndMotionAccess { false };
 
@@ -652,6 +684,7 @@ private:
     WKRetainPtr<WKArrayRef> m_openPanelFileURLs;
 #if PLATFORM(IOS_FAMILY)
     WKRetainPtr<WKDataRef> m_openPanelFileURLsMediaIcon;
+    bool m_didLockOrientation { false };
 #endif
 
     std::unique_ptr<EventSenderProxy> m_eventSenderProxy;
@@ -669,7 +702,7 @@ private:
             , abandonedDocumentURL(inAbandonedDocumentURL)
         { }
     };
-    HashMap<uint64_t, AbandonedDocumentInfo> m_abandonedDocumentInfo;
+    HashMap<String, AbandonedDocumentInfo> m_abandonedDocumentInfo;
 
     uint64_t m_serverTrustEvaluationCallbackCallsCount { 0 };
     bool m_shouldDismissJavaScriptAlertsAsynchronously { false };
@@ -687,6 +720,7 @@ private:
 
     std::optional<long long> m_downloadTotalBytesWritten;
     bool m_shouldLogDownloadSize { false };
+    bool m_dumpPolicyDelegateCallbacks { false };
 };
 
 } // namespace WTR

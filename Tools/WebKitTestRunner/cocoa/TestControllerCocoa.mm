@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,6 +36,7 @@
 #import "WebCoreTestSupport.h"
 #import <Foundation/Foundation.h>
 #import <Security/SecItem.h>
+#import <WebKit/WKContentRuleListStorePrivate.h>
 #import <WebKit/WKContextConfigurationRef.h>
 #import <WebKit/WKContextPrivate.h>
 #import <WebKit/WKImageCG.h>
@@ -48,12 +49,11 @@
 #import <WebKit/WKWebViewConfigurationPrivate.h>
 #import <WebKit/WKWebViewPrivate.h>
 #import <WebKit/WKWebViewPrivateForTesting.h>
+#import <WebKit/WKWebpagePreferencesPrivate.h>
 #import <WebKit/WKWebsiteDataRecordPrivate.h>
 #import <WebKit/WKWebsiteDataStorePrivate.h>
 #import <WebKit/WKWebsiteDataStoreRef.h>
 #import <WebKit/_WKApplicationManifest.h>
-#import <WebKit/_WKUserContentExtensionStore.h>
-#import <WebKit/_WKUserContentExtensionStorePrivate.h>
 #import <WebKit/_WKWebsiteDataStoreConfiguration.h>
 #import <wtf/MainThread.h>
 #import <wtf/UniqueRef.h>
@@ -121,7 +121,7 @@ void TestController::cocoaPlatformInitialize(const Options& options)
         [[NSUserDefaults standardUserDefaults] setValue:[NSString stringWithUTF8String:options.webCoreLogChannels.c_str()] forKey:@"WebCoreLogging"];
 
     if (options.webKitLogChannels.length())
-        [[NSUserDefaults standardUserDefaults] setValue:[NSString stringWithUTF8String:options.webKitLogChannels.c_str()] forKey:@"WebKitLogging"];
+        [[NSUserDefaults standardUserDefaults] setValue:[NSString stringWithUTF8String:options.webKitLogChannels.c_str()] forKey:@"WebKit2Logging"];
 }
 
 WKContextRef TestController::platformContext()
@@ -184,6 +184,8 @@ void TestController::platformCreateWebView(WKPageConfigurationRef, const TestOpt
 
     if (options.enableAttachmentElement())
         [copiedConfiguration _setAttachmentElementEnabled:YES];
+    if (options.enableAttachmentWideLayout())
+        [copiedConfiguration _setAttachmentWideLayoutEnabled:YES];
 
     [copiedConfiguration setWebsiteDataStore:(WKWebsiteDataStore *)websiteDataStore()];
     [copiedConfiguration _setAllowTopNavigationToDataURLs:options.allowTopNavigationToDataURLs()];
@@ -196,7 +198,7 @@ void TestController::platformCreateWebView(WKPageConfigurationRef, const TestOpt
             [copiedConfiguration _setContentSecurityPolicyModeForExtension:_WKContentSecurityPolicyModeForExtensionManifestV3];
     }
 
-    configureContentMode(copiedConfiguration.get(), options);
+    configureWebpagePreferences(copiedConfiguration.get(), options);
 
     auto applicationManifest = options.applicationManifest();
     if (applicationManifest.length()) {
@@ -204,6 +206,8 @@ void TestController::platformCreateWebView(WKPageConfigurationRef, const TestOpt
         NSString *text = [NSString stringWithContentsOfFile:manifestPath usedEncoding:nullptr error:nullptr];
         [copiedConfiguration _setApplicationManifest:[_WKApplicationManifest applicationManifestFromJSON:text manifestURL:nil documentURL:nil]];
     }
+    
+    [copiedConfiguration _setAllowTestOnlyIPC:options.allowTestOnlyIPC()];
 
     m_mainWebView = makeUnique<PlatformWebView>(copiedConfiguration.get(), options);
     finishCreatingPlatformWebView(m_mainWebView.get(), options);
@@ -283,11 +287,11 @@ void TestController::setDefaultCalendarType(NSString *identifier, NSString *loca
 void TestController::resetContentExtensions()
 {
     __block bool doneRemoving = false;
-    [[_WKUserContentExtensionStore defaultStore] removeContentExtensionForIdentifier:@"TestContentExtensions" completionHandler:^(NSError *error) {
+    [[WKContentRuleListStore defaultStore] removeContentRuleListForIdentifier:@"TestContentExtensions" completionHandler:^(NSError *error) {
         doneRemoving = true;
     }];
     platformRunUntil(doneRemoving, noTimeout);
-    [[_WKUserContentExtensionStore defaultStore] _removeAllContentExtensions];
+    [[WKContentRuleListStore defaultStore] _removeAllContentRuleLists];
 
     if (auto* webView = mainWebView()) {
         TestRunnerWKWebView *platformView = webView->platformView();
@@ -325,8 +329,6 @@ void TestController::cocoaResetStateToConsistentValues(const TestOptions& option
         [platformView _resetNavigationGestureStateForTesting];
         [platformView.configuration.preferences setTextInteractionEnabled:options.textInteractionEnabled()];
     }
-
-    [globalWebsiteDataStoreDelegateClient() setAllowRaisingQuota:YES];
 
     WebCoreTestSupport::setAdditionalSupportedImageTypesForTesting(String::fromLatin1(options.additionalSupportedImageTypes().c_str()));
 }
@@ -518,6 +520,11 @@ void TestController::setAllowStorageQuotaIncrease(bool value)
     [globalWebsiteDataStoreDelegateClient() setAllowRaisingQuota: value];
 }
 
+void TestController::setQuota(uint64_t quota)
+{
+    [globalWebsiteDataStoreDelegateClient() setQuota:quota];
+}
+
 void TestController::setAllowsAnySSLCertificate(bool allows)
 {
     m_allowsAnySSLCertificate = allows;
@@ -525,18 +532,9 @@ void TestController::setAllowsAnySSLCertificate(bool allows)
     [globalWebsiteDataStoreDelegateClient() setAllowAnySSLCertificate: allows];
 }
 
-void TestController::installCustomMenuAction(const String& name, bool dismissesAutomatically)
+void TestController::setBackgroundFetchPermission(bool value)
 {
-#if PLATFORM(IOS_FAMILY)
-    auto* invocation = m_currentInvocation.get();
-    [m_mainWebView->platformView() installCustomMenuAction:name dismissesAutomatically:dismissesAutomatically callback:[invocation] {
-        if (TestController::singleton().isCurrentInvocation(invocation))
-            invocation->performCustomMenuAction();
-    }];
-#else
-    UNUSED_PARAM(name);
-    UNUSED_PARAM(dismissesAutomatically);
-#endif
+    [globalWebsiteDataStoreDelegateClient() setBackgroundFetchPermission: value];
 }
 
 void TestController::setAllowedMenuActions(const Vector<String>& actions)
@@ -567,13 +565,12 @@ static WKContentMode contentMode(const TestOptions& options)
 
 #endif // PLATFORM(IOS_FAMILY)
 
-void TestController::configureContentMode(WKWebViewConfiguration *configuration, const TestOptions& options)
+void TestController::configureWebpagePreferences(WKWebViewConfiguration *configuration, const TestOptions& options)
 {
     auto webpagePreferences = adoptNS([[WKWebpagePreferences alloc] init]);
+    [webpagePreferences _setNetworkConnectionIntegrityEnabled:options.networkConnectionIntegrityEnabled()];
 #if PLATFORM(IOS_FAMILY)
     [webpagePreferences setPreferredContentMode:contentMode(options)];
-#else
-    UNUSED_PARAM(options);
 #endif
     configuration.defaultWebpagePreferences = webpagePreferences.get();
 }

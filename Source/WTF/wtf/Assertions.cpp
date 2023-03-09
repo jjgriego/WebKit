@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2003-2021 Apple Inc.  All rights reserved.
+ * Copyright (C) 2003-2022 Apple Inc.  All rights reserved.
  * Copyright (C) 2007-2009 Torch Mobile, Inc.
  * Copyright (C) 2011 University of Szeged. All rights reserved.
  *
@@ -280,13 +280,19 @@ public:
 
 void WTFReportBacktraceWithPrefix(const char* prefix)
 {
+    CrashLogPrintStream out;
+    WTFReportBacktraceWithPrefixAndPrintStream(out, prefix);
+}
+
+void WTFReportBacktraceWithPrefixAndPrintStream(PrintStream& out, const char* prefix)
+{
     static constexpr int framesToShow = 31;
     static constexpr int framesToSkip = 2;
     void* samples[framesToShow + framesToSkip];
     int frames = framesToShow + framesToSkip;
 
     WTFGetBacktrace(samples, &frames);
-    WTFPrintBacktraceWithPrefix(samples + framesToSkip, frames - framesToSkip, prefix);
+    WTFPrintBacktraceWithPrefixAndPrintStream(out, samples + framesToSkip, frames - framesToSkip, prefix);
 }
 
 void WTFReportBacktrace()
@@ -300,16 +306,15 @@ void WTFReportBacktrace()
     WTFPrintBacktrace(samples + framesToSkip, frames - framesToSkip);
 }
 
-void WTFPrintBacktraceWithPrefix(void** stack, int size, const char* prefix)
+void WTFPrintBacktraceWithPrefixAndPrintStream(PrintStream& out, void** stack, int size, const char* prefix)
 {
-    CrashLogPrintStream out;
-    StackTrace stackTrace(stack, size, prefix);
-    out.print(stackTrace);
+    out.print(StackTracePrinter { { stack, static_cast<size_t>(size) }, prefix });
 }
 
 void WTFPrintBacktrace(void** stack, int size)
 {
-    WTFPrintBacktraceWithPrefix(stack, size, "");
+    CrashLogPrintStream out;
+    WTFPrintBacktraceWithPrefixAndPrintStream(out, stack, size, "");
 }
 
 #if !defined(NDEBUG) || !(OS(DARWIN) || PLATFORM(PLAYSTATION))
@@ -593,35 +598,30 @@ void WTFInitializeLogChannelStatesFromString(WTFLogChannel* channels[], size_t c
 #if !RELEASE_LOG_DISABLED
 void WTFReleaseLogStackTrace(WTFLogChannel* channel)
 {
-    auto stackTrace = WTF::StackTrace::captureStackTrace(30, 0);
-    if (stackTrace && stackTrace->stack()) {
-        auto stack = stackTrace->stack();
-        for (int frameNumber = 1; frameNumber < stackTrace->size(); ++frameNumber) {
-            auto stackFrame = stack[frameNumber];
-            auto demangled = WTF::StackTrace::demangle(stackFrame);
+    static constexpr int framesToShow = 32;
+    static constexpr int framesToSkip = 2;
+    void* stack[framesToShow + framesToSkip];
+    int frames = framesToShow + framesToSkip;
+    WTFGetBacktrace(stack, &frames);
+    StackTraceSymbolResolver { { stack, static_cast<size_t>(frames) } }.forEach([&](int frameNumber, void* stackFrame, const char* name) {
 #if USE(OS_LOG)
-            if (demangled && demangled->demangledName())
-                os_log(channel->osLogChannel, "%-3d %p %{public}s", frameNumber, stackFrame, demangled->demangledName());
-            else if (demangled && demangled->mangledName())
-                os_log(channel->osLogChannel, "%-3d %p %{public}s", frameNumber, stackFrame, demangled->mangledName());
-            else
-                os_log(channel->osLogChannel, "%-3d %p", frameNumber, stackFrame);
+        if (name)
+            os_log(channel->osLogChannel, "%-3d %p %{public}s", frameNumber, stackFrame, name);
+        else
+            os_log(channel->osLogChannel, "%-3d %p", frameNumber, stackFrame);
 #else
-            StringPrintStream out;
-            if (demangled && demangled->demangledName())
-                out.printf("%-3d %p %s", frameNumber, stackFrame, demangled->demangledName());
-            else if (demangled && demangled->mangledName())
-                out.printf("%-3d %p %s", frameNumber, stackFrame, demangled->mangledName());
-            else
-                out.printf("%-3d %p", frameNumber, stackFrame);
+        StringPrintStream out;
+        if (name)
+            out.printf("%-3d %p %s", frameNumber, stackFrame, name);
+        else
+            out.printf("%-3d %p", frameNumber, stackFrame);
 #if ENABLE(JOURNALD_LOG)
-            sd_journal_send("WEBKIT_SUBSYSTEM=%s", channel->subsystem, "WEBKIT_CHANNEL=%s", channel->name, "MESSAGE=%s", out.toCString().data(), nullptr);
+        sd_journal_send("WEBKIT_SUBSYSTEM=%s", channel->subsystem, "WEBKIT_CHANNEL=%s", channel->name, "MESSAGE=%s", out.toCString().data(), nullptr);
 #else
-            fprintf(stderr, "[%s:%s:-] %s\n", channel->subsystem, channel->name, out.toCString().data());
+        fprintf(stderr, "[%s:%s:-] %s\n", channel->subsystem, channel->name, out.toCString().data());
 #endif
 #endif
-        }
-    }
+    });
 }
 #endif
 

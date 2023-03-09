@@ -176,7 +176,7 @@
             "values": ["*"],
             "supportsConjunction": true
         },
-        "EnabledAtRuntime": {
+        "EnabledByDeprecatedGlobalSetting": {
             "contextsAllowed": ["interface", "namespace", "dictionary", "enum", "attribute", "operation", "constant", "iterable", "includes"],
             "values": ["*"],
             "supportsConjunction": true
@@ -317,8 +317,7 @@
             "contextsAllowed": ["attribute"],
             "standard": {
                 "url": "https://webidl.spec.whatwg.org/#LegacyLenientSetter"
-            },
-            "unsupported": true
+            }
         },
         "LegacyLenientThis": {
             "contextsAllowed": ["attribute"],
@@ -448,11 +447,6 @@
         "ReturnValue": {
             "contextsAllowed": ["argument"]
         },
-        "RuntimeConditionallyReadWrite": {
-            "contextsAllowed": ["attribute"],
-            "values": ["*"],
-            "supportsConjunction": true
-        },
         "SameObject": {
             "contextsAllowed": ["attribute"],
             "standard": {
@@ -478,7 +472,7 @@
             "values": ["CurrentScriptExecutionContext", "CurrentGlobalObject", "ActiveWindow", "FirstWindow", "PropertyName"],
             "supportsConjunction": true
         },
-        "SettingsConditionallyReadWrite": {
+        "EnabledConditionallyReadWriteBySetting": {
             "contextsAllowed": ["attribute"],
             "values": ["*"],
             "supportsConjunction": true

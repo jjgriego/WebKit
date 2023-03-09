@@ -20,7 +20,7 @@ function shouldThrow(func, errorType, message) {
 }
 
 shouldBe(Temporal.PlainDate instanceof Function, true);
-shouldBe(Temporal.PlainDate.length, 0);
+shouldBe(Temporal.PlainDate.length, 3);
 shouldBe(Object.getOwnPropertyDescriptor(Temporal.PlainDate, 'prototype').writable, false);
 shouldBe(Object.getOwnPropertyDescriptor(Temporal.PlainDate, 'prototype').enumerable, false);
 shouldBe(Object.getOwnPropertyDescriptor(Temporal.PlainDate, 'prototype').configurable, false);
@@ -80,22 +80,35 @@ shouldBe(String(Temporal.PlainDate.from('2007-01-09 03:24:30+01:00[u-ca=japanese
 shouldBe(String(Temporal.PlainDate.from('2007-01-09 03:24:30+01:00[Europe/Brussels][u-ca=japanese]')), `2007-01-09`);
 shouldBe(String(Temporal.PlainDate.from('2007-01-09[u-ca=japanese]')), `2007-01-09`);
 {
-    let date = Temporal.PlainDate.from('2007-01-09T03:24:30+01:00[Europe/Brussels]')
+    let date = Temporal.PlainDate.from('2007-01-09T03:24:30+01:00[Europe/Brussels]');
     shouldBe(date === Temporal.PlainDate.from(date), false);
+
+    let dateTime = Temporal.PlainDateTime.from('2007-01-09T03:24:30+01:00[Europe/Brussels]');
+    shouldBe(Temporal.PlainDate.from(dateTime).toString(), date.toString());
+
+    let time = Temporal.PlainTime.from('2007-01-09T03:24:30+01:00[Europe/Brussels]');
+    shouldBe(date.toPlainDateTime(time).toString(), dateTime.toString());
+    shouldBe(date.toPlainDateTime().toString(), Temporal.PlainDateTime.from('2007-01-09').toString());
+
+    shouldBe(Temporal.PlainDate.from({ year: 2007, month: 1, day: 9 }).toString(), date.toString());
+    shouldBe(Temporal.PlainDate.from({ year: 2007, monthCode: 'M01', day: 9 }).toString(), date.toString());
+
+    shouldBe(Temporal.PlainDate.from({ year: 2007, month: 20, day: 40 }).toString(), '2007-12-31');
+    shouldBe(Temporal.PlainDate.from({ year: 2007, month: 20, day: 40 }, { overflow: 'constrain' }).toString(), '2007-12-31');
+
+    shouldBe(date.toJSON(), date.toString());
+    shouldBe(date.toLocaleString(), date.toString());
 }
 
-
-// FIXME: from(object) is note yet implemented.
-// {
-//     let date = Temporal.PlainDate.from({
-//       year: 2007,
-//       month: 1,
-//       day: 9
-//     });
-//     shouldBe(String(date), `2007-01-09`);
-// }
-shouldThrow(() => { Temporal.PlainDate.from({ year: 2007, month: 1, day: 9 }); }, RangeError);
-
+shouldThrow(() => { Temporal.PlainDate.from({ month: 1, day: 9 }); }, TypeError);
+shouldThrow(() => { Temporal.PlainDate.from({ year: 2007, day: 9 }); }, TypeError);
+shouldThrow(() => { Temporal.PlainDate.from({ year: 2007, month: 1 }); }, TypeError);
+shouldThrow(() => { Temporal.PlainDate.from({ year: Infinity, month: 1, day: 9 }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDate.from({ year: 2007, month: 0, day: 9 }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDate.from({ year: 2007, monthCode: 'M00', day: 9 }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDate.from({ year: 2007, month: 1, day: 0 }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDate.from({ year: 2007, month: 1, monthCode: 'M02', day: 9 }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDate.from({ year: 2007, month: 20, day: 40 }, { overflow: 'reject' }); }, RangeError);
 
 shouldThrow(() => { new Temporal.PlainDate(-1); }, RangeError);
 shouldThrow(() => { new Temporal.PlainDate(); }, RangeError);
@@ -111,9 +124,9 @@ shouldThrow(() => { new Temporal.PlainDate(2007, -Infinity, 1); }, RangeError);
 shouldThrow(() => { new Temporal.PlainDate(2007, 1, Infinity); }, RangeError);
 shouldThrow(() => { new Temporal.PlainDate(2007, 1, -Infinity); }, RangeError);
 shouldThrow(() => { new Temporal.PlainDate(0x43530, 9, 14); }, RangeError);
-shouldBe(String(new Temporal.PlainDate(0x43530, 9, 13)), `275760-09-13`);
-shouldThrow(() => { new Temporal.PlainDate(-0x425cd, 4, 19); }, RangeError);
-shouldBe(String(new Temporal.PlainDate(-0x425cd, 4, 20)), `-271821-04-20`);
+shouldBe(String(new Temporal.PlainDate(0x43530, 9, 13)), `+275760-09-13`);
+shouldThrow(() => { new Temporal.PlainDate(-0x425cd, 4, 18); }, RangeError);
+shouldBe(String(new Temporal.PlainDate(-0x425cd, 4, 19)), `-271821-04-19`);
 shouldThrow(() => { new Temporal.PlainDate(0x80000000, 1, 1); }, RangeError);
 shouldThrow(() => { new Temporal.PlainDate(-0x80000000, 1, 1); }, RangeError);
 shouldThrow(() => { new Temporal.PlainDate(0x7fffffff, 1, 1); }, RangeError);
@@ -303,6 +316,7 @@ for (let text of failures) {
 
 {
     let getterNames = [
+        "calendar",
         "year",
         "month",
         "monthCode",
@@ -323,4 +337,82 @@ for (let text of failures) {
             getter.call({});
         }, TypeError);
     }
+}
+
+shouldThrow(() => { Temporal.PlainDate.from('2007-01-09').valueOf(); }, TypeError);
+{
+    let time = Temporal.PlainDate.from('2007-01-09');
+    shouldBe(JSON.stringify(time.getISOFields()), `{"calendar":"iso8601","isoDay":9,"isoMonth":1,"isoYear":2007}`);
+}
+
+{
+    const ones = new Temporal.PlainDate(1,1,1);
+    shouldBe(ones.equals(new Temporal.PlainDate(1,1,1)), true);
+    shouldBe(ones.equals(new Temporal.PlainDate(2,1,1)), false);
+    shouldBe(ones.equals(new Temporal.PlainDate(1,2,1)), false);
+    shouldBe(ones.equals(new Temporal.PlainDate(1,1,2)), false);
+}
+
+shouldBe(Temporal.PlainDate.prototype.add.length, 1);
+shouldBe(Temporal.PlainDate.prototype.subtract.length, 1);
+{
+    const date = Temporal.PlainDate.from('2020-02-28');
+    shouldBe(date.add(new Temporal.Duration()).toString(), '2020-02-28');
+    shouldBe(date.add({ years: 1, months: 1 }).toString(), '2021-03-28');
+    shouldBe(date.add('P1W1D').toString(), '2020-03-07');
+    shouldBe(date.add({ hours: 24 }).toString(), '2020-02-29');
+    shouldBe(date.add({ days: 36500000 }).toString(), '+101953-10-07');
+    shouldBe(date.add(new Temporal.Duration(-1, -1, 0, -1)).toString(), '2019-01-27');
+    shouldBe(Temporal.PlainDate.from('2020-01-30').add({ months: 1 }).toString(), '2020-02-29');
+    shouldThrow(() => { Temporal.PlainDate.from('2020-01-30').add({ months: 1 }, { overflow: 'reject' }); }, RangeError);
+    shouldThrow(() => { date.add({ years: 300000 }); }, RangeError);
+
+    shouldBe(date.subtract(new Temporal.Duration()).toString(), '2020-02-28');
+    shouldBe(date.subtract({ years: 1, months: 1 }).toString(), '2019-01-28');
+    shouldBe(date.subtract('P1W1D').toString(), '2020-02-20');
+    shouldBe(date.subtract({ hours: 24 }).toString(), '2020-02-27');
+    shouldBe(date.subtract({ days: 36500000 }).toString(), '-097914-07-21');
+    shouldBe(date.subtract(new Temporal.Duration(-1, -1, 0, -1)).toString(), '2021-03-29');
+    shouldBe(Temporal.PlainDate.from('2020-03-30').subtract({ months: 1 }).toString(), '2020-02-29');
+    shouldThrow(() => { Temporal.PlainDate.from('2020-03-30').subtract({ months: 1 }, { overflow: 'reject' }); }, RangeError);
+    shouldThrow(() => { date.subtract({ years: 300000 }); }, RangeError);
+}
+
+shouldBe(Temporal.PlainDate.prototype.with.length, 1);
+{
+    const date = new Temporal.PlainDate(2020,1,30);
+    shouldBe(date.with({ year: 2021, month: 3, day: 5 }).toString(), '2021-03-05');
+    shouldBe(date.with({ month: 2 }).toString(), '2020-02-29');
+    shouldThrow(() => { date.with({ month: 2 }, { overflow: 'reject' }); }, RangeError);
+}
+
+shouldBe(Temporal.PlainDate.prototype.since.length, 1);
+shouldBe(Temporal.PlainDate.prototype.until.length, 1);
+{
+    const date = Temporal.PlainDate.from('2020-02-28');
+
+    shouldBe(date.since('2019-02-28').toString(), 'P365D');
+    shouldBe(date.until('2019-02-28').toString(), '-P365D');
+    shouldBe(date.since('2019-02-28', { largestUnit: 'year' }).toString(), 'P1Y');
+    shouldBe(date.until('2019-02-28', { largestUnit: 'year' }).toString(), '-P1Y');
+    shouldBe(date.since('2021-02-28').toString(), '-P366D');
+    shouldBe(date.until('2021-02-28').toString(), 'P366D');
+    shouldBe(date.since('2021-02-28', { largestUnit: 'year' }).toString(), '-P1Y');
+    shouldBe(date.until('2021-02-28', { largestUnit: 'year' }).toString(), 'P1Y');
+
+    shouldBe(date.since('2020-04-28', { largestUnit: 'month' }).toString(), '-P2M');
+    shouldBe(date.until('2020-04-28', { largestUnit: 'month' }).toString(), 'P2M');
+    shouldBe(date.since('2019-12-28', { largestUnit: 'month' }).toString(), 'P2M');
+    shouldBe(date.until('2019-12-28', { largestUnit: 'month' }).toString(), '-P2M');
+
+    shouldBe(date.since('2020-03-15', { largestUnit: 'week' }).toString(), '-P2W2D');
+    shouldBe(date.until('2020-03-15', { largestUnit: 'week' }).toString(), 'P2W2D');
+    shouldBe(date.since('2020-03-15', { roundingMode: 'halfExpand', roundingIncrement: 3 }).toString(), '-P15D');
+    shouldBe(date.until('2020-03-15', { roundingMode: 'halfExpand', roundingIncrement: 3 }).toString(), 'P15D');
+    shouldBe(date.since('2020-02-12', { largestUnit: 'week' }).toString(), 'P2W2D');
+    shouldBe(date.until('2020-02-12', { largestUnit: 'week' }).toString(), '-P2W2D');
+
+    shouldThrow(() => { date.until('2019-02-28', { smallestUnit: 'hour' }); }, RangeError);
+    shouldThrow(() => { date.until('2019-02-28', { largestUnit: 'hour' }); }, RangeError);
+    shouldThrow(() => { date.until('2019-02-28', { largestUnit: 'day', smallestUnit: 'month' }); }, RangeError);
 }

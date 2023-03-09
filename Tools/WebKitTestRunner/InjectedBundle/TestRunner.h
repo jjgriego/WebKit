@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -90,7 +90,7 @@ public:
     void dumpApplicationCacheDelegateCallbacks() { m_dumpApplicationCacheDelegateCallbacks = true; }
     void dumpDatabaseCallbacks() { m_dumpDatabaseCallbacks = true; }
     void dumpDOMAsWebArchive() { setWhatToDump(WhatToDump::DOMAsWebArchive); }
-    void dumpPolicyDelegateCallbacks() { m_dumpPolicyCallbacks = true; }
+    void dumpPolicyDelegateCallbacks();
     void dumpResourceLoadStatistics();
 
     void setShouldDumpFrameLoadCallbacks(bool value);
@@ -102,6 +102,7 @@ public:
     void preventPopupWindows();
 
     void setCustomPolicyDelegate(bool enabled, bool permissive = false);
+    void skipPolicyDelegateNotifyDone();
     void addOriginAccessAllowListEntry(JSStringRef sourceOrigin, JSStringRef destinationProtocol, JSStringRef destinationHost, bool allowDestinationSubdomains);
     void removeOriginAccessAllowListEntry(JSStringRef sourceOrigin, JSStringRef destinationProtocol, JSStringRef destinationHost, bool allowDestinationSubdomains);
     void setUserStyleSheetEnabled(bool);
@@ -112,6 +113,7 @@ public:
     void setCacheModel(int);
     void setAsynchronousSpellCheckingEnabled(bool);
     void setAllowsAnySSLCertificate(bool);
+    void setBackgroundFetchPermission(bool);
     void setShouldSwapToEphemeralSessionOnNextNavigation(bool);
     void setShouldSwapToDefaultSessionOnNextNavigation(bool);
     void setCustomUserAgent(JSStringRef);
@@ -159,6 +161,7 @@ public:
     bool hasDOMCache(JSStringRef origin);
     uint64_t domCacheSize(JSStringRef origin);
     void setAllowStorageQuotaIncrease(bool);
+    void setQuota(uint64_t);
 
     // Failed load condition testing
     void forceImmediateCompletion();
@@ -202,10 +205,6 @@ public:
     bool shouldDumpApplicationCacheDelegateCallbacks() const { return m_dumpApplicationCacheDelegateCallbacks; }
     bool shouldDumpDatabaseCallbacks() const { return m_dumpDatabaseCallbacks; }
     bool shouldDumpSelectionRect() const { return m_dumpSelectionRect; }
-    bool shouldDumpPolicyCallbacks() const { return m_dumpPolicyCallbacks; }
-
-    bool isPolicyDelegateEnabled() const { return m_policyDelegateEnabled; }
-    bool isPolicyDelegatePermissive() const { return m_policyDelegatePermissive; }
 
     bool didReceiveServerRedirectForProvisionalNavigation() const;
     void clearDidReceiveServerRedirectForProvisionalNavigation();
@@ -280,6 +279,8 @@ public:
     // Cookies testing
     void setAlwaysAcceptCookies(bool);
     void setOnlyAcceptFirstPartyCookies(bool);
+    void removeAllCookies(JSValueRef callback);
+    void callRemoveAllCookiesCallback();
 
     // Custom full screen behavior.
     void setHasCustomFullScreenBehavior(bool value) { m_customFullScreenBehavior = value; }
@@ -303,6 +304,9 @@ public:
     void setMockGeolocationPositionUnavailableError(JSStringRef message);
     bool isGeolocationProviderActive();
 
+    // Screen Wake Lock.
+    void setScreenWakeLockPermission(bool);
+
     // MediaStream
     void setUserMediaPermission(bool);
     void resetUserMediaPermission();
@@ -324,6 +328,7 @@ public:
     void queueLoad(JSStringRef url, JSStringRef target, bool shouldOpenExternalURLs);
     void queueLoadHTMLString(JSStringRef content, JSStringRef baseURL, JSStringRef unreachableURL);
     void queueReload();
+    void reloadFromOrigin();
     void queueLoadingScript(JSStringRef script);
     void queueNonLoadingScript(JSStringRef script);
 
@@ -352,8 +357,6 @@ public:
 
     // Contextual menu actions
     void setAllowedMenuActions(JSValueRef);
-    void installCustomMenuAction(JSStringRef name, bool dismissesAutomatically, JSValueRef callback);
-    void performCustomMenuAction();
 
     void installDidBeginSwipeCallback(JSValueRef);
     void installWillEndSwipeCallback(JSValueRef);
@@ -373,7 +376,7 @@ public:
     // Gamepads
     void connectMockGamepad(unsigned index);
     void disconnectMockGamepad(unsigned index);
-    void setMockGamepadDetails(unsigned index, JSStringRef gamepadID, JSStringRef mapping, unsigned axisCount, unsigned buttonCount);
+    void setMockGamepadDetails(unsigned index, JSStringRef gamepadID, JSStringRef mapping, unsigned axisCount, unsigned buttonCount, bool supportsDualRumble);
     void setMockGamepadAxisValue(unsigned index, unsigned axisIndex, double value);
     void setMockGamepadButtonValue(unsigned index, unsigned buttonIndex, double value);
     
@@ -497,15 +500,20 @@ public:
     void addMockScreenDevice(JSStringRef persistentId, JSStringRef label);
     void clearMockMediaDevices();
     void removeMockMediaDevice(JSStringRef persistentId);
+    void setMockMediaDeviceIsEphemeral(JSStringRef persistentId, bool isEphemeral);
     void resetMockMediaDevices();
     void setMockCameraOrientation(unsigned);
     bool isMockRealtimeMediaSourceCenterEnabled();
     void setMockCaptureDevicesInterrupted(bool isCameraInterrupted, bool isMicrophoneInterrupted);
+    void triggerMockMicrophoneConfigurationChange();
 
     bool hasAppBoundSession();
     void clearAppBoundSession();
     void setAppBoundDomains(JSValueRef originArray, JSValueRef callback);
     void didSetAppBoundDomainsCallback();
+
+    void setManagedDomains(JSValueRef originArray, JSValueRef callback);
+    void didSetManagedDomainsCallback();
 
     bool didLoadAppInitiatedRequest();
     bool didLoadNonAppInitiatedRequest();
@@ -548,6 +556,9 @@ public:
     void takeViewPortSnapshot(JSValueRef callback);
     void viewPortSnapshotTaken(WKStringRef);
 
+    // Reporting API
+    void generateTestReport(JSStringRef message, JSStringRef group);
+
 private:
     TestRunner();
 
@@ -588,7 +599,6 @@ private:
     bool m_dumpWillCacheResponse { false };
     bool m_dumpApplicationCacheDelegateCallbacks { false };
     bool m_dumpDatabaseCallbacks { false };
-    bool m_dumpPolicyCallbacks { false };
 
     bool m_disallowIncreaseForApplicationCacheQuota { false };
     bool m_testRepaint { false };
@@ -598,9 +608,6 @@ private:
     bool m_willSendRequestReturnsNull { false };
     bool m_willSendRequestReturnsNullOnRedirect { false };
     bool m_shouldStopProvisionalFrameLoads { false };
-
-    bool m_policyDelegateEnabled { false };
-    bool m_policyDelegatePermissive { false };
 
     bool m_globalFlag { false };
     bool m_customFullScreenBehavior { false };

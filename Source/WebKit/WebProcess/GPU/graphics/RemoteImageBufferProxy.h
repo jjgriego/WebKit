@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2021 Apple Inc.  All rights reserved.
+ * Copyright (C) 2020-2022 Apple Inc.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,335 +27,149 @@
 
 #if ENABLE(GPU_PROCESS)
 
-#include "Encoder.h"
-#include "Logging.h"
+#include "ImageBufferBackendHandle.h"
 #include "RemoteDisplayListRecorderProxy.h"
-#include "RemoteRenderingBackendMessages.h"
-#include "RemoteRenderingBackendProxy.h"
-#include "SharedMemory.h"
-#include <WebCore/ConcreteImageBuffer.h>
-#include <WebCore/DisplayList.h>
-#include <WebCore/DisplayListItems.h>
-#include <WebCore/MIMETypeRegistry.h>
+#include "RemoteSerializedImageBufferIdentifier.h"
+#include "RenderingBackendIdentifier.h"
+#include <WebCore/ImageBuffer.h>
+#include <WebCore/ImageBufferBackend.h>
 #include <wtf/Condition.h>
 #include <wtf/Lock.h>
-#include <wtf/SystemTracing.h>
 
 namespace WebKit {
 
-class RemoteRenderingBackend;
-template<typename BackendType> class ThreadSafeRemoteImageBufferFlusher;
+class RemoteRenderingBackendProxy;
+class RemoteImageBufferProxyFlushState;
 
-template<typename BackendType>
-class RemoteImageBufferProxy : public WebCore::ConcreteImageBuffer<BackendType> {
-    using BaseConcreteImageBuffer = WebCore::ConcreteImageBuffer<BackendType>;
-    using BaseConcreteImageBuffer::m_backend;
-    using BaseConcreteImageBuffer::canMapBackingStore;
-    using BaseConcreteImageBuffer::m_renderingResourceIdentifier;
-    using BaseConcreteImageBuffer::resolutionScale;
-
+class RemoteImageBufferProxy : public WebCore::ImageBuffer {
+    friend class RemoteSerializedImageBufferProxy;
 public:
-    static RefPtr<RemoteImageBufferProxy> create(const WebCore::FloatSize& size, float resolutionScale, const WebCore::DestinationColorSpace& colorSpace, WebCore::PixelFormat pixelFormat, WebCore::RenderingPurpose purpose, RemoteRenderingBackendProxy& remoteRenderingBackendProxy)
+    template<typename BackendType>
+    static RefPtr<RemoteImageBufferProxy> create(const WebCore::FloatSize& size, float resolutionScale, const WebCore::DestinationColorSpace& colorSpace, WebCore::PixelFormat pixelFormat, WebCore::RenderingPurpose purpose, RemoteRenderingBackendProxy& remoteRenderingBackendProxy, bool avoidBackendSizeCheck = false)
     {
         auto parameters = WebCore::ImageBufferBackend::Parameters { size, resolutionScale, colorSpace, pixelFormat, purpose };
-        if (BackendType::calculateSafeBackendSize(parameters).isEmpty())
+        if (!avoidBackendSizeCheck && BackendType::calculateSafeBackendSize(parameters).isEmpty())
             return nullptr;
-        return adoptRef(new RemoteImageBufferProxy(parameters, remoteRenderingBackendProxy));
+        auto info = populateBackendInfo<BackendType>(parameters);
+        return adoptRef(new RemoteImageBufferProxy(parameters, info, remoteRenderingBackendProxy));
     }
 
-    ~RemoteImageBufferProxy()
+    static RefPtr<RemoteImageBufferProxy> create(const WebCore::ImageBufferBackend::Parameters& parameters, const WebCore::ImageBufferBackend::Info& info, RemoteRenderingBackendProxy& remoteRenderingBackendProxy, std::unique_ptr<WebCore::ImageBufferBackend>&& backend, WebCore::RenderingResourceIdentifier identifier)
     {
-        if (!m_remoteRenderingBackendProxy || m_remoteRenderingBackendProxy->isGPUProcessConnectionClosed()) {
-            setNeedsFlush(false);
-            return;
-        }
-
-        flushDrawingContextAsync();
-        m_remoteRenderingBackendProxy->remoteResourceCacheProxy().releaseImageBuffer(m_renderingResourceIdentifier);
+        return adoptRef(new RemoteImageBufferProxy(parameters, info, remoteRenderingBackendProxy, WTFMove(backend), identifier));
     }
 
-    WebCore::GraphicsContextFlushIdentifier lastSentFlushIdentifier() const { return m_sentFlushIdentifier; }
+    ~RemoteImageBufferProxy();
 
-    void waitForDidFlushOnSecondaryThread(WebCore::GraphicsContextFlushIdentifier targetFlushIdentifier)
-    {
-        ASSERT(!isMainRunLoop());
-        Locker locker { m_receivedFlushIdentifierLock };
-        m_receivedFlushIdentifierChangedCondition.wait(m_receivedFlushIdentifierLock, [&] {
-            assertIsHeld(m_receivedFlushIdentifierLock);
-            return m_receivedFlushIdentifier == targetFlushIdentifier;
-        });
+    DisplayListRecorderFlushIdentifier lastSentFlushIdentifier() const { return m_sentFlushIdentifier; }
 
-        // Nothing should have sent more drawing commands to the GPU process
-        // while waiting for this ImageBuffer to be flushed.
-        ASSERT(m_sentFlushIdentifier == targetFlushIdentifier);
-    }
+    WebCore::ImageBufferBackend* ensureBackendCreated() const final;
 
-protected:
-    RemoteImageBufferProxy(const WebCore::ImageBufferBackend::Parameters& parameters, RemoteRenderingBackendProxy& remoteRenderingBackendProxy)
-        : BaseConcreteImageBuffer(parameters)
-        , m_remoteRenderingBackendProxy(remoteRenderingBackendProxy)
-        , m_remoteDisplayList(*this, remoteRenderingBackendProxy, { { }, BaseConcreteImageBuffer::logicalSize() }, BaseConcreteImageBuffer::baseTransform())
-    {
-        ASSERT(m_remoteRenderingBackendProxy);
-        m_remoteRenderingBackendProxy->remoteResourceCacheProxy().cacheImageBuffer(*this);
-    }
+    void clearBackend();
+    void backingStoreWillChange();
+    void didCreateImageBufferBackend(ImageBufferBackendHandle&&);
 
-    // It is safe to access m_receivedFlushIdentifier from the main thread without locking since it
-    // only gets modified on the main thread.
-    bool hasPendingFlush() const WTF_IGNORES_THREAD_SAFETY_ANALYSIS
-    {
-        ASSERT(isMainRunLoop());
-        return m_sentFlushIdentifier != m_receivedFlushIdentifier;
-    }
+    std::unique_ptr<WebCore::SerializedImageBuffer> sinkIntoSerializedImageBuffer() final;
 
-    void didFlush(WebCore::GraphicsContextFlushIdentifier flushIdentifier) final
-    {
-        ASSERT(isMainRunLoop());
-        Locker locker { m_receivedFlushIdentifierLock };
-        m_receivedFlushIdentifier = flushIdentifier;
-        m_receivedFlushIdentifierChangedCondition.notifyAll();
-    }
+private:
+    RemoteImageBufferProxy(const WebCore::ImageBufferBackend::Parameters&, const WebCore::ImageBufferBackend::Info&, RemoteRenderingBackendProxy&, std::unique_ptr<WebCore::ImageBufferBackend>&& = nullptr, WebCore::RenderingResourceIdentifier = WebCore::RenderingResourceIdentifier::generate());
 
-    void setNeedsFlush(bool needsFlush) final
-    {
-        m_needsFlush = needsFlush;
-    }
+    bool hasPendingFlush() const;
 
-    void waitForDidFlushWithTimeout()
-    {
-        if (!m_remoteRenderingBackendProxy)
-            return;
+    void waitForDidFlushWithTimeout();
 
-        // Wait for our DisplayList to be flushed but do not hang.
-        static constexpr unsigned maximumNumberOfTimeouts = 3;
-        unsigned numberOfTimeouts = 0;
-#if !LOG_DISABLED
-        auto startTime = MonotonicTime::now();
-#endif
-        LOG_WITH_STREAM(SharedDisplayLists, stream << "RemoteImageBufferProxy " << m_renderingResourceIdentifier << " waitForDidFlushWithTimeout: waiting for flush {" << m_sentFlushIdentifier);
-        while (numberOfTimeouts < maximumNumberOfTimeouts && hasPendingFlush()) {
-            if (!m_remoteRenderingBackendProxy->waitForDidFlush())
-                ++numberOfTimeouts;
-        }
+    RefPtr<WebCore::NativeImage> copyNativeImage(WebCore::BackingStoreCopy = WebCore::CopyBackingStore) const final;
+    RefPtr<WebCore::NativeImage> copyNativeImageForDrawing(WebCore::BackingStoreCopy = WebCore::CopyBackingStore) const final;
+    RefPtr<WebCore::NativeImage> sinkIntoNativeImage() final;
 
-        LOG_WITH_STREAM(SharedDisplayLists, stream << "RemoteImageBufferProxy " << m_renderingResourceIdentifier << " waitForDidFlushWithTimeout: done waiting " << (MonotonicTime::now() - startTime).milliseconds() << "ms; " << numberOfTimeouts << " timeout(s)");
+    RefPtr<ImageBuffer> sinkIntoBufferForDifferentThread() final;
+    RefPtr<ImageBuffer> cloneForDifferentThread() final;
 
-        if (UNLIKELY(numberOfTimeouts >= maximumNumberOfTimeouts))
-            RELEASE_LOG_FAULT(SharedDisplayLists, "Exceeded timeout while waiting for flush in remote rendering backend: %" PRIu64 ".", m_remoteRenderingBackendProxy->renderingBackendIdentifier().toUInt64());
-    }
+    RefPtr<WebCore::Image> filteredImage(WebCore::Filter&) final;
 
-    WebCore::ImageBufferBackend* ensureBackendCreated() const final
-    {
-        if (!m_remoteRenderingBackendProxy)
-            return m_backend.get();
+    void drawConsuming(WebCore::GraphicsContext& destContext, const WebCore::FloatRect& destRect, const WebCore::FloatRect& srcRect, const WebCore::ImagePaintingOptions&) final;
 
-        static constexpr unsigned maximumTimeoutOrFailureCount = 3;
-        unsigned numberOfTimeoutsOrFailures = 0;
-        while (!m_backend && numberOfTimeoutsOrFailures < maximumTimeoutOrFailureCount) {
-            if (m_remoteRenderingBackendProxy->waitForDidCreateImageBufferBackend() == RemoteRenderingBackendProxy::DidReceiveBackendCreationResult::TimeoutOrIPCFailure)
-                ++numberOfTimeoutsOrFailures;
-        }
-        if (numberOfTimeoutsOrFailures == maximumTimeoutOrFailureCount) {
-            LOG_WITH_STREAM(SharedDisplayLists, stream << "RemoteImageBufferProxy " << m_renderingResourceIdentifier << " ensureBackendCreated: exceeded max number of timeouts");
-            RELEASE_LOG_FAULT(SharedDisplayLists, "Exceeded max number of timeouts waiting for image buffer backend creation in remote rendering backend %" PRIu64 ".", m_remoteRenderingBackendProxy->renderingBackendIdentifier().toUInt64());
-        }
-        return m_backend.get();
-    }
+    WebCore::GraphicsContext& context() const final;
 
-    String toDataURL(const String& mimeType, std::optional<double> quality, WebCore::PreserveResolution preserveResolution) const final
-    {
-        if (UNLIKELY(!m_remoteRenderingBackendProxy))
-            return { };
+    RefPtr<WebCore::PixelBuffer> getPixelBuffer(const WebCore::PixelBufferFormat& destinationFormat, const WebCore::IntRect& srcRect, const WebCore::ImageBufferAllocator&) const final;
+    void putPixelBuffer(const WebCore::PixelBuffer&, const WebCore::IntRect& srcRect, const WebCore::IntPoint& destPoint = { }, WebCore::AlphaPremultiplication = WebCore::AlphaPremultiplication::Premultiplied) final;
 
-        ASSERT(WebCore::MIMETypeRegistry::isSupportedImageMIMETypeForEncoding(mimeType));
-        return m_remoteRenderingBackendProxy->getDataURLForImageBuffer(mimeType, quality, preserveResolution, m_renderingResourceIdentifier);
-    }
-
-    Vector<uint8_t> toData(const String& mimeType, std::optional<double> quality = std::nullopt) const final
-    {
-        if (UNLIKELY(!m_remoteRenderingBackendProxy))
-            return { };
-
-        ASSERT(WebCore::MIMETypeRegistry::isSupportedImageMIMETypeForEncoding(mimeType));
-        return m_remoteRenderingBackendProxy->getDataForImageBuffer(mimeType, quality, m_renderingResourceIdentifier);
-    }
-
-    RefPtr<WebCore::NativeImage> copyNativeImage(WebCore::BackingStoreCopy copyBehavior = WebCore::CopyBackingStore) const final
-    {
-        if (UNLIKELY(!m_remoteRenderingBackendProxy))
-            return { };
-
-        if (canMapBackingStore())
-            return BaseConcreteImageBuffer::copyNativeImage(copyBehavior);
-
-        const_cast<RemoteImageBufferProxy*>(this)->flushDrawingContext();
-        auto bitmap = m_remoteRenderingBackendProxy->getShareableBitmap(m_renderingResourceIdentifier, WebCore::PreserveResolution::Yes);
-        if (!bitmap)
-            return { };
-        return WebCore::NativeImage::create(bitmap->createPlatformImage(WebCore::DontCopyBackingStore));
-    }
-
-    void drawConsuming(WebCore::GraphicsContext& destContext, const WebCore::FloatRect& destRect, const WebCore::FloatRect& srcRect, const WebCore::ImagePaintingOptions& options) final
-    {
-        ASSERT(&destContext != &context());
-        destContext.drawImageBuffer(*this, destRect, srcRect, options);
-    }
-
-    RefPtr<WebCore::NativeImage> sinkIntoNativeImage() final
-    {
-        return copyNativeImage();
-    }
-
-    RefPtr<WebCore::Image> filteredImage(WebCore::Filter& filter) final
-    {
-        if (UNLIKELY(!m_remoteRenderingBackendProxy))
-            return { };
-        flushDrawingContext();
-        return m_remoteRenderingBackendProxy->getFilteredImage(m_renderingResourceIdentifier, filter);
-    }
-
-    RefPtr<WebCore::PixelBuffer> getPixelBuffer(const WebCore::PixelBufferFormat& destinationFormat, const WebCore::IntRect& srcRect, const WebCore::ImageBufferAllocator& allocator) const final
-    {
-        if (UNLIKELY(!m_remoteRenderingBackendProxy))
-            return nullptr;
-        auto& mutableThis = const_cast<RemoteImageBufferProxy&>(*this);
-        mutableThis.flushDrawingContextAsync();
-        auto pixelBuffer = allocator.createPixelBuffer(destinationFormat, srcRect.size());
-        if (!pixelBuffer)
-            return nullptr;
-        if (!m_remoteRenderingBackendProxy->getPixelBufferForImageBuffer(m_renderingResourceIdentifier, destinationFormat, srcRect, { pixelBuffer->bytes(), pixelBuffer->sizeInBytes() }))
-            return nullptr;
-        return pixelBuffer;
-    }
-
-    void clearBackend() final
-    {
-        setNeedsFlush(false);
-        didFlush(m_sentFlushIdentifier);
-        BaseConcreteImageBuffer::clearBackend();
-    }
-
-    WebCore::GraphicsContext& context() const final
-    {
-        return const_cast<RemoteImageBufferProxy*>(this)->m_remoteDisplayList;
-    }
-
-    WebCore::GraphicsContext* drawingContext() final
-    {
-        return &m_remoteDisplayList;
-    }
-
-    void putPixelBuffer(const WebCore::PixelBuffer& pixelBuffer, const WebCore::IntRect& srcRect, const WebCore::IntPoint& destPoint = { }, WebCore::AlphaPremultiplication destFormat = WebCore::AlphaPremultiplication::Premultiplied) final
-    {
-        if (UNLIKELY(!m_remoteRenderingBackendProxy))
-            return;
-        // The math inside PixelBuffer::create() doesn't agree with the math inside ImageBufferBackend::putPixelBuffer() about how m_resolutionScale interacts with the data in the ImageBuffer.
-        // This means that putPixelBuffer() is only called when resolutionScale() == 1.
-        ASSERT(resolutionScale() == 1);
-        auto& mutableThis = const_cast<RemoteImageBufferProxy&>(*this);
-        mutableThis.flushDrawingContextAsync();
-        m_remoteRenderingBackendProxy->putPixelBufferForImageBuffer(m_renderingResourceIdentifier, pixelBuffer, srcRect, destPoint, destFormat);
-        setNeedsFlush(true);
-    }
-
-    void convertToLuminanceMask() final
-    {
-        m_remoteDisplayList.convertToLuminanceMask();
-    }
-
-    void transformToColorSpace(const WebCore::DestinationColorSpace& colorSpace) final
-    {
-        m_remoteDisplayList.transformToColorSpace(colorSpace);
-    }
+    void convertToLuminanceMask() final;
+    void transformToColorSpace(const WebCore::DestinationColorSpace&) final;
 
     bool prefersPreparationForDisplay() final { return true; }
+    
+    void flushContext() final;
+    void flushDrawingContext() final;
+    bool flushDrawingContextAsync() final;
 
-    void flushContext() final
-    {
-        flushDrawingContext();
-        m_backend->flushContext();
-    }
+    std::unique_ptr<WebCore::ThreadSafeImageBufferFlusher> createFlusher() final;
+    void prepareForBackingStoreChange();
 
-    void flushDrawingContext() final
-    {
-        if (UNLIKELY(!m_remoteRenderingBackendProxy))
-            return;
+    void assertDispatcherIsCurrent() const;
 
-        TraceScope tracingScope(FlushRemoteImageBufferStart, FlushRemoteImageBufferEnd);
-
-        bool shouldWait = flushDrawingContextAsync();
-        LOG_WITH_STREAM(SharedDisplayLists, stream << "RemoteImageBufferProxy " << m_renderingResourceIdentifier << " flushDrawingContext: shouldWait " << shouldWait);
-        if (shouldWait)
-            waitForDidFlushWithTimeout();
-    }
-
-    bool flushDrawingContextAsync() final
-    {
-        if (UNLIKELY(!m_remoteRenderingBackendProxy))
-            return false;
-
-        if (!m_needsFlush)
-            return hasPendingFlush();
-        
-        m_sentFlushIdentifier = WebCore::GraphicsContextFlushIdentifier::generate();
-        LOG_WITH_STREAM(SharedDisplayLists, stream << "RemoteImageBufferProxy " << m_renderingResourceIdentifier << " flushDrawingContextAsync - flush " << m_sentFlushIdentifier);
-        m_remoteDisplayList.flushContext(m_sentFlushIdentifier);
-        setNeedsFlush(false);
-        return true;
-    }
-
-    void recordNativeImageUse(WebCore::NativeImage& image)
-    {
-        if (m_remoteRenderingBackendProxy)
-            m_remoteRenderingBackendProxy->remoteResourceCacheProxy().recordNativeImageUse(image);
-    }
-
-    void recordFontUse(WebCore::Font& font)
-    {
-        if (m_remoteRenderingBackendProxy)
-            m_remoteRenderingBackendProxy->remoteResourceCacheProxy().recordFontUse(font);
-    }
-
-    void recordImageBufferUse(WebCore::ImageBuffer& imageBuffer)
-    {
-        if (m_remoteRenderingBackendProxy)
-            m_remoteRenderingBackendProxy->remoteResourceCacheProxy().recordImageBufferUse(imageBuffer);
-    }
-
-    std::unique_ptr<WebCore::ThreadSafeImageBufferFlusher> createFlusher() final
-    {
-        return WTF::makeUnique<ThreadSafeRemoteImageBufferFlusher<BackendType>>(*this);
-    }
-
-    WebCore::GraphicsContextFlushIdentifier m_sentFlushIdentifier;
-    Lock m_receivedFlushIdentifierLock;
-    Condition m_receivedFlushIdentifierChangedCondition;
-    WebCore::GraphicsContextFlushIdentifier m_receivedFlushIdentifier WTF_GUARDED_BY_LOCK(m_receivedFlushIdentifierLock); // Only modified on the main thread but may get queried on a secondary thread.
+    DisplayListRecorderFlushIdentifier m_sentFlushIdentifier;
+    Ref<RemoteImageBufferProxyFlushState> m_flushState;
     WeakPtr<RemoteRenderingBackendProxy> m_remoteRenderingBackendProxy;
     RemoteDisplayListRecorderProxy m_remoteDisplayList;
     bool m_needsFlush { false };
 };
 
-template<typename BackendType>
-class ThreadSafeRemoteImageBufferFlusher final : public WebCore::ThreadSafeImageBufferFlusher {
+class RemoteImageBufferProxyFlushState : public ThreadSafeRefCounted<RemoteImageBufferProxyFlushState> {
+    WTF_MAKE_NONCOPYABLE(RemoteImageBufferProxyFlushState);
     WTF_MAKE_FAST_ALLOCATED;
 public:
-    ThreadSafeRemoteImageBufferFlusher(RemoteImageBufferProxy<BackendType>& imageBuffer)
-        : m_imageBuffer(imageBuffer)
-        , m_targetFlushIdentifier(imageBuffer.lastSentFlushIdentifier())
-    {
-    }
+    RemoteImageBufferProxyFlushState() = default;
+    void waitForDidFlushOnSecondaryThread(DisplayListRecorderFlushIdentifier);
+    void markCompletedFlush(DisplayListRecorderFlushIdentifier);
+    void cancel();
+    DisplayListRecorderFlushIdentifier identifierForCompletedFlush() const;
 
-    void flush() final
+private:
+    mutable Lock m_lock;
+    Condition m_condition;
+    DisplayListRecorderFlushIdentifier m_identifier WTF_GUARDED_BY_LOCK(m_lock);
+};
+
+class RemoteSerializedImageBufferProxy : public WebCore::SerializedImageBuffer {
+    friend class RemoteRenderingBackendProxy;
+public:
+    ~RemoteSerializedImageBufferProxy();
+
+    static RefPtr<WebCore::ImageBuffer> sinkIntoImageBuffer(std::unique_ptr<RemoteSerializedImageBufferProxy>, RemoteRenderingBackendProxy&);
+
+    WebCore::RenderingResourceIdentifier renderingResourceIdentifier() { return m_renderingResourceIdentifier; }
+
+    RemoteSerializedImageBufferProxy(const WebCore::ImageBufferBackend::Parameters&, const WebCore::ImageBufferBackend::Info&, const WebCore::RenderingResourceIdentifier&, RemoteRenderingBackendProxy&);
+
+    size_t memoryCost() final
     {
-        m_imageBuffer->waitForDidFlushOnSecondaryThread(m_targetFlushIdentifier);
+        return m_info.memoryCost;
     }
 
 private:
-    Ref<RemoteImageBufferProxy<BackendType>> m_imageBuffer;
-    WebCore::GraphicsContextFlushIdentifier m_targetFlushIdentifier;
+    RefPtr<WebCore::ImageBuffer> sinkIntoImageBuffer() final
+    {
+        ASSERT_NOT_REACHED();
+        return nullptr;
+    }
+
+    bool isRemoteSerializedImageBufferProxy() const final { return true; }
+
+    RemoteSerializedImageBufferReferenceTracker m_referenceTracker;
+
+    WebCore::ImageBufferBackend::Parameters m_parameters;
+    WebCore::ImageBufferBackend::Info m_info;
+
+    WebCore::RenderingResourceIdentifier m_renderingResourceIdentifier;
+    RefPtr<IPC::Connection> m_connection;
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::RemoteSerializedImageBufferProxy)
+    static bool isType(const WebCore::SerializedImageBuffer& buffer) { return buffer.isRemoteSerializedImageBufferProxy(); }
+SPECIALIZE_TYPE_TRAITS_END()
+
 
 #endif // ENABLE(GPU_PROCESS)

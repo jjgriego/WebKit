@@ -127,6 +127,7 @@ private:
     void requestVideoContentLayer() final;
     void returnVideoContentLayer() final;
     void didSetupFullscreen() final;
+    void failedToEnterFullscreen() final { }
     void didEnterFullscreen(const FloatSize&) final { }
     void willExitFullscreen() final;
     void didExitFullscreen() final;
@@ -973,7 +974,7 @@ bool VideoFullscreenControllerContext::externalPlaybackEnabled() const
 PlaybackSessionModel::ExternalPlaybackTargetType VideoFullscreenControllerContext::externalPlaybackTargetType() const
 {
     ASSERT(isUIThread());
-    return m_playbackModel ? m_playbackModel->externalPlaybackTargetType() : TargetTypeNone;
+    return m_playbackModel ? m_playbackModel->externalPlaybackTargetType() : ExternalPlaybackTargetType::TargetTypeNone;
 }
 
 String VideoFullscreenControllerContext::externalPlaybackLocalizedDeviceName() const
@@ -1051,7 +1052,7 @@ void VideoFullscreenControllerContext::requestHideAndExitFullscreen()
 {
     if (!(self = [super init]))
         return nil;
-    
+
     return self;
 }
 

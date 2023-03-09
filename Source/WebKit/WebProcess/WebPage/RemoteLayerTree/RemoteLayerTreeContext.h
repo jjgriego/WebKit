@@ -28,7 +28,9 @@
 #include "LayerTreeContext.h"
 #include "RemoteLayerBackingStoreCollection.h"
 #include "RemoteLayerTreeTransaction.h"
+#include <WebCore/FloatSize.h>
 #include <WebCore/GraphicsLayerFactory.h>
+#include <WebCore/HTMLMediaElementIdentifier.h>
 #include <WebCore/LayerPool.h>
 #include <WebCore/PlatformCALayer.h>
 #include <wtf/Vector.h>
@@ -47,6 +49,9 @@ public:
     ~RemoteLayerTreeContext();
 
     void layerDidEnterContext(PlatformCALayerRemote&, WebCore::PlatformCALayer::LayerType);
+#if HAVE(AVKIT)
+    void layerDidEnterContext(PlatformCALayerRemote&, WebCore::PlatformCALayer::LayerType, WebCore::HTMLVideoElement&);
+#endif
     void layerWillLeaveContext(PlatformCALayerRemote&);
 
     void graphicsLayerDidEnterContext(GraphicsLayerCARemote&);
@@ -57,6 +62,10 @@ public:
     float deviceScaleFactor() const;
 
     LayerHostingMode layerHostingMode() const;
+    
+    std::optional<WebCore::DestinationColorSpace> displayColorSpace() const;
+
+    DrawingAreaIdentifier drawingAreaIdentifier() const;
 
     void buildTransaction(RemoteLayerTreeTransaction&, WebCore::PlatformCALayer& rootLayer);
 
@@ -79,10 +88,15 @@ public:
 
     bool useCGDisplayListsForDOMRendering() const { return m_useCGDisplayListsForDOMRendering; }
     void setUseCGDisplayListsForDOMRendering(bool useCGDisplayLists) { m_useCGDisplayListsForDOMRendering = useCGDisplayLists; }
+
+    bool useCGDisplayListImageCache() const { return m_useCGDisplayListImageCache; }
+    void setUseCGDisplayListImageCache(bool useCGDisplayListImageCache) { m_useCGDisplayListImageCache = useCGDisplayListImageCache; }
     
 #if PLATFORM(IOS_FAMILY)
     bool canShowWhileLocked() const;
 #endif
+
+    WebPage& webPage() { return m_webPage; }
 
 private:
     // WebCore::GraphicsLayerFactory
@@ -95,6 +109,9 @@ private:
 
     HashMap<WebCore::GraphicsLayer::PlatformLayerID, PlatformCALayerRemote*> m_livePlatformLayers;
     HashMap<WebCore::GraphicsLayer::PlatformLayerID, PlatformCALayerRemote*> m_layersWithAnimations;
+#if HAVE(AVKIT)
+    HashMap<WebCore::GraphicsLayer::PlatformLayerID, PlaybackSessionContextIdentifier> m_videoLayers;
+#endif
 
     HashSet<GraphicsLayerCARemote*> m_liveGraphicsLayers;
 
@@ -106,6 +123,7 @@ private:
 
     bool m_nextRenderingUpdateRequiresSynchronousImageDecoding { false };
     bool m_useCGDisplayListsForDOMRendering { false };
+    bool m_useCGDisplayListImageCache { false };
 };
 
 } // namespace WebKit

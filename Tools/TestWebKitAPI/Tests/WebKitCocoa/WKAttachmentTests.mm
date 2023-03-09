@@ -24,7 +24,6 @@
  */
 
 #import "config.h"
-#import "Test.h"
 
 #if PLATFORM(MAC) || PLATFORM(IOS)
 
@@ -32,6 +31,7 @@
 #import "InstanceMethodSwizzler.h"
 #import "NSItemProviderAdditions.h"
 #import "PlatformUtilities.h"
+#import "Test.h"
 #import "TestNavigationDelegate.h"
 #import "TestProtocol.h"
 #import "TestWKWebView.h"
@@ -40,9 +40,11 @@
 #import <MapKit/MapKit.h>
 #import <QuickLookThumbnailing/QLThumbnailGenerator.h>
 #import <WebKit/WKPreferencesRefPrivate.h>
+#import <WebKit/WKUserContentControllerPrivate.h>
 #import <WebKit/WKWebViewPrivateForTesting.h>
 #import <WebKit/WebArchive.h>
 #import <WebKit/WebKitPrivate.h>
+#import <WebKit/_WKUserStyleSheet.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/SoftLinking.h>
 
@@ -456,7 +458,7 @@ static NSData *testJPEGData()
 
 @implementation _WKAttachment (AttachmentTesting)
 
-- (void)synchronouslySetFileWrapper:(NSFileWrapper *)fileWrapper newContentType:(NSString *)newContentType error:(NSError **)error
+- (BOOL)synchronouslySetFileWrapper:(NSFileWrapper *)fileWrapper newContentType:(NSString *)newContentType error:(NSError **)error
 {
     __block RetainPtr<NSError> resultError;
     __block bool done = false;
@@ -468,11 +470,14 @@ static NSData *testJPEGData()
 
     TestWebKitAPI::Util::run(&done);
 
+    BOOL errorOccurred = !!resultError;
     if (error)
         *error = resultError.autorelease();
+
+    return errorOccurred;
 }
 
-- (void)synchronouslySetData:(NSData *)data newContentType:(NSString *)newContentType newFilename:(NSString *)newFilename error:(NSError **)error
+- (BOOL)synchronouslySetData:(NSData *)data newContentType:(NSString *)newContentType newFilename:(NSString *)newFilename error:(NSError **)error
 {
     __block RetainPtr<NSError> resultError;
     __block bool done = false;
@@ -487,8 +492,11 @@ static NSData *testJPEGData()
 
     TestWebKitAPI::Util::run(&done);
 
+    BOOL errorOccurred = !!resultError;
     if (error)
         *error = resultError.autorelease();
+
+    return errorOccurred;
 }
 
 - (void)expectRequestedDataToBe:(NSData *)expectedData
@@ -1017,8 +1025,10 @@ TEST(WKAttachmentTests, InsertFolderAndFileWithUnknownExtension)
     {
         // Swap the two attachments' file wrappers without creating or destroying attachment elements.
         ObserveAttachmentUpdatesForScope observer(webView.get());
-        [firstAttachment synchronouslySetFileWrapper:folder.get() newContentType:nil error:nil];
-        [secondAttachment synchronouslySetFileWrapper:file.get() newContentType:nil error:nil];
+        BOOL errorOccurred = [firstAttachment synchronouslySetFileWrapper:folder.get() newContentType:nil error:nil];
+        EXPECT_EQ(NO, errorOccurred);
+        errorOccurred = [secondAttachment synchronouslySetFileWrapper:file.get() newContentType:nil error:nil];
+        EXPECT_EQ(NO, errorOccurred);
         observer.expectAttachmentUpdates(@[ ], @[ ]);
     }
 
@@ -1041,7 +1051,8 @@ TEST(WKAttachmentTests, ChangeAttachmentDataAndFileInformation)
     {
         RetainPtr<NSData> imageData = testImageData();
         ObserveAttachmentUpdatesForScope observer(webView.get());
-        [attachment synchronouslySetData:imageData.get() newContentType:@"image/png" newFilename:@"icon.png" error:nil];
+        BOOL errorOccurred = [attachment synchronouslySetData:imageData.get() newContentType:@"image/png" newFilename:@"icon.png" error:nil];
+        EXPECT_EQ(NO, errorOccurred);
         [attachment expectRequestedDataToBe:imageData.get()];
         EXPECT_WK_STREQ(@"icon.png", [webView valueOfAttribute:@"title" forQuerySelector:@"attachment"]);
         EXPECT_WK_STREQ(@"image/png", [webView valueOfAttribute:@"type" forQuerySelector:@"attachment"]);
@@ -1051,7 +1062,8 @@ TEST(WKAttachmentTests, ChangeAttachmentDataAndFileInformation)
         RetainPtr<NSData> textData = [@"Hello world" dataUsingEncoding:NSUTF8StringEncoding];
         ObserveAttachmentUpdatesForScope observer(webView.get());
         // The new content type should be inferred from the file name.
-        [attachment synchronouslySetData:textData.get() newContentType:nil newFilename:@"foo.txt" error:nil];
+        BOOL errorOccurred = [attachment synchronouslySetData:textData.get() newContentType:nil newFilename:@"foo.txt" error:nil];
+        EXPECT_EQ(NO, errorOccurred);
         [attachment expectRequestedDataToBe:textData.get()];
         EXPECT_WK_STREQ(@"foo.txt", [webView valueOfAttribute:@"title" forQuerySelector:@"attachment"]);
         EXPECT_WK_STREQ(@"text/plain", [webView valueOfAttribute:@"type" forQuerySelector:@"attachment"]);
@@ -1060,7 +1072,8 @@ TEST(WKAttachmentTests, ChangeAttachmentDataAndFileInformation)
     {
         RetainPtr<NSData> htmlData = testHTMLData();
         ObserveAttachmentUpdatesForScope observer(webView.get());
-        [attachment synchronouslySetData:htmlData.get() newContentType:@"text/html" newFilename:@"bar" error:nil];
+        BOOL errorOccurred = [attachment synchronouslySetData:htmlData.get() newContentType:@"text/html" newFilename:@"bar" error:nil];
+        EXPECT_EQ(NO, errorOccurred);
         [attachment expectRequestedDataToBe:htmlData.get()];
         EXPECT_WK_STREQ(@"bar", [webView valueOfAttribute:@"title" forQuerySelector:@"attachment"]);
         EXPECT_WK_STREQ(@"text/html", [webView valueOfAttribute:@"type" forQuerySelector:@"attachment"]);
@@ -1322,7 +1335,8 @@ TEST(WKAttachmentTests, InsertDuplicateAttachmentAndUpdateData)
         EXPECT_FALSE([pastedAttachment isEqual:originalAttachment.get()]);
     }
     auto updatedData = retainPtr([@"HELLO WORLD" dataUsingEncoding:NSUTF8StringEncoding]);
-    [originalAttachment synchronouslySetData:updatedData.get() newContentType:nil newFilename:nil error:nil];
+    BOOL errorOccurred = [originalAttachment synchronouslySetData:updatedData.get() newContentType:nil newFilename:nil error:nil];
+    EXPECT_EQ(NO, errorOccurred);
     [originalAttachment expectRequestedDataToBe:updatedData.get()];
     [pastedAttachment expectRequestedDataToBe:originalData.get()];
 
@@ -1351,7 +1365,8 @@ TEST(WKAttachmentTests, InsertAttachmentUsingFileWrapperWithFilePath)
     auto newFileWrapper = adoptNS([[NSFileWrapper alloc] initWithURL:testPDFFileURL() options:0 error:nil]);
     {
         ObserveAttachmentUpdatesForScope observer(webView.get());
-        [attachment synchronouslySetFileWrapper:newFileWrapper.get() newContentType:nil error:nil];
+        BOOL errorOccurred = [attachment synchronouslySetFileWrapper:newFileWrapper.get() newContentType:nil error:nil];
+        EXPECT_EQ(NO, errorOccurred);
         observer.expectAttachmentUpdates(@[ ], @[ ]);
     }
 
@@ -1512,10 +1527,12 @@ TEST(WKAttachmentTests, ChangeFileWrapperForPastedImage)
 
     auto newImage = adoptNS([[NSFileWrapper alloc] initRegularFileWithContents:testGIFData()]);
     [newImage setPreferredFilename:@"foo.gif"];
-    [attachment synchronouslySetFileWrapper:newImage.get() newContentType:nil error:nil];
+    BOOL errorOccurred = [attachment synchronouslySetFileWrapper:newImage.get() newContentType:nil error:nil];
+    EXPECT_EQ(NO, errorOccurred);
     [webView waitForImageElementSizeToBecome:CGSizeMake(52, 64)];
 
-    [attachment synchronouslySetFileWrapper:originalImageData.get() newContentType:@"image/png" error:nil];
+    errorOccurred = [attachment synchronouslySetFileWrapper:originalImageData.get() newContentType:@"image/png" error:nil];
+    EXPECT_EQ(NO, errorOccurred);
     [webView waitForImageElementSizeToBecome:CGSizeMake(215, 174)];
 }
 
@@ -1535,13 +1552,16 @@ TEST(WKAttachmentTests, AddAttachmentToConnectedImageElement)
     auto secondImage = adoptNS([[NSFileWrapper alloc] initRegularFileWithContents:testGIFData()]);
     [secondImage setPreferredFilename:@"foo.gif"];
 
-    [attachment synchronouslySetFileWrapper:firstImage.get() newContentType:@"image/png" error:nil];
+    BOOL errorOccurred = [attachment synchronouslySetFileWrapper:firstImage.get() newContentType:@"image/png" error:nil];
+    EXPECT_EQ(NO, errorOccurred);
     [webView waitForImageElementSizeToBecome:CGSizeMake(215, 174)];
 
-    [attachment synchronouslySetFileWrapper:secondImage.get() newContentType:(__bridge NSString *)kUTTypeGIF error:nil];
+    errorOccurred = [attachment synchronouslySetFileWrapper:secondImage.get() newContentType:(__bridge NSString *)kUTTypeGIF error:nil];
+    EXPECT_EQ(NO, errorOccurred);
     [webView waitForImageElementSizeToBecome:CGSizeMake(52, 64)];
 
-    [attachment synchronouslySetFileWrapper:firstImage.get() newContentType:nil error:nil];
+    errorOccurred = [attachment synchronouslySetFileWrapper:firstImage.get() newContentType:nil error:nil];
+    EXPECT_EQ(NO, errorOccurred);
     [webView waitForImageElementSizeToBecome:CGSizeMake(215, 174)];
 }
 
@@ -1553,7 +1573,8 @@ TEST(WKAttachmentTests, ConnectImageWithAttachmentToDocument)
     NSString *identifier = [webView stringByEvaluatingJavaScript:@"image = document.createElement('img'); HTMLAttachmentElement.getAttachmentIdentifier(image)"];
     auto image = adoptNS([[NSFileWrapper alloc] initWithURL:testImageFileURL() options:0 error:nil]);
     auto attachment = retainPtr([webView _attachmentForIdentifier:identifier]);
-    [attachment synchronouslySetFileWrapper:image.get() newContentType:nil error:nil];
+    BOOL errorOccurred = [attachment synchronouslySetFileWrapper:image.get() newContentType:nil error:nil];
+    EXPECT_EQ(NO, errorOccurred);
     EXPECT_FALSE([attachment isConnected]);
     observer.expectAttachmentUpdates(@[ ], @[ ]);
 
@@ -1564,7 +1585,8 @@ TEST(WKAttachmentTests, ConnectImageWithAttachmentToDocument)
 
     auto newImage = adoptNS([[NSFileWrapper alloc] initRegularFileWithContents:testGIFData()]);
     [newImage setPreferredFilename:@"test.gif"];
-    [attachment synchronouslySetFileWrapper:newImage.get() newContentType:nil error:nil];
+    errorOccurred = [attachment synchronouslySetFileWrapper:newImage.get() newContentType:nil error:nil];
+    EXPECT_EQ(NO, errorOccurred);
     [webView waitForImageElementSizeToBecome:CGSizeMake(52, 64)];
 }
 
@@ -1650,7 +1672,8 @@ TEST(WKAttachmentTests, CopyAndPasteImageBetweenWebViews)
         [sourceView _synchronouslyExecuteEditCommand:@"InsertHTML" argument:@"<img></img>"];
 
         auto attachment = [sourceView _attachmentForIdentifier:[sourceView ensureAttachmentForImageElement]];
-        [attachment synchronouslySetFileWrapper:image.get() newContentType:@"image/png" error:nil];
+        BOOL errorOccurred = [attachment synchronouslySetFileWrapper:image.get() newContentType:@"image/png" error:nil];
+        EXPECT_EQ(NO, errorOccurred);
         [sourceView waitForImageElementSizeToBecome:CGSizeMake(215, 174)];
 
         EXPECT_WK_STREQ("icon.png", [sourceView valueOfAttribute:@"alt" forQuerySelector:@"img"]);
@@ -1670,34 +1693,43 @@ TEST(WKAttachmentTests, CopyAndPasteImageBetweenWebViews)
     EXPECT_TRUE([originalData isEqualToData:pastedAttachmentInfo.data]);
 }
 
+#if HAVE(QUICKLOOK_THUMBNAILING)
+
 static bool triedToLoadThumbnail;
 static void _generateBestRepresentationForRequest(id, SEL)
 {
     triedToLoadThumbnail = true;
 }
 
+#endif
+
 TEST(WKAttachmentTests, CutAndPasteAttachmentBetweenWebViews)
 {
-    triedToLoadThumbnail = false;
     auto webView = webViewForTestingAttachments();
     [webView synchronouslyInsertAttachmentWithFilename:@"test.pages" contentType:nil data:testiWorkAttachmentData()];
     [webView selectAll:nil];
     [webView _synchronouslyExecuteEditCommand:@"Cut" argument:nil];
 
+#if HAVE(QUICKLOOK_THUMBNAILING)
     InstanceMethodSwizzler quickLookSwizzler {
         getQLThumbnailGeneratorClass(),
         @selector(generateBestRepresentationForRequest:completionHandler:),
         reinterpret_cast<IMP>(_generateBestRepresentationForRequest)
     };
+    triedToLoadThumbnail = false;
+#endif
 
     auto destinationView = webViewForTestingAttachments();
     ObserveAttachmentUpdatesForScope observer(destinationView.get());
-    triedToLoadThumbnail = false;
     [destinationView _synchronouslyExecuteEditCommand:@"Paste" argument:nil];
     EXPECT_EQ(1U, observer.observer().inserted.count);
 
+#if HAVE(QUICKLOOK_THUMBNAILING)
     Util::run(&triedToLoadThumbnail);
+#endif
 }
+
+#if HAVE(QUICKLOOK_THUMBNAILING)
 
 TEST(WKAttachmentTests, iWorkAttachmentWithoutPasteboardActionLoadsThumbnail)
 {
@@ -1726,6 +1758,8 @@ TEST(WKAttachmentTests, iWorkAttachmentWithoutPasteboardActionLoadsThumbnail)
 
     Util::run(&triedToLoadThumbnail);
 }
+
+#endif // HAVE(QUICKLOOK_THUMBNAILING)
 
 TEST(WKAttachmentTests, AttachmentIdentifierOfClonedAttachment)
 {
@@ -1756,6 +1790,40 @@ TEST(WKAttachmentTests, CloneImageWithAttachment)
         "HTMLAttachmentElement.getAttachmentIdentifier(clone);"];
 
     EXPECT_WK_STREQ([attachment uniqueIdentifier], clonedAttachmentIdentifier);
+}
+
+TEST(WKAttachmentTests, DuplicateImageWithAttachment)
+{
+    platformCopyPNG();
+    auto webView = webViewForTestingAttachments();
+
+    RetainPtr originalAttachment = [&] {
+        ObserveAttachmentUpdatesForScope observer(webView.get());
+        [webView _synchronouslyExecuteEditCommand:@"Paste" argument:nil];
+        return observer.observer().inserted.firstObject;
+    }();
+
+    RetainPtr newAttachment = [&] {
+        ObserveAttachmentUpdatesForScope observer(webView.get());
+        [webView stringByEvaluatingJavaScript:@"(function() {"
+            "    const original = document.querySelector('img');"
+            "    const clone = original.cloneNode();"
+            "    clone.id = 'clone';"
+            "    document.body.appendChild(clone);"
+            "})()"];
+        [webView waitForNextPresentationUpdate];
+        return observer.observer().inserted.firstObject;
+    }();
+
+    RetainPtr newAttachmentID = [webView stringByEvaluatingJavaScript:@"document.getElementById('clone').attachmentIdentifier"];
+    EXPECT_WK_STREQ([newAttachment uniqueIdentifier], newAttachmentID.get());
+    EXPECT_FALSE([[originalAttachment uniqueIdentifier] isEqualToString:newAttachmentID.get()]);
+
+    auto originalInfo = [originalAttachment info];
+    auto newInfo = [newAttachment info];
+    EXPECT_TRUE([originalInfo.data isEqualToData:newInfo.data]);
+    EXPECT_WK_STREQ(originalInfo.contentType, newInfo.contentType);
+    EXPECT_WK_STREQ(originalInfo.name, newInfo.name);
 }
 
 TEST(WKAttachmentTests, SetFileWrapperForPDFImageAttachment)
@@ -1882,6 +1950,47 @@ TEST(WKAttachmentTests, CreateAttachmentsFromExistingImage)
     EXPECT_TRUE([[info data] isEqualToData:testImageData()]);
 }
 
+TEST(WKAttachmentTests, UserDragNonePreventsDragOnAttachmentElement)
+{
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    auto styleSheet = adoptNS([[_WKUserStyleSheet alloc] initWithSource:@"attachment { -webkit-user-drag: none; }" forMainFrameOnly:YES]);
+    [[configuration userContentController] _addUserStyleSheet:styleSheet.get()];
+    [configuration _setAttachmentElementEnabled:YES];
+
+    auto simulator = adoptNS([[DragAndDropSimulator alloc] initWithWebViewFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
+    auto *webView = [simulator webView];
+    [webView synchronouslyLoadHTMLString:attachmentEditingTestMarkup];
+
+    auto file = adoptNS([[NSFileWrapper alloc] initWithURL:testPDFFileURL() options:0 error:nil]);
+    [webView synchronouslyInsertAttachmentWithFileWrapper:file.get() contentType:nil];
+    [simulator runFrom:NSMakePoint(15, 15) to:NSMakePoint(50, 50)];
+
+#if PLATFORM(MAC)
+    EXPECT_NULL([simulator draggingInfo]);
+#else
+    EXPECT_EQ(0U, [simulator sourceItemProviders].count);
+#endif
+}
+
+TEST(WKAttachmentTests, PasteRawUnnamedPDFData)
+{
+    RetainPtr pdfData = testPDFData();
+#if PLATFORM(MAC)
+    [NSPasteboard.generalPasteboard declareTypes:@[(__bridge NSString *)kUTTypePDF] owner:nil];
+    [NSPasteboard.generalPasteboard setData:pdfData.get() forType:(__bridge NSString *)kUTTypePDF];
+#else
+    [UIPasteboard.generalPasteboard setData:pdfData.get() forPasteboardType:UTTypePDF.identifier];
+#endif
+
+    auto webView = webViewForTestingAttachments();
+    ObserveAttachmentUpdatesForScope observer(webView.get());
+    [webView _synchronouslyExecuteEditCommand:@"Paste" argument:nil];
+    EXPECT_EQ(1U, observer.observer().inserted.count);
+    _WKAttachment *attachment = observer.observer().inserted[0];
+    EXPECT_WK_STREQ("application/pdf", attachment.info.contentType);
+    EXPECT_TRUE([pdfData isEqualToData:attachment.info.data]);
+}
+
 #pragma mark - Platform-specific tests
 
 #if PLATFORM(MAC)
@@ -1901,6 +2010,7 @@ TEST(WKAttachmentTestsMac, DraggingAttachmentBackedImagePreservesRangedSelection
 
     [webView waitForImageElementSizeToBecome:CGSizeMake(215, 174)];
 
+    [[webView window] orderFrontRegardless];
     [webView mouseEnterAtPoint:CGPointMake(125, 125)];
     [webView mouseMoveToPoint:CGPointMake(125, 125) withFlags:0];
     [webView mouseDownAtPoint:CGPointMake(125, 125) simulatePressure:NO];
@@ -2102,6 +2212,25 @@ TEST(WKAttachmentTestsMac, DragDirectoryAttachment)
     auto attachment = retainPtr([webView synchronouslyInsertAttachmentWithFileWrapper:fileWrapper.get() contentType:nil]);
     [simulator runFrom:[webView attachmentElementMidPoint] to:CGPointMake(300, 300)];
     TestWebKitAPI::Util::run(&didLoadIcon);
+}
+
+TEST(WKAttachmentTestsMac, CallAcceptsFirstMouseWhileDraggingAttachment)
+{
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    [configuration _setAttachmentElementEnabled:YES];
+    auto simulator = adoptNS([[DragAndDropSimulator alloc] initWithWebViewFrame:NSMakeRect(0, 0, 400, 400) configuration:configuration.get()]);
+    TestWKWebView *webView = [simulator webView];
+    [webView synchronouslyLoadHTMLString:attachmentEditingTestMarkup];
+
+    auto fileWrapper = adoptNS([[NSFileWrapper alloc] initWithURL:testPDFFileURL() options:0 error:nil]);
+    RetainPtr attachment = [webView synchronouslyInsertAttachmentWithFileWrapper:fileWrapper.get() contentType:@"application/pdf"];
+    [simulator setWillBeginDraggingHandler:^{
+        [webView acceptsFirstMouseAtPoint:NSMakePoint(100, 100)];
+    }];
+    [simulator runFrom:webView.attachmentElementMidPoint to:CGPointMake(300, 300)];
+
+    auto pasteboard = [simulator draggingInfo].draggingPasteboard;
+    EXPECT_WK_STREQ("com.adobe.pdf", [pasteboard stringForType:(__bridge NSString *)kPasteboardTypeFilePromiseContent]);
 }
 
 #endif // PLATFORM(MAC)
@@ -2614,10 +2743,24 @@ TEST(WKAttachmentTestsIOS, CopyAttachmentUsingElementAction)
 
     __block bool done = false;
     [itemProvider loadDataRepresentationForTypeIdentifier:(__bridge NSString *)kUTTypePDF completionHandler:^(NSData *data, NSError *) {
-        EXPECT_TRUE([[document serializedRepresentation] isEqualToData:data]);
+        EXPECT_TRUE([[document regularFileContents] isEqualToData:data]);
         done = true;
     }];
     TestWebKitAPI::Util::run(&done);
+}
+
+TEST(WKAttachmentTestsIOS, PasteRichTextCopiedFromNotes)
+{
+    UIPasteboard.generalPasteboard.items = @[@{
+        @"com.apple.notes.richtext" : [@"foo" dataUsingEncoding:NSUTF8StringEncoding],
+        UTTypeHTML.identifier : [@"<p>foo</p>" dataUsingEncoding:NSUTF8StringEncoding]
+    }];
+
+    auto webView = webViewForTestingAttachments();
+    ObserveAttachmentUpdatesForScope observer(webView.get());
+    [webView _synchronouslyExecuteEditCommand:@"Paste" argument:nil];
+    EXPECT_EQ(0U, observer.observer().inserted.count);
+    EXPECT_WK_STREQ("foo", [webView contentsAsString]);
 }
 
 #endif // PLATFORM(IOS_FAMILY)
