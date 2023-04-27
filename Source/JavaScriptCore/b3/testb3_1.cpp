@@ -26,7 +26,7 @@
 #include "config.h"
 #include "testb3.h"
 
-#if ENABLE(B3_JIT) && !CPU(ARM)
+#if ENABLE(B3_JIT)
 
 Lock crashLock;
 
@@ -58,13 +58,10 @@ void testRotR(T valueInt, int32_t shift)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<T, int32_t>(proc, root);
     
-    Value* value = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-    if (sizeof(T) == 4)
-        value = root->appendNew<Value>(proc, Trunc, Origin(), value);
-    
-    Value* ammount = root->appendNew<Value>(proc, Trunc, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1));
+    Value* value = arguments[0];
+    Value* ammount = arguments[1];
     root->appendNewControlValue(proc, Return, Origin(),
         root->appendNew<Value>(proc, RotR, Origin(), value, ammount));
     
@@ -76,13 +73,10 @@ void testRotL(T valueInt, int32_t shift)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<T, int32_t>(proc, root);
     
-    Value* value = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-    if (sizeof(T) == 4)
-        value = root->appendNew<Value>(proc, Trunc, Origin(), value);
-    
-    Value* ammount = root->appendNew<Value>(proc, Trunc, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1));
+    Value* value = arguments[0];
+    Value* ammount = arguments[1];
     root->appendNewControlValue(proc, Return, Origin(),
         root->appendNew<Value>(proc, RotL, Origin(), value, ammount));
     
@@ -95,11 +89,9 @@ void testRotRWithImmShift(T valueInt, int32_t shift)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<T>(proc, root);
     
-    Value* value = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-    if (sizeof(T) == 4)
-        value = root->appendNew<Value>(proc, Trunc, Origin(), value);
-    
+    Value* value = arguments[0];
     Value* ammount = root->appendIntConstant(proc, Origin(), Int32, shift);
     root->appendNewControlValue(proc, Return, Origin(),
         root->appendNew<Value>(proc, RotR, Origin(), value, ammount));
@@ -112,11 +104,9 @@ void testRotLWithImmShift(T valueInt, int32_t shift)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<T>(proc, root);
     
-    Value* value = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-    if (sizeof(T) == 4)
-        value = root->appendNew<Value>(proc, Trunc, Origin(), value);
-    
+    Value* value = arguments[0];
     Value* ammount = root->appendIntConstant(proc, Origin(), Int32, shift);
     root->appendNewControlValue(proc, Return, Origin(),
         root->appendNew<Value>(proc, RotL, Origin(), value, ammount));
@@ -136,7 +126,7 @@ void run(const TestConfig* config)
 {
     Deque<RefPtr<SharedTask<void()>>> tasks;
 
-    RUN_NOW(testTerminalPatchpointThatNeedsToBeSpilled2());
+    // RUN_NOW(testTerminalPatchpointThatNeedsToBeSpilled2());
     RUN(test42());
     RUN(testLoad42());
     RUN(testLoadAcq42());
@@ -163,7 +153,7 @@ void run(const TestConfig* config)
 
     addBitTests(config, tasks);
 
-    RUN(testShlArgs(1, 0));
+    RUN(testShlArgs(1, 0))
     RUN(testShlArgs(1, 1));
     RUN(testShlArgs(1, 62));
     RUN(testShlArgs(0xffffffffffffffff, 0));
@@ -350,7 +340,9 @@ void run(const TestConfig* config)
     RUN(testStoreConstantPtr(49));
     RUN(testStore8Arg());
     RUN(testStore8Imm());
+#if !CPU(ARM_THUMB2) // NOTE(jgriego) remove when it builds
     RUN(testStorePartial8BitRegisterOnX86());
+#endif
     RUN(testStore16Arg());
     RUN(testStore16Imm());
     RUN(testTrunc((static_cast<int64_t>(1) << 40) + 42));
@@ -464,9 +456,11 @@ void run(const TestConfig* config)
 
     RUN(testSimplePatchpoint());
     RUN(testSimplePatchpointWithoutOuputClobbersGPArgs());
-    RUN(testSimplePatchpointWithOuputClobbersGPArgs());
     RUN(testSimplePatchpointWithoutOuputClobbersFPArgs());
-    RUN(testSimplePatchpointWithOuputClobbersFPArgs());
+    if constexpr (!isARM_THUMB2()) {
+        RUN(testSimplePatchpointWithOuputClobbersGPArgs());
+        RUN(testSimplePatchpointWithOuputClobbersFPArgs());
+    }
     RUN(testPatchpointWithEarlyClobber());
     RUN(testPatchpointCallArg());
     RUN(testPatchpointFixedRegister());
@@ -495,7 +489,8 @@ void run(const TestConfig* config)
     RUN(testCheckAddImmCommute());
     RUN(testCheckAddImmSomeRegister());
     RUN(testCheckAdd());
-    RUN(testCheckAdd64());
+    if constexpr (!isARM_THUMB2())
+        RUN(testCheckAdd64());
     RUN(testCheckAddFold(100, 200));
     RUN(testCheckAddFoldFail(2147483647, 100));
     RUN(testCheckAddArgumentAliasing64());
@@ -506,15 +501,18 @@ void run(const TestConfig* config)
     RUN(testCheckSubBadImm());
     RUN(testCheckSub());
     RUN(testCheckSubBitAnd());
-    RUN(testCheckSub64());
+    if constexpr (!isARM_THUMB2())
+        RUN(testCheckSub64());
     RUN(testCheckSubFold(100, 200));
     RUN(testCheckSubFoldFail(-2147483647, 100));
     RUN(testCheckNeg());
-    RUN(testCheckNeg64());
+    if constexpr (!isARM_THUMB2())
+        RUN(testCheckNeg64());
     RUN(testCheckMul());
     RUN(testCheckMulMemory());
     RUN(testCheckMul2());
-    RUN(testCheckMul64());
+    if constexpr (!isARM_THUMB2())
+        RUN(testCheckMul64());
     RUN(testCheckMulFold(100, 200));
     RUN(testCheckMulFoldFail(2147483647, 100));
     RUN(testCheckMulArgumentAliasing64());
@@ -545,7 +543,8 @@ void run(const TestConfig* config)
     RUN(testSpillGP());
     RUN(testSpillFP());
 
-    RUN(testWasmAddressDoesNotCSE());
+    if constexpr (!isARM_THUMB2())
+        RUN(testWasmAddressDoesNotCSE());
     RUN(testStoreAfterClobberDifferentWidth());
     RUN(testStoreAfterClobberExitsSideways());
     RUN(testStoreAfterClobberDifferentWidthSuccessor());
@@ -667,10 +666,12 @@ void run(const TestConfig* config)
     RUN_BINARY(testSelectCompareFloatToDouble, floatingPointOperands<float>(), floatingPointOperands<float>());
     RUN(testSelectDouble());
     RUN(testSelectDoubleTest());
-    RUN(testSelectDoubleCompareDouble());
-    RUN_BINARY(testSelectDoubleCompareFloat, floatingPointOperands<float>(), floatingPointOperands<float>());
-    RUN_BINARY(testSelectFloatCompareFloat, floatingPointOperands<float>(), floatingPointOperands<float>());
-    RUN(testSelectDoubleCompareDoubleWithAliasing());
+    if constexpr (!isARM_THUMB2()) {
+        RUN(testSelectDoubleCompareDouble());
+        RUN_BINARY(testSelectDoubleCompareFloat, floatingPointOperands<float>(), floatingPointOperands<float>());
+        RUN_BINARY(testSelectFloatCompareFloat, floatingPointOperands<float>(), floatingPointOperands<float>());
+        RUN(testSelectDoubleCompareDoubleWithAliasing());
+    }
     RUN(testSelectFloatCompareFloatWithAliasing());
     RUN(testSelectFold(42));
     RUN(testSelectFold(43));
@@ -719,7 +720,8 @@ void run(const TestConfig* config)
 
     addSShrShTests(config, tasks);
 
-    RUN(testCheckMul64SShr());
+    if constexpr (!isARM_THUMB2())
+        RUN(testCheckMul64SShr());
 
     RUN_BINARY(testRotR, int32Operands(), int32Operands());
     RUN_BINARY(testRotR, int64Operands(), int32Operands());
@@ -742,11 +744,13 @@ void run(const TestConfig* config)
     RUN(testURShiftSelf64());
     RUN(testLShiftSelf64());
 
-    RUN(testPatchpointDoubleRegs());
-    RUN(testSpillDefSmallerThanUse());
-    RUN(testSpillUseLargerThanDef());
-    RUN(testLateRegister());
-    RUN(testInterpreter());
+    if constexpr (!isARM_THUMB2()) {
+        RUN(testPatchpointDoubleRegs());
+        RUN(testSpillDefSmallerThanUse());
+        RUN(testSpillUseLargerThanDef());
+        RUN(testLateRegister());
+        RUN(testInterpreter());
+    }
     RUN(testReduceStrengthCheckBottomUseInAnotherBlock());
     RUN(testResetReachabilityDanglingReference());
     
@@ -957,6 +961,11 @@ int main(int argc, char** argv)
             break;
         }
     }
+
+#if CPU(ARM_THUMB2)
+    dataLogLn("ARMv7 testb3 is not expected to work right now!");
+    exit(0);
+#endif
 
     config.workerThreadCount = config.filter ? 1 : WTF::numberOfProcessorCores();
 

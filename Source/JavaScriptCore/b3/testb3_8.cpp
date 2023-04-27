@@ -28,7 +28,7 @@
 
 #include <wtf/UniqueArray.h>
 
-#if ENABLE(B3_JIT) && !CPU(ARM)
+#if ENABLE(B3_JIT)
 
 template<typename T>
 void testAtomicWeakCAS()
@@ -60,8 +60,9 @@ void testAtomicWeakCAS()
         BasicBlock* root = proc.addBlock();
         BasicBlock* reloop = proc.addBlock();
         BasicBlock* done = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
     
-        Value* ptr = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        Value* ptr = arguments[0];
         root->appendNew<Value>(proc, Jump, Origin());
         root->setSuccessors(reloop);
     
@@ -91,8 +92,9 @@ void testAtomicWeakCAS()
         BasicBlock* root = proc.addBlock();
         BasicBlock* reloop = proc.addBlock();
         BasicBlock* done = proc.addBlock();
+        auto arguments = cCallArgumentValues<void *>(proc, root);
     
-        Value* ptr = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        Value* ptr = arguments[0];
         root->appendNew<Value>(proc, Jump, Origin());
         root->setSuccessors(reloop);
     
@@ -122,8 +124,9 @@ void testAtomicWeakCAS()
         BasicBlock* root = proc.addBlock();
         BasicBlock* succ = proc.addBlock();
         BasicBlock* fail = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
     
-        Value* ptr = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        Value* ptr = arguments[0];
         root->appendNew<Value>(
             proc, Branch, Origin(),
             root->appendNew<AtomicValue>(
@@ -161,8 +164,9 @@ void testAtomicWeakCAS()
         BasicBlock* root = proc.addBlock();
         BasicBlock* succ = proc.addBlock();
         BasicBlock* fail = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
     
-        Value* ptr = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        Value* ptr = arguments[0];
         root->appendNew<Value>(
             proc, Branch, Origin(),
             root->appendNew<Value>(
@@ -201,13 +205,14 @@ void testAtomicWeakCAS()
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
         root->appendNew<Value>(
             proc, Return, Origin(),
             root->appendNew<AtomicValue>(
                 proc, AtomicWeakCAS, Origin(), width,
                 root->appendIntConstant(proc, Origin(), type, 42),
                 root->appendIntConstant(proc, Origin(), type, 0xbeef),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)));
+                arguments[0]));
     
         auto code = compileProc(proc);
         T value[2];
@@ -227,6 +232,7 @@ void testAtomicWeakCAS()
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
         root->appendNew<Value>(
             proc, Return, Origin(),
             root->appendNew<Value>(
@@ -235,7 +241,7 @@ void testAtomicWeakCAS()
                     proc, AtomicWeakCAS, Origin(), width,
                     root->appendIntConstant(proc, Origin(), type, 42),
                     root->appendIntConstant(proc, Origin(), type, 0xbeef),
-                    root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+                    arguments[0]),
                 root->appendNew<Const32Value>(proc, Origin(), 0)));
     
         auto code = compileProc(proc);
@@ -256,13 +262,14 @@ void testAtomicWeakCAS()
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
         root->appendNew<Value>(
             proc, Return, Origin(),
             root->appendNew<AtomicValue>(
                 proc, AtomicWeakCAS, Origin(), width,
                 root->appendIntConstant(proc, Origin(), type, 42),
                 root->appendIntConstant(proc, Origin(), type, 0xbeef),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0),
+                arguments[0],
                 42));
     
         auto code = compileProc(proc);
@@ -311,8 +318,9 @@ void testAtomicStrongCAS()
         BasicBlock* root = proc.addBlock();
         BasicBlock* succ = proc.addBlock();
         BasicBlock* fail = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
     
-        Value* ptr = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        Value* ptr = arguments[0];
         root->appendNew<Value>(
             proc, Branch, Origin(),
             root->appendNew<Value>(
@@ -352,8 +360,9 @@ void testAtomicStrongCAS()
         BasicBlock* root = proc.addBlock();
         BasicBlock* succ = proc.addBlock();
         BasicBlock* fail = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
     
-        Value* ptr = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        Value* ptr = arguments[0];
         root->appendNew<Value>(
             proc, Branch, Origin(),
             root->appendNew<Value>(
@@ -393,8 +402,9 @@ void testAtomicStrongCAS()
         BasicBlock* root = proc.addBlock();
         BasicBlock* succ = proc.addBlock();
         BasicBlock* fail = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
     
-        Value* ptr = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        Value* ptr = arguments[0];
         root->appendNew<Value>(
             proc, Branch, Origin(),
             root->appendNew<Value>(
@@ -432,13 +442,14 @@ void testAtomicStrongCAS()
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
         root->appendNew<Value>(
             proc, Return, Origin(),
             root->appendNew<AtomicValue>(
                 proc, AtomicStrongCAS, Origin(), width,
                 root->appendIntConstant(proc, Origin(), type, 42),
                 root->appendIntConstant(proc, Origin(), type, 0xbeef),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)));
+                arguments[0]));
     
         auto code = compileProc(proc);
         T value[2];
@@ -463,6 +474,7 @@ void testAtomicStrongCAS()
     
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
         root->appendNew<Value>(
             proc, Return, Origin(),
             root->appendNew<Value>(
@@ -471,7 +483,7 @@ void testAtomicStrongCAS()
                     proc, AtomicStrongCAS, Origin(), width,
                     root->appendIntConstant(proc, Origin(), type, 42),
                     root->appendIntConstant(proc, Origin(), type, 0xbeef),
-                    root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+                    arguments[0]),
                 root->appendIntConstant(proc, Origin(), type, 1)));
     
         typename NativeTraits<T>::CanonicalType one = 1;
@@ -497,6 +509,7 @@ void testAtomicStrongCAS()
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
         root->appendNew<Value>(
             proc, Return, Origin(),
             root->appendNew<Value>(
@@ -505,7 +518,7 @@ void testAtomicStrongCAS()
                     proc, AtomicStrongCAS, Origin(), width,
                     root->appendIntConstant(proc, Origin(), type, 42),
                     root->appendIntConstant(proc, Origin(), type, 0xbeef),
-                    root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+                    arguments[0]),
                 root->appendIntConstant(proc, Origin(), type, 42)));
     
         auto code = compileProc(proc);
@@ -525,6 +538,7 @@ void testAtomicStrongCAS()
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
         root->appendNew<Value>(
             proc, Return, Origin(),
             root->appendNew<Value>(
@@ -535,7 +549,7 @@ void testAtomicStrongCAS()
                         proc, AtomicStrongCAS, Origin(), width,
                         root->appendIntConstant(proc, Origin(), type, 42),
                         root->appendIntConstant(proc, Origin(), type, 0xbeef),
-                        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+                        arguments[0]),
                     root->appendIntConstant(proc, Origin(), type, 42)),
                 root->appendNew<Const32Value>(proc, Origin(), 0)));
         
@@ -556,8 +570,9 @@ void testAtomicStrongCAS()
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
 
-        Value* ptr = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        Value* ptr = arguments[0];
         root->appendNew<Value>(
             proc, Return, Origin(),
             root->appendNew<AtomicValue>(
@@ -673,12 +688,13 @@ void testAtomicXchg(B3::Opcode opcode)
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
         root->appendNew<Value>(
             proc, Return, Origin(),
             root->appendNew<AtomicValue>(
                 proc, opcode, Origin(), width,
                 root->appendIntConstant(proc, Origin(), type, 1),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)));
+                arguments[0]));
 
         auto code = compileProc(proc);
         T value[2];
@@ -693,12 +709,13 @@ void testAtomicXchg(B3::Opcode opcode)
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
         root->appendNew<Value>(
             proc, Return, Origin(),
             root->appendNew<AtomicValue>(
                 proc, opcode, Origin(), width,
                 root->appendIntConstant(proc, Origin(), type, 42),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)));
+                arguments[0]));
 
         auto code = compileProc(proc);
         T value[2];
@@ -713,10 +730,11 @@ void testAtomicXchg(B3::Opcode opcode)
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
         root->appendNew<AtomicValue>(
             proc, opcode, Origin(), width,
             root->appendIntConstant(proc, Origin(), type, 42),
-            root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0));
+            arguments[0]);
         root->appendNew<Value>(proc, Return, Origin());
 
         auto code = compileProc(proc);
@@ -732,10 +750,11 @@ void testAtomicXchg(B3::Opcode opcode)
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
         root->appendNew<AtomicValue>(
             proc, opcode, Origin(), width,
             root->appendIntConstant(proc, Origin(), type, 42),
-            root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0),
+            arguments[0],
             0, HeapRange(42), HeapRange());
         root->appendNew<Value>(proc, Return, Origin());
 
@@ -807,12 +826,13 @@ void testLoad(B3::Type type, B3::Opcode opcode, InputType value)
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
 
         root->appendNewControlValue(
             proc, Return, Origin(),
             root->appendNew<MemoryValue>(
                 proc, opcode, type, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)));
+                arguments[0]));
 
         CHECK(isIdentical(compileAndRun<CType>(proc, &value), modelLoad<CType>(value)));
     }
@@ -821,12 +841,13 @@ void testLoad(B3::Type type, B3::Opcode opcode, InputType value)
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*>(proc, root);
 
         root->appendNewControlValue(
             proc, Return, Origin(),
             root->appendNew<MemoryValue>(
                 proc, opcode, type, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0),
+                arguments[0],
                 static_cast<int32_t>(sizeof(InputType))));
 
         CHECK(isIdentical(compileAndRun<CType>(proc, &value - 1), modelLoad<CType>(value)));
@@ -836,6 +857,7 @@ void testLoad(B3::Type type, B3::Opcode opcode, InputType value)
     for (unsigned logScale = 0; logScale <= 3; ++logScale) {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*, intptr_t>(proc, root);
 
         root->appendNewControlValue(
             proc, Return, Origin(),
@@ -843,10 +865,10 @@ void testLoad(B3::Type type, B3::Opcode opcode, InputType value)
                 proc, opcode, type, Origin(),
                 root->appendNew<Value>(
                     proc, Add, Origin(),
-                    root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0),
+                    arguments[0],
                     root->appendNew<Value>(
                         proc, Shl, Origin(),
-                        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1),
+                        arguments[1],
                         root->appendNew<Const32Value>(proc, Origin(), logScale)))));
 
         CHECK(isIdentical(compileAndRun<CType>(proc, &value - 2, (sizeof(InputType) * 2) >> logScale), modelLoad<CType>(value)));
@@ -856,6 +878,7 @@ void testLoad(B3::Type type, B3::Opcode opcode, InputType value)
     for (unsigned logScale = 0; logScale <= 3; ++logScale) {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<void*, intptr_t>(proc, root);
 
         root->appendNewControlValue(
             proc, Return, Origin(),
@@ -865,9 +888,9 @@ void testLoad(B3::Type type, B3::Opcode opcode, InputType value)
                     proc, Add, Origin(),
                     root->appendNew<Value>(
                         proc, Shl, Origin(),
-                        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1),
+                        arguments[1],
                         root->appendNew<Const32Value>(proc, Origin(), logScale)),
-                    root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0))));
+                    arguments[0])));
 
         CHECK(isIdentical(compileAndRun<CType>(proc, &value - 2, (sizeof(InputType) * 2) >> logScale), modelLoad<CType>(value)));
     }
@@ -936,8 +959,17 @@ void addLoadTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& t
     RUN(testLoad<uint16_t>(Load16Z, -1000000000));
 }
 
+#if !CPU(ARM_THUMB2) // FIXME(jgriego)
 void testWasmAddressDoesNotCSE()
 {
+    // FIXME(angelos): this pins argumentGPR0 and uses it without going through
+    // ArgumentRegValue, so there's no good way to handle it using
+    // cCallArgumentValues. There's no good way to not allocate argumentGPR0 in
+    // AirCCallingConvention -- the fact that a register is pinned shouldn't
+    // change the ABI. I think it's the test that needs to be modified (either
+    // to both pin argumentGPR0 and use ArgumentRegValue with it, or to pin
+    // argumentGPR2 instead). Same goes for subsequent test functions in this
+    // file.
     Procedure proc;
     GPRReg pinnedGPR = GPRInfo::argumentGPR0;
     proc.pinRegister(pinnedGPR);
@@ -1047,6 +1079,7 @@ void testWasmAddressDoesNotCSE()
 
     delete[] memory;
 }
+#endif // !CPU(ARM_THUMB2)
 
 void testStoreAfterClobberExitsSideways()
 {

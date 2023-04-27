@@ -26,12 +26,13 @@
 #include "config.h"
 #include "testb3.h"
 
-#if ENABLE(B3_JIT) && !CPU(ARM)
+#if ENABLE(B3_JIT)
 
-void testStoreRelAddLoadAcq32(int amount)
+void testStoreRelAddLoadAcq32(int32_t amount)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     int slot = 37;
     ConstPtrValue* slotPtr = root->appendNew<ConstPtrValue>(proc, Origin(), &slot);
     root->appendNew<MemoryValue>(
@@ -40,9 +41,7 @@ void testStoreRelAddLoadAcq32(int amount)
             proc, Add, Origin(),
             root->appendNew<MemoryValue>(
                 proc, Load, Int32, Origin(), slotPtr, 0, HeapRange(42), HeapRange(42)),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0))),
+            arguments[0]),
         slotPtr, 0, HeapRange(42), HeapRange(42));
     root->appendNewControlValue(
         proc, Return, Origin(),
@@ -84,6 +83,7 @@ void testStoreAddLoad8(int amount, B3::Opcode loadOpcode)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     int8_t slot = 37;
     ConstPtrValue* slotPtr = root->appendNew<ConstPtrValue>(proc, Origin(), &slot);
     root->appendNew<MemoryValue>(
@@ -91,9 +91,7 @@ void testStoreAddLoad8(int amount, B3::Opcode loadOpcode)
         root->appendNew<Value>(
             proc, Add, Origin(),
             root->appendNew<MemoryValue>(proc, loadOpcode, Origin(), slotPtr),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0))),
+            arguments[0]),
         slotPtr, 0);
     root->appendNewControlValue(
         proc, Return, Origin(),
@@ -107,6 +105,7 @@ void testStoreRelAddLoadAcq8(int amount, B3::Opcode loadOpcode)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     int8_t slot = 37;
     ConstPtrValue* slotPtr = root->appendNew<ConstPtrValue>(proc, Origin(), &slot);
     root->appendNew<MemoryValue>(
@@ -115,9 +114,7 @@ void testStoreRelAddLoadAcq8(int amount, B3::Opcode loadOpcode)
             proc, Add, Origin(),
             root->appendNew<MemoryValue>(
                 proc, loadOpcode, Origin(), slotPtr, 0, HeapRange(42), HeapRange(42)),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0))),
+            arguments[0]),
         slotPtr, 0, HeapRange(42), HeapRange(42));
     root->appendNewControlValue(
         proc, Return, Origin(),
@@ -138,6 +135,7 @@ void testStoreRelAddFenceLoadAcq8(int amount, B3::Opcode loadOpcode)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     int8_t slot = 37;
     ConstPtrValue* slotPtr = root->appendNew<ConstPtrValue>(proc, Origin(), &slot);
     Value* loadedValue = root->appendNew<MemoryValue>(
@@ -156,9 +154,7 @@ void testStoreRelAddFenceLoadAcq8(int amount, B3::Opcode loadOpcode)
         root->appendNew<Value>(
             proc, Add, Origin(),
             loadedValue,
-            root->appendNew<Value>(
-                proc, Trunc, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0))),
+            arguments[0]),
         slotPtr, 0, HeapRange(42), HeapRange(42));
     root->appendNewControlValue(
         proc, Return, Origin(),
@@ -200,6 +196,7 @@ void testStoreAddLoad16(int amount, B3::Opcode loadOpcode)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     int16_t slot = 37;
     ConstPtrValue* slotPtr = root->appendNew<ConstPtrValue>(proc, Origin(), &slot);
     root->appendNew<MemoryValue>(
@@ -207,9 +204,7 @@ void testStoreAddLoad16(int amount, B3::Opcode loadOpcode)
         root->appendNew<Value>(
             proc, Add, Origin(),
             root->appendNew<MemoryValue>(proc, loadOpcode, Origin(), slotPtr),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0))),
+            arguments[0]),
         slotPtr, 0);
     root->appendNewControlValue(
         proc, Return, Origin(),
@@ -223,6 +218,7 @@ void testStoreRelAddLoadAcq16(int amount, B3::Opcode loadOpcode)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     int16_t slot = 37;
     ConstPtrValue* slotPtr = root->appendNew<ConstPtrValue>(proc, Origin(), &slot);
     root->appendNew<MemoryValue>(
@@ -231,9 +227,7 @@ void testStoreRelAddLoadAcq16(int amount, B3::Opcode loadOpcode)
             proc, Add, Origin(),
             root->appendNew<MemoryValue>(
                 proc, loadOpcode, Origin(), slotPtr, 0, HeapRange(42), HeapRange(42)),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0))),
+            arguments[0]),
         slotPtr, 0, HeapRange(42), HeapRange(42));
     root->appendNewControlValue(
         proc, Return, Origin(),
@@ -275,6 +269,7 @@ void testStoreAddLoad64(int amount)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t>(proc, root);
     int64_t slot = 37000000000ll;
     ConstPtrValue* slotPtr = root->appendNew<ConstPtrValue>(proc, Origin(), &slot);
     root->appendNew<MemoryValue>(
@@ -282,7 +277,7 @@ void testStoreAddLoad64(int amount)
         root->appendNew<Value>(
             proc, Add, Origin(),
             root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), slotPtr),
-            root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+            arguments[0]),
         slotPtr, 0);
     root->appendNewControlValue(
         proc, Return, Origin(),
@@ -296,6 +291,7 @@ void testStoreRelAddLoadAcq64(int amount)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t>(proc, root);
     int64_t slot = 37000000000ll;
     ConstPtrValue* slotPtr = root->appendNew<ConstPtrValue>(proc, Origin(), &slot);
     root->appendNew<MemoryValue>(
@@ -304,7 +300,7 @@ void testStoreRelAddLoadAcq64(int amount)
             proc, Add, Origin(),
             root->appendNew<MemoryValue>(
                 proc, Load, Int64, Origin(), slotPtr, 0, HeapRange(42), HeapRange(42)),
-            root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+            arguments[0]),
         slotPtr, 0, HeapRange(42), HeapRange(42));
     root->appendNewControlValue(
         proc, Return, Origin(),
@@ -346,6 +342,7 @@ void testStoreAddLoad32Index(int amount)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     int slot = 37;
     int* ptr = &slot;
     intptr_t zero = 0;
@@ -362,9 +359,7 @@ void testStoreAddLoad32Index(int amount)
         root->appendNew<Value>(
             proc, Add, Origin(),
             root->appendNew<MemoryValue>(proc, Load, Int32, Origin(), slotPtr),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0))),
+            arguments[0]),
         slotPtr, 0);
     root->appendNewControlValue(
         proc, Return, Origin(),
@@ -408,6 +403,7 @@ void testStoreAddLoad8Index(int amount, B3::Opcode loadOpcode)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     int8_t slot = 37;
     int8_t* ptr = &slot;
     intptr_t zero = 0;
@@ -424,9 +420,7 @@ void testStoreAddLoad8Index(int amount, B3::Opcode loadOpcode)
         root->appendNew<Value>(
             proc, Add, Origin(),
             root->appendNew<MemoryValue>(proc, loadOpcode, Origin(), slotPtr),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0))),
+            arguments[0]),
         slotPtr);
     root->appendNewControlValue(
         proc, Return, Origin(),
@@ -470,6 +464,7 @@ void testStoreAddLoad16Index(int amount, B3::Opcode loadOpcode)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     int16_t slot = 37;
     int16_t* ptr = &slot;
     intptr_t zero = 0;
@@ -486,9 +481,7 @@ void testStoreAddLoad16Index(int amount, B3::Opcode loadOpcode)
         root->appendNew<Value>(
             proc, Add, Origin(),
             root->appendNew<MemoryValue>(proc, loadOpcode, Origin(), slotPtr),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0))),
+            arguments[0]),
         slotPtr);
     root->appendNewControlValue(
         proc, Return, Origin(),
@@ -532,6 +525,7 @@ void testStoreAddLoad64Index(int amount)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t>(proc, root);
     int64_t slot = 37000000000ll;
     int64_t* ptr = &slot;
     intptr_t zero = 0;
@@ -548,7 +542,7 @@ void testStoreAddLoad64Index(int amount)
         root->appendNew<Value>(
             proc, Add, Origin(),
             root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), slotPtr),
-            root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+            arguments[0]),
         slotPtr, 0);
     root->appendNewControlValue(
         proc, Return, Origin(),
@@ -592,6 +586,7 @@ void testStoreSubLoad(int amount)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     int32_t startValue = std::numeric_limits<int32_t>::min();
     int32_t slot = startValue;
     ConstPtrValue* slotPtr = root->appendNew<ConstPtrValue>(proc, Origin(), &slot);
@@ -600,9 +595,7 @@ void testStoreSubLoad(int amount)
         root->appendNew<Value>(
             proc, Sub, Origin(),
             root->appendNew<MemoryValue>(proc, Load, Int32, Origin(), slotPtr),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0))),
+            arguments[0]),
         slotPtr, 0);
     root->appendNewControlValue(
         proc, Return, Origin(),
@@ -715,14 +708,13 @@ void testAdd1Uncommuted(int value)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     root->appendNewControlValue(
         proc, Return, Origin(),
         root->appendNew<Value>(
             proc, Add, Origin(),
             root->appendNew<Const32Value>(proc, Origin(), 1),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0))));
+            arguments[0]));
 
     CHECK(compileAndRun<int>(proc, value) == value + 1);
 }
@@ -747,8 +739,9 @@ void testLoadOffsetNotConstant()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    int array[] = { 1, 2 };
-    Value* arrayPtr = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    auto arguments = cCallArgumentValues<int32_t*>(proc, root);
+    int32_t array[] = { 1, 2 };
+    Value* arrayPtr = arguments[0];
     root->appendNewControlValue(
         proc, Return, Origin(),
         root->appendNew<Value>(
@@ -787,10 +780,10 @@ void testLoadOffsetUsingAddInterference()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    int array[] = { 1, 2 };
+    auto arguments = cCallArgumentValues<int32_t*>(proc, root);
+    int32_t array[] = { 1, 2 };
     ConstPtrValue* arrayPtr = root->appendNew<ConstPtrValue>(proc, Origin(), array);
-    ArgumentRegValue* otherArrayPtr =
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    Value* otherArrayPtr = arguments[0];
     Const32Value* theNumberOfTheBeast = root->appendNew<Const32Value>(proc, Origin(), 666);
     MemoryValue* left = root->appendNew<MemoryValue>(
         proc, Load, Int32, Origin(),
@@ -820,8 +813,9 @@ void testLoadOffsetUsingAddNotConstant()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    int array[] = { 1, 2 };
-    Value* arrayPtr = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    auto arguments = cCallArgumentValues<int32_t*>(proc, root);
+    int32_t array[] = { 1, 2 };
+    Value* arrayPtr = arguments[0];
     root->appendNewControlValue(
         proc, Return, Origin(),
         root->appendNew<Value>(
@@ -844,6 +838,7 @@ void testLoadAddrShift(unsigned shift)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<uintptr_t>(proc, root);
     int slots[2];
 
     // Figure out which slot to use while having proper alignment for the shift.
@@ -864,7 +859,7 @@ void testLoadAddrShift(unsigned shift)
             proc, Load, Int32, Origin(),
             root->appendNew<Value>(
                 proc, Shl, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0),
+                arguments[0],
                 root->appendNew<Const32Value>(proc, Origin(), shift))));
 
     CHECK(compileAndRun<int>(proc, arg) == 8675309);
@@ -888,12 +883,13 @@ void testOverrideFramePointer()
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t>(proc, root);
 
         // Add a stack slot to make the frame non trivial.
         root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(8));
 
         // Sub on x86 UseDef the source. If FP is not protected correctly, it will be overridden since it is the last visible use.
-        Value* offset = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        Value* offset = arguments[0];
         Value* fp = root->appendNew<Value>(proc, FramePointer, Origin());
         Value* result = root->appendNew<Value>(proc, Sub, Origin(), fp, offset);
 
@@ -903,13 +899,14 @@ void testOverrideFramePointer()
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<uintptr_t, int64_t>(proc, root);
 
         root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(8));
 
-        Value* offset = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        Value* offset = arguments[0];
         Value* fp = root->appendNew<Value>(proc, FramePointer, Origin());
         Value* offsetFP = root->appendNew<Value>(proc, BitAnd, Origin(), offset, fp);
-        Value* arg = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1);
+        Value* arg = arguments[1];
         Value* offsetArg = root->appendNew<Value>(proc, Add, Origin(), offset, arg);
         Value* result = root->appendNew<Value>(proc, Add, Origin(), offsetArg, offsetFP);
 
@@ -975,16 +972,17 @@ void testStoreFloat(double input)
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
-        Value* argument = root->appendNew<ArgumentRegValue>(proc, Origin(), FPRInfo::argumentFPR0);
+        auto arguments = cCallArgumentValues<double, float*>(proc, root);
+        Value* argument = arguments[0];
         Value* argumentAsFloat = root->appendNew<Value>(proc, DoubleToFloat, Origin(), argument);
 
-        Value* destinationAddress = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        Value* destinationAddress = arguments[1];
         root->appendNew<MemoryValue>(proc, Store, Origin(), argumentAsFloat, destinationAddress);
 
         root->appendNewControlValue(proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
 
         float output = 0.;
-        CHECK(!compileAndRun<int64_t>(proc, input, &output));
+        CHECK(!compileAndRun<int32_t>(proc, input, &output));
         CHECK(isIdentical(static_cast<float>(input), output));
     }
 
@@ -992,11 +990,12 @@ void testStoreFloat(double input)
     {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
-        Value* argument = root->appendNew<ArgumentRegValue>(proc, Origin(), FPRInfo::argumentFPR0);
+        auto arguments = cCallArgumentValues<double, float*, intptr_t>(proc, root);
+        Value* argument = arguments[0];
         Value* argumentAsFloat = root->appendNew<Value>(proc, DoubleToFloat, Origin(), argument);
 
-        Value* destinationBaseAddress = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-        Value* index = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1);
+        Value* destinationBaseAddress = arguments[1];
+        Value* index = arguments[2];
         Value* scaledIndex = root->appendNew<Value>(
             proc, Shl, Origin(),
             index,
@@ -1008,7 +1007,7 @@ void testStoreFloat(double input)
         root->appendNewControlValue(proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
 
         float output = 0.;
-        CHECK(!compileAndRun<int64_t>(proc, input, &output - 1, 1));
+        CHECK(!compileAndRun<int32_t>(proc, input, &output - 1, static_cast<uintptr_t>(1)));
         CHECK(isIdentical(static_cast<float>(input), output));
     }
 }
@@ -1018,17 +1017,18 @@ void testStoreDoubleConstantAsFloat(double input)
     // Simple store from an address in a register.
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<float*>(proc, root);
     Value* value = root->appendNew<ConstDoubleValue>(proc, Origin(), input);
     Value* valueAsFloat = root->appendNew<Value>(proc, DoubleToFloat, Origin(), value);
 
-    Value* destinationAddress = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    Value* destinationAddress = arguments[0];
 
     root->appendNew<MemoryValue>(proc, Store, Origin(), valueAsFloat, destinationAddress);
 
     root->appendNewControlValue(proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
 
     float output = 0.;
-    CHECK(!compileAndRun<int64_t>(proc, input, &output));
+    CHECK(!compileAndRun<int32_t>(proc, &output));
     CHECK(isIdentical(static_cast<float>(input), output));
 }
 
@@ -1036,10 +1036,11 @@ void testSpillGP()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<intptr_t, intptr_t>(proc, root);
 
     Vector<Value*> sources;
-    sources.append(root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0));
-    sources.append(root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1));
+    sources.append(arguments[0]);
+    sources.append(arguments[1]);
 
     for (unsigned i = 0; i < 30; ++i) {
         sources.append(
@@ -1059,10 +1060,11 @@ void testSpillFP()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<double, double>(proc, root);
 
     Vector<Value*> sources;
-    sources.append(root->appendNew<ArgumentRegValue>(proc, Origin(), FPRInfo::argumentFPR0));
-    sources.append(root->appendNew<ArgumentRegValue>(proc, Origin(), FPRInfo::argumentFPR1));
+    sources.append(arguments[0]);
+    sources.append(arguments[1]);
 
     for (unsigned i = 0; i < 30; ++i) {
         sources.append(
@@ -1082,12 +1084,13 @@ void testInt32ToDoublePartialRegisterStall()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t>(proc, root);
     BasicBlock* loop = proc.addBlock();
     BasicBlock* done = proc.addBlock();
 
     // Head.
     Value* total = root->appendNew<ConstDoubleValue>(proc, Origin(), 0.);
-    Value* counter = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    Value* counter = arguments[0];
     UpsilonValue* originalTotal = root->appendNew<UpsilonValue>(proc, Origin(), total);
     UpsilonValue* originalCounter = root->appendNew<UpsilonValue>(proc, Origin(), counter);
     root->appendNewControlValue(proc, Jump, Origin(), FrequentedBlock(loop));
@@ -1121,12 +1124,13 @@ void testInt32ToDoublePartialRegisterWithoutStall()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t>(proc, root);
     BasicBlock* loop = proc.addBlock();
     BasicBlock* done = proc.addBlock();
 
     // Head.
     Value* total = root->appendNew<ConstDoubleValue>(proc, Origin(), 0.);
-    Value* counter = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    Value* counter = arguments[0];
     UpsilonValue* originalTotal = root->appendNew<UpsilonValue>(proc, Origin(), total);
     UpsilonValue* originalCounter = root->appendNew<UpsilonValue>(proc, Origin(), counter);
     uint64_t forPaddingInput;
@@ -1181,14 +1185,13 @@ void testBranch()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
     root->appendNewControlValue(
         proc, Branch, Origin(),
-        root->appendNew<Value>(
-            proc, Trunc, Origin(),
-            root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+        arguments[0],
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
 
     thenCase->appendNewControlValue(
@@ -1208,12 +1211,13 @@ void testBranchPtr()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<intptr_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
     root->appendNewControlValue(
         proc, Branch, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0),
+        arguments[0],
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
 
     thenCase->appendNewControlValue(
@@ -1237,11 +1241,10 @@ void testDiamond()
     BasicBlock* elseCase = proc.addBlock();
     BasicBlock* done = proc.addBlock();
 
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     root->appendNewControlValue(
         proc, Branch, Origin(),
-        root->appendNew<Value>(
-            proc, Trunc, Origin(),
-            root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+        arguments[0],
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
 
     UpsilonValue* thenResult = thenCase->appendNew<UpsilonValue>(
@@ -1266,6 +1269,7 @@ void testBranchNotEqual()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
@@ -1273,9 +1277,7 @@ void testBranchNotEqual()
         proc, Branch, Origin(),
         root->appendNew<Value>(
             proc, NotEqual, Origin(),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+            arguments[0],
             root->appendNew<Const32Value>(proc, Origin(), 0)),
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
 
@@ -1296,6 +1298,7 @@ void testBranchNotEqualCommute()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
@@ -1304,9 +1307,7 @@ void testBranchNotEqualCommute()
         root->appendNew<Value>(
             proc, NotEqual, Origin(),
             root->appendNew<Const32Value>(proc, Origin(), 0),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0))),
+            arguments[0]),
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
 
     thenCase->appendNewControlValue(
@@ -1326,6 +1327,7 @@ void testBranchNotEqualNotEqual()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
@@ -1335,9 +1337,7 @@ void testBranchNotEqualNotEqual()
             proc, NotEqual, Origin(),
             root->appendNew<Value>(
                 proc, NotEqual, Origin(),
-                root->appendNew<Value>(
-                    proc, Trunc, Origin(),
-                    root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+                arguments[0],
                 root->appendNew<Const32Value>(proc, Origin(), 0)),
             root->appendNew<Const32Value>(proc, Origin(), 0)),
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
@@ -1359,6 +1359,7 @@ void testBranchEqual()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
@@ -1366,9 +1367,7 @@ void testBranchEqual()
         proc, Branch, Origin(),
         root->appendNew<Value>(
             proc, Equal, Origin(),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+            arguments[0],
             root->appendNew<Const32Value>(proc, Origin(), 0)),
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
 
@@ -1389,6 +1388,7 @@ void testBranchEqualEqual()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
@@ -1398,9 +1398,7 @@ void testBranchEqualEqual()
             proc, Equal, Origin(),
             root->appendNew<Value>(
                 proc, Equal, Origin(),
-                root->appendNew<Value>(
-                    proc, Trunc, Origin(),
-                    root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+                arguments[0],
                 root->appendNew<Const32Value>(proc, Origin(), 0)),
             root->appendNew<Const32Value>(proc, Origin(), 0)),
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
@@ -1422,6 +1420,7 @@ void testBranchEqualCommute()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
@@ -1430,9 +1429,7 @@ void testBranchEqualCommute()
         root->appendNew<Value>(
             proc, Equal, Origin(),
             root->appendNew<Const32Value>(proc, Origin(), 0),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(),
-                root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0))),
+            arguments[0]),
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
 
     thenCase->appendNewControlValue(
@@ -1452,6 +1449,7 @@ void testBranchEqualEqual1()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
@@ -1461,9 +1459,7 @@ void testBranchEqualEqual1()
             proc, Equal, Origin(),
             root->appendNew<Value>(
                 proc, Equal, Origin(),
-                root->appendNew<Value>(
-                    proc, Trunc, Origin(),
-                    root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+                arguments[0],
                 root->appendNew<Const32Value>(proc, Origin(), 0)),
             root->appendNew<Const32Value>(proc, Origin(), 1)),
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
@@ -1485,11 +1481,12 @@ void testBranchEqualOrUnorderedArgs(double a, double b)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<double, double>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
-    Value* argumentA = root->appendNew<ArgumentRegValue>(proc, Origin(), FPRInfo::argumentFPR0);
-    Value* argumentB = root->appendNew<ArgumentRegValue>(proc, Origin(), FPRInfo::argumentFPR1);
+    Value* argumentA = arguments[0];
+    Value* argumentB = arguments[1];
     root->appendNewControlValue(
         proc, Branch, Origin(),
         root->appendNew<Value>(
@@ -1514,13 +1511,14 @@ void testBranchEqualOrUnorderedArgs(float a, float b)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<float*, float*>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
     Value* argumentA = root->appendNew<MemoryValue>(proc, Load, Float, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0));
+        arguments[0]);
     Value* argumentB = root->appendNew<MemoryValue>(proc, Load, Float, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1));
+        arguments[1]);
 
     root->appendNewControlValue(
         proc, Branch, Origin(),
@@ -1546,11 +1544,12 @@ void testBranchNotEqualAndOrderedArgs(double a, double b)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<double, double>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
-    Value* argumentA = root->appendNew<ArgumentRegValue>(proc, Origin(), FPRInfo::argumentFPR0);
-    Value* argumentB = root->appendNew<ArgumentRegValue>(proc, Origin(), FPRInfo::argumentFPR1);
+    Value* argumentA = arguments[0];
+    Value* argumentB = arguments[1];
     Value* equalOrUnordered = root->appendNew<Value>(
         proc, EqualOrUnordered, Origin(),
         argumentA,
@@ -1580,13 +1579,14 @@ void testBranchNotEqualAndOrderedArgs(float a, float b)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<float*, float*>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
     Value* argumentA = root->appendNew<MemoryValue>(proc, Load, Float, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0));
+        arguments[0]);
     Value* argumentB = root->appendNew<MemoryValue>(proc, Load, Float, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1));
+        arguments[1]);
     Value* equalOrUnordered = root->appendNew<Value>(
         proc, EqualOrUnordered, Origin(),
         argumentA,
@@ -1616,10 +1616,11 @@ void testBranchEqualOrUnorderedDoubleArgImm(double a, double b)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<double>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
-    Value* argumentA = root->appendNew<ArgumentRegValue>(proc, Origin(), FPRInfo::argumentFPR0);
+    Value* argumentA = arguments[0];
     Value* argumentB = root->appendNew<ConstDoubleValue>(proc, Origin(), b);
     root->appendNewControlValue(
         proc, Branch, Origin(),
@@ -1645,11 +1646,12 @@ void testBranchEqualOrUnorderedFloatArgImm(float a, float b)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<float*>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
     Value* argumentA = root->appendNew<MemoryValue>(proc, Load, Float, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0));
+        arguments[0]);
     Value* argumentB = root->appendNew<ConstFloatValue>(proc, Origin(), b);
 
     root->appendNewControlValue(
@@ -1735,13 +1737,14 @@ void testBranchEqualOrUnorderedFloatWithUselessDoubleConversion(float a, float b
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<float*, float*>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
     Value* argument1 = root->appendNew<MemoryValue>(proc, Load, Float, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0));
+        arguments[0]);
     Value* argument2 = root->appendNew<MemoryValue>(proc, Load, Float, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1));
+        arguments[1]);
     Value* argument1AsDouble = root->appendNew<Value>(proc, FloatToDouble, Origin(), argument1);
     Value* argument2AsDouble = root->appendNew<Value>(proc, FloatToDouble, Origin(), argument2);
 
@@ -1873,6 +1876,7 @@ void testBranchLoadPtr()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<intptr_t*>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
@@ -1880,7 +1884,7 @@ void testBranchLoadPtr()
         proc, Branch, Origin(),
         root->appendNew<MemoryValue>(
             proc, Load, pointerType(), Origin(),
-            root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+            arguments[0]),
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
 
     thenCase->appendNewControlValue(
@@ -1903,6 +1907,7 @@ void testBranchLoad32()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t*>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
@@ -1910,7 +1915,7 @@ void testBranchLoad32()
         proc, Branch, Origin(),
         root->appendNew<MemoryValue>(
             proc, Load, Int32, Origin(),
-            root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+            arguments[0]),
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
 
     thenCase->appendNewControlValue(
@@ -1933,6 +1938,7 @@ void testBranchLoad8S()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int8_t*>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
@@ -1940,7 +1946,7 @@ void testBranchLoad8S()
         proc, Branch, Origin(),
         root->appendNew<MemoryValue>(
             proc, Load8S, Origin(),
-            root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+            arguments[0]),
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
 
     thenCase->appendNewControlValue(
@@ -1963,6 +1969,7 @@ void testBranchLoad8Z()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<uint8_t*>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
@@ -1970,7 +1977,7 @@ void testBranchLoad8Z()
         proc, Branch, Origin(),
         root->appendNew<MemoryValue>(
             proc, Load8Z, Origin(),
-            root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+            arguments[0]),
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
 
     thenCase->appendNewControlValue(
@@ -1993,6 +2000,7 @@ void testBranchLoad16S()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int16_t*>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
@@ -2000,7 +2008,7 @@ void testBranchLoad16S()
         proc, Branch, Origin(),
         root->appendNew<MemoryValue>(
             proc, Load16S, Origin(),
-            root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+            arguments[0]),
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
 
     thenCase->appendNewControlValue(
@@ -2023,6 +2031,7 @@ void testBranchLoad16Z()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<uint16_t*>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
@@ -2030,7 +2039,7 @@ void testBranchLoad16Z()
         proc, Branch, Origin(),
         root->appendNew<MemoryValue>(
             proc, Load16Z, Origin(),
-            root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0)),
+            arguments[0]),
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
 
     thenCase->appendNewControlValue(
@@ -2053,6 +2062,7 @@ void testBranch8WithLoad8ZIndex()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<uint32_t*, uintptr_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
@@ -2065,10 +2075,10 @@ void testBranch8WithLoad8ZIndex()
                 proc, Load8Z, Origin(),
                 root->appendNew<Value>(
                     proc, Add, Origin(),
-                    root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0),
+                    arguments[0],
                     root->appendNew<Value>(
                         proc, Shl, Origin(),
-                        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1),
+                        arguments[1],
                         root->appendNew<Const32Value>(proc, Origin(), logScale)))),
             root->appendNew<Const32Value>(proc, Origin(), 250)),
         FrequentedBlock(thenCase), FrequentedBlock(elseCase));
@@ -2228,12 +2238,11 @@ void testBranchBitTest32TmpImm(uint32_t value, uint32_t imm)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
-    Value* testValue = root->appendNew<Value>(
-        proc, Trunc, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0));
+    Value* testValue = arguments[0];
     Value* bitOffset = root->appendNew<Const32Value>(proc, Origin(), imm);
 
     Value* one = root->appendNew<Const32Value>(proc, Origin(), 1);
@@ -2263,12 +2272,13 @@ void testBranchBitTest32AddrImm(uint32_t value, uint32_t imm)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<uint32_t*>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
     Value* testValue = root->appendNew<MemoryValue>(
         proc, Load, Int32, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0));
+        arguments[0]);
     Value* bitOffset = root->appendNew<Const32Value>(proc, Origin(), imm);
 
     Value* one = root->appendNew<Const32Value>(proc, Origin(), 1);
@@ -2298,15 +2308,12 @@ void testBranchBitTest32TmpTmp(uint32_t value, uint32_t value2)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<uint32_t, uint32_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
-    Value* testValue = root->appendNew<Value>(
-        proc, Trunc, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0));
-    Value* bitOffset = root->appendNew<Value>(
-        proc, Trunc, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1));
+    Value* testValue = arguments[0];
+    Value* bitOffset = arguments[1];
 
     Value* one = root->appendNew<Const32Value>(proc, Origin(), 1);
     Value* bitTest = root->appendNew<Value>(
@@ -2335,15 +2342,14 @@ void testBranchBitTest64TmpTmp(uint64_t value, uint64_t value2)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<uint64_t, uint32_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
     Value* testValue = root->appendNew<Value>(proc, BitXor, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0),
+        arguments[0],
         root->appendNew<Const64Value>(proc, Origin(), -1l));
-    Value* bitOffset = root->appendNew<Value>(
-        proc, Trunc, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1));
+    Value* bitOffset = arguments[1];
 
     Value* one = root->appendNew<Const64Value>(proc, Origin(), 1);
     Value* bitTest = root->appendNew<Value>(
@@ -2372,15 +2378,14 @@ void testBranchBitTest64AddrTmp(uint64_t value, uint64_t value2)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<uint64_t*, uint32_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
     Value* testValue = root->appendNew<MemoryValue>(
         proc, Load, Int64, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0));
-    Value* bitOffset = root->appendNew<Value>(
-        proc, Trunc, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1));
+        arguments[0]);
+    Value* bitOffset = arguments[1];
 
     Value* one = root->appendNew<Const64Value>(proc, Origin(), 1);
     Value* bitTest = root->appendNew<Value>(
@@ -2409,13 +2414,12 @@ void testBranchBitTestNegation(uint64_t value, uint64_t value2)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<uint64_t, uint32_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
-    Value* testValue = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-    Value* bitOffset = root->appendNew<Value>(
-        proc, Trunc, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1));
+    Value* testValue = arguments[0];
+    Value* bitOffset = arguments[1];
     Value* shift = root->appendNew<Value>(proc, SShr, Origin(), testValue, bitOffset);
 
     Value* one = root->appendNew<Const64Value>(proc, Origin(), 1);
@@ -2445,15 +2449,14 @@ void testBranchBitTestNegation2(uint64_t value, uint64_t value2)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<uint64_t, uint32_t>(proc, root);
     BasicBlock* thenCase = proc.addBlock();
     BasicBlock* elseCase = proc.addBlock();
 
     Value* testValue = root->appendNew<Value>(proc, BitXor, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0),
+        arguments[0],
         root->appendNew<Const64Value>(proc, Origin(), -1l));
-    Value* bitOffset = root->appendNew<Value>(
-        proc, Trunc, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1));
+    Value* bitOffset = arguments[1];
     Value* shift = root->appendNew<Value>(proc, SShr, Origin(), testValue, bitOffset);
 
     Value* one = root->appendNew<Const64Value>(proc, Origin(), 1);
@@ -2483,8 +2486,9 @@ void testSimplePatchpoint()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    Value* arg1 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-    Value* arg2 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1);
+    auto arguments = cCallArgumentValues<intptr_t, intptr_t>(proc, root);
+    Value* arg1 = arguments[0];
+    Value* arg2 = arguments[1];
     PatchpointValue* patchpoint = root->appendNew<PatchpointValue>(proc, Int32, Origin());
     patchpoint->append(ConstrainedValue(arg1, ValueRep::SomeRegister));
     patchpoint->append(ConstrainedValue(arg2, ValueRep::SomeRegister));
@@ -2506,8 +2510,9 @@ void testSimplePatchpointWithoutOuputClobbersGPArgs()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    Value* arg1 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-    Value* arg2 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1);
+    auto arguments = cCallArgumentValues<intptr_t, intptr_t>(proc, root);
+    Value* arg1 = arguments[0];
+    Value* arg2 = arguments[1];
     Value* const1 = root->appendNew<Const64Value>(proc, Origin(), 42);
     Value* const2 = root->appendNew<Const64Value>(proc, Origin(), 13);
 
@@ -2533,6 +2538,7 @@ void testSimplePatchpointWithoutOuputClobbersGPArgs()
     CHECK(compileAndRun<int>(proc, 1, 2) == 3);
 }
 
+#if !CPU(ARM_THUMB2) // FIXME(jgriego)
 void testSimplePatchpointWithOuputClobbersGPArgs()
 {
     // We can't predict where the output will be but we want to be sure it is not
@@ -2588,13 +2594,15 @@ void testSimplePatchpointWithOuputClobbersGPArgs()
 
     CHECK(compileAndRun<int>(proc, 1, 2) == 58);
 }
+#endif // !CPU(ARM_THUMB2)
 
 void testSimplePatchpointWithoutOuputClobbersFPArgs()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    Value* arg1 = root->appendNew<ArgumentRegValue>(proc, Origin(), FPRInfo::argumentFPR0);
-    Value* arg2 = root->appendNew<ArgumentRegValue>(proc, Origin(), FPRInfo::argumentFPR1);
+    auto arguments = cCallArgumentValues<double, double>(proc, root);
+    Value* arg1 = arguments[0];
+    Value* arg2 = arguments[1];
     Value* const1 = root->appendNew<ConstDoubleValue>(proc, Origin(), 42.5);
     Value* const2 = root->appendNew<ConstDoubleValue>(proc, Origin(), 13.1);
 
@@ -2623,6 +2631,7 @@ void testSimplePatchpointWithoutOuputClobbersFPArgs()
     CHECK(compileAndRun<double>(proc, 1.5, 2.5) == 4);
 }
 
+#if !CPU(ARM_THUMB2) // FIXME(jgriego)
 void testSimplePatchpointWithOuputClobbersFPArgs()
 {
     Procedure proc;
@@ -2670,14 +2679,16 @@ void testSimplePatchpointWithOuputClobbersFPArgs()
 
     CHECK(compileAndRun<double>(proc, 1.5, 2.5) == 59.6);
 }
+#endif // !CPU(ARM_THUMB2)
 
 void testPatchpointWithEarlyClobber()
 {
     auto test = [] (GPRReg registerToClobber, bool arg1InArgGPR, bool arg2InArgGPR) {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
-        Value* arg1 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-        Value* arg2 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1);
+        auto arguments = cCallArgumentValues<intptr_t, intptr_t>(proc, root);
+        Value* arg1 = arguments[0];
+        Value* arg2 = arguments[1];
     
         PatchpointValue* patchpoint = root->appendNew<PatchpointValue>(proc, Int32, Origin());
         patchpoint->append(ConstrainedValue(arg1, ValueRep::SomeRegister));
@@ -2708,8 +2719,9 @@ void testPatchpointCallArg()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    Value* arg1 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-    Value* arg2 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1);
+    auto arguments = cCallArgumentValues<intptr_t, intptr_t>(proc, root);
+    Value* arg1 = arguments[0];
+    Value* arg2 = arguments[1];
     PatchpointValue* patchpoint = root->appendNew<PatchpointValue>(proc, Int32, Origin());
     patchpoint->append(ConstrainedValue(arg1, ValueRep::stackArgument(0)));
     patchpoint->append(ConstrainedValue(arg2, ValueRep::stackArgument(8)));
@@ -2736,8 +2748,9 @@ void testPatchpointFixedRegister()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    Value* arg1 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-    Value* arg2 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1);
+    auto arguments = cCallArgumentValues<intptr_t, intptr_t>(proc, root);
+    Value* arg1 = arguments[0];
+    Value* arg2 = arguments[1];
     PatchpointValue* patchpoint = root->appendNew<PatchpointValue>(proc, Int32, Origin());
     patchpoint->append(ConstrainedValue(arg1, ValueRep(GPRInfo::regT0)));
     patchpoint->append(ConstrainedValue(arg2, ValueRep(GPRInfo::regT1)));
@@ -2759,8 +2772,9 @@ void testPatchpointAny(ValueRep rep)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    Value* arg1 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-    Value* arg2 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1);
+    auto arguments = cCallArgumentValues<intptr_t, intptr_t>(proc, root);
+    Value* arg1 = arguments[0];
+    Value* arg2 = arguments[1];
     PatchpointValue* patchpoint = root->appendNew<PatchpointValue>(proc, Int32, Origin());
     patchpoint->append(ConstrainedValue(arg1, rep));
     patchpoint->append(ConstrainedValue(arg2, rep));
@@ -2783,8 +2797,9 @@ void testPatchpointGPScratch()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    Value* arg1 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-    Value* arg2 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1);
+    auto arguments = cCallArgumentValues<intptr_t, intptr_t>(proc, root);
+    Value* arg1 = arguments[0];
+    Value* arg2 = arguments[1];
     PatchpointValue* patchpoint = root->appendNew<PatchpointValue>(proc, Int32, Origin());
     patchpoint->append(arg1, ValueRep::SomeRegister);
     patchpoint->append(arg2, ValueRep::SomeRegister);
@@ -2819,8 +2834,9 @@ void testPatchpointFPScratch()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    Value* arg1 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-    Value* arg2 = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1);
+    auto arguments = cCallArgumentValues<intptr_t, intptr_t>(proc, root);
+    Value* arg1 = arguments[0];
+    Value* arg2 = arguments[1];
     PatchpointValue* patchpoint = root->appendNew<PatchpointValue>(proc, Int32, Origin());
     patchpoint->append(arg1, ValueRep::SomeRegister);
     patchpoint->append(arg2, ValueRep::SomeRegister);
@@ -2891,9 +2907,8 @@ void testPatchpointAnyImm(ValueRep rep)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    Value* arg1 = root->appendNew<Value>(
-        proc, Trunc, Origin(),
-        root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0));
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
+    Value* arg1 = arguments[0];
     Value* arg2 = root->appendNew<Const32Value>(proc, Origin(), 42);
     PatchpointValue* patchpoint = root->appendNew<PatchpointValue>(proc, Int32, Origin());
     patchpoint->append(ConstrainedValue(arg1, rep));
