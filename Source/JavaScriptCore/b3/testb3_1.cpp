@@ -891,6 +891,9 @@ void run(const TestConfig* config)
         }
     }
 
+    if (tasks.isEmpty() && config->mode != TestConfig::Mode::ListTests)
+        usage();
+
     Lock lock;
 
     Vector<Ref<Thread>> threads;
