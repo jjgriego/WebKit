@@ -40,7 +40,16 @@ public:
     
     ~ArgumentRegValue() final;
 
-    Reg argumentReg() const { return m_reg; }
+    Reg argumentReg() const { return m_reg[0]; }
+
+#if CPU(ARM_THUMB2)
+    bool isGPPair() const { return m_reg[1].isSet(); }
+
+    Reg hiReg() const { return m_reg[0]; }
+    Reg loReg() const { return m_reg[1]; }
+#else
+    bool isGPPair() const { return false; }
+#endif
 
     B3_SPECIALIZE_VALUE_FOR_NO_CHILDREN
 
@@ -55,20 +64,35 @@ private:
 
     ArgumentRegValue(Origin origin, Reg reg)
         : Value(CheckedOpcode, ArgumentReg, reg.isGPR() ? pointerType() : Double, Zero, origin)
-        , m_reg(reg)
+        , m_reg{reg}
     {
         ASSERT(reg.isSet());
     }
 
+#if CPU(ARM_THUMB2)
+    static Opcode opcodeFromConstructor(Origin, Reg, Reg) { return ArgumentReg; }
+
+    ArgumentRegValue(Origin origin, Reg hi, Reg lo)
+        : Value(CheckedOpcode, ArgumentReg, Int64, Zero, origin)
+        , m_reg{hi, lo}
+    {
+        ASSERT(m_reg[0].isSet());
+        ASSERT(m_reg[0].isGPR());
+        ASSERT(m_reg[1].isSet());
+        ASSERT(m_reg[1].isGPR());
+    }
+#endif
+
     ArgumentRegValue(Origin origin, Reg reg, VectorTag)
         : Value(CheckedOpcode, ArgumentReg, V128, Zero, origin)
-        , m_reg(reg)
+        , m_reg{reg}
     {
         ASSERT(reg.isSet());
         ASSERT(reg.isFPR());
     }
 
-    Reg m_reg;
+    static constexpr size_t regCount = isARM_THUMB2() ? 2 : 1;
+    Reg m_reg[regCount];
 };
 
 } } // namespace JSC::B3
