@@ -174,6 +174,12 @@ std::unique_ptr<Vector<StackFrame>> getStackTrace(JSGlobalObject*, VM& vm, JSObj
 
 std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startCallFrame)
 {
+    if (startCallFrame && vm.topCallFrame == startCallFrame && startCallFrame->isPartiallyInitializedFrame()) {
+        auto* entryFrame = vm.topEntryFrame;
+        auto* callerFrame = startCallFrame->callerFrame(entryFrame);
+        if (callerFrame)
+            startCallFrame = callerFrame;
+    }
     FindFirstCallerFrameWithCodeblockFunctor functor(startCallFrame);
     StackVisitor::visit(vm.topCallFrame, vm, functor);
     return { functor.codeBlock(), functor.bytecodeIndex() };

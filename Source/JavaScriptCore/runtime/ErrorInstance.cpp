@@ -73,13 +73,8 @@ ErrorInstance* ErrorInstance::create(JSGlobalObject* globalObject, Structure* st
     return create(globalObject, vm, structure, messageString, cause, appender, type, errorType, useCurrentFrame);
 }
 
-static String appendSourceToErrorMessage(CodeBlock* codeBlock, ErrorInstance* exception, BytecodeIndex bytecodeIndex, const String& message)
+String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, const String& message, RuntimeType type, ErrorInstance::SourceAppender appender)
 {
-    ErrorInstance::SourceAppender appender = exception->sourceAppender();
-    exception->clearSourceAppender();
-    RuntimeType type = exception->runtimeTypeForCause();
-    exception->clearRuntimeTypeForCause();
-
     if (!codeBlock->hasExpressionInfo() || message.isNull())
         return message;
     
@@ -135,8 +130,13 @@ void ErrorInstance::finishCreation(VM& vm, JSGlobalObject* globalObject, const S
     String messageWithSource = message;
     if (m_stackTrace && !m_stackTrace->isEmpty() && hasSourceAppender()) {
         auto [codeBlock, bytecodeIndex] = getBytecodeIndex(vm, vm.topCallFrame);
-        if (codeBlock)
-            messageWithSource = appendSourceToErrorMessage(codeBlock, this, bytecodeIndex, message);
+        if (codeBlock) {
+            ErrorInstance::SourceAppender appender = sourceAppender();
+            clearSourceAppender();
+            RuntimeType type = runtimeTypeForCause();
+            clearRuntimeTypeForCause();
+            messageWithSource = appendSourceToErrorMessage(codeBlock, bytecodeIndex, message, type, appender);
+        }
     }
 
     if (!messageWithSource.isNull())

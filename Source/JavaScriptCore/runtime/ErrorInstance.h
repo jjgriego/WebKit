@@ -125,4 +125,6 @@ protected:
 #endif
 };
 
+String appendSourceToErrorMessage(CodeBlock*, BytecodeIndex, const String&, RuntimeType, ErrorInstance::SourceAppender);
+
 } // namespace JSC
