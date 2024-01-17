@@ -366,7 +366,7 @@ void CallLinkInfo::reset(VM&)
     } else {
 #if ENABLE(JIT)
         if (type() == CallLinkInfo::Type::Optimizing)
-            static_cast<OptimizingCallLinkInfo*>(this)->setSlowPathCallDestination(CodePtr<JSEntryPtrTag> { g_jscConfig.defaultCallThunk });
+            static_cast<OptimizingCallLinkInfo*>(this)->setSlowPathCallDestination(CodePtr<JSEntryPtrTag>::fromTaggedPtr(g_jscConfig.defaultCallThunk));
 #endif
         if (stub())
             revertCallToStub();
@@ -515,7 +515,7 @@ void CallLinkInfo::emitSlowPathImpl(VM&, CCallHelpers& jit, GPRReg callLinkInfoG
             jit.jump().linkTo(dispatchLabel, &jit);
             return;
         }
-        jit.nearCallThunk(CodeLocationLabel<JSEntryPtrTag> { g_jscConfig.defaultCallThunk }.retagged<NoPtrTag>());
+        jit.nearCallThunk(CodeLocationLabel<JSEntryPtrTag> { CodePtr<JSEntryPtrTag>::fromTaggedPtr(g_jscConfig.defaultCallThunk) }.retagged<NoPtrTag>());
         return;
     }
 
@@ -592,7 +592,7 @@ std::tuple<MacroAssembler::JumpList, MacroAssembler::Label> OptimizingCallLinkIn
 
 void OptimizingCallLinkInfo::emitSlowPath(VM& vm, CCallHelpers& jit, GPRReg callLinkInfoGPR)
 {
-    setSlowPathCallDestination(CodePtr<JSEntryPtrTag> { g_jscConfig.defaultCallThunk });
+    setSlowPathCallDestination(CodePtr<JSEntryPtrTag>::fromTaggedPtr(g_jscConfig.defaultCallThunk));
     RELEASE_ASSERT(!isTailCall());
     jit.move(CCallHelpers::TrustedImmPtr(this), callLinkInfoGPR);
     return emitSlowPathImpl(vm, jit, callLinkInfoGPR, useDataIC(), isTailCall(), { });
@@ -600,7 +600,7 @@ void OptimizingCallLinkInfo::emitSlowPath(VM& vm, CCallHelpers& jit, GPRReg call
 
 void OptimizingCallLinkInfo::emitTailCallSlowPath(VM& vm, CCallHelpers& jit, GPRReg callLinkInfoGPR, MacroAssembler::Label dispatchLabel)
 {
-    setSlowPathCallDestination(CodePtr<JSEntryPtrTag> { g_jscConfig.defaultCallThunk });
+    setSlowPathCallDestination(CodePtr<JSEntryPtrTag>::fromTaggedPtr(g_jscConfig.defaultCallThunk ));
     RELEASE_ASSERT(isTailCall());
     jit.move(CCallHelpers::TrustedImmPtr(this), callLinkInfoGPR);
     return emitSlowPathImpl(vm, jit, callLinkInfoGPR, useDataIC(), isTailCall(), dispatchLabel);
@@ -721,7 +721,7 @@ void OptimizingCallLinkInfo::initializeFromDFGUnlinkedCallLinkInfo(VM&, const DF
 {
     m_owner = owner;
     m_doneLocation = unlinkedCallLinkInfo.doneLocation;
-    setSlowPathCallDestination(CodePtr<JSEntryPtrTag> { g_jscConfig.defaultCallThunk });
+    setSlowPathCallDestination(CodePtr<JSEntryPtrTag>::fromTaggedPtr(g_jscConfig.defaultCallThunk));
     m_codeOrigin = unlinkedCallLinkInfo.codeOrigin;
     m_callType = unlinkedCallLinkInfo.callType;
     m_callLinkInfoGPR = unlinkedCallLinkInfo.callLinkInfoGPR;
